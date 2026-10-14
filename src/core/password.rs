@@ -1,7 +1,6 @@
 use std::sync::LazyLock;
 
-pub const MIN_PASSWORD_LEN: usize = 8;
-
+/// Hashing a password failed.
 #[derive(Debug, thiserror::Error)]
 #[error("failed to hash password")]
 pub struct PasswordError(#[source] bcrypt::BcryptError);
@@ -28,15 +27,6 @@ pub fn dummy_hash() -> &'static str {
     &HASH
 }
 
-/// Returns a message for the user when the password is not acceptable.
-pub fn validate_password(password: &str) -> Option<&'static str> {
-    if password.len() < MIN_PASSWORD_LEN {
-        return Some("Must be at least 8 characters.");
-    }
-
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48,11 +38,5 @@ mod tests {
         assert!(!verify_password("wrong horse", &hash));
         assert!(!verify_password("correct horse", "not a hash"));
         assert!(!verify_password("", dummy_hash()));
-    }
-
-    #[test]
-    fn validation() {
-        assert!(validate_password("1234567").is_some());
-        assert!(validate_password("12345678").is_none());
     }
 }

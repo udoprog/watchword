@@ -4,7 +4,7 @@ use cookie::{Cookie, SameSite};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
-use crate::SESSION_LIFETIME_DAYS;
+use super::session::SESSION_LIFETIME_DAYS;
 
 /// A new 32-byte key for signing session cookies.
 pub fn generate_session_key() -> [u8; 32] {

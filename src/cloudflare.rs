@@ -20,7 +20,7 @@ use http::header::COOKIE;
 use jiff::Timestamp;
 use serde::Deserialize;
 
-use crate::normalize_email;
+use crate::types::normalize_email;
 
 pub const EMAIL_HEADER: &str = "cf-access-authenticated-user-email";
 pub const JWT_HEADER: &str = "cf-access-jwt-assertion";

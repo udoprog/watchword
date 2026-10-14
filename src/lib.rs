@@ -1,81 +1,50 @@
-//! Storage-agnostic authentication primitives: roles, password hashing,
-//! session ids and login tokens, signed session cookies and Cloudflare Access.
+//! Authentication for axum + Yew applications, in layers selected by cargo
+//! features:
+//!
+//! | Feature | Module |
+//! |---|---|
+//! | *(none)* | [`types`]: ids, roles, account state, wire types, [`AuthError`], validation |
+//! | `musli` | musli `Encode`/`Decode` on the wire types |
+//! | `server` | `core`: password hashing, ids, signed session cookies |
+//! | `cloudflare` | `cloudflare`: Cloudflare Access (implies `server`) |
+//! | `google` | `google`: Google OAuth (implies `server`) |
+//! | `axum` | `axum`: extractors, routes, WebSocket session guard (implies `server`) |
+//! | `sqll` | `sqll`: a SQLite store (implies `server`) |
+//! | `yew` | `yew`: components, context, hook, HTTP client |
+//!
+//! Server-only and browser-only dependencies never share a feature, so a
+//! wasm frontend takes `yew` without pulling in server code. The design is
+//! recorded in `docs/design.md`.
 
+pub mod types;
+
+#[cfg(feature = "server")]
+pub mod core;
+
+#[cfg(feature = "cloudflare")]
 pub mod cloudflare;
-mod cookie;
-mod password;
-mod session;
 
-pub use self::cookie::{generate_session_key, session_cookie, verify_session_cookie};
-pub use self::password::{
-    MIN_PASSWORD_LEN, PasswordError, dummy_hash, hash_password, validate_password, verify_password,
+#[cfg(feature = "google")]
+pub mod google;
+
+#[cfg(feature = "axum")]
+pub mod axum;
+
+#[cfg(feature = "sqll")]
+pub mod sqll;
+
+#[cfg(feature = "yew")]
+pub mod yew;
+
+pub use self::types::{
+    Access, AuthConfig, AuthError, CloudflareConfig, Conflict, Link, LoginRequest,
+    MIN_PASSWORD_LEN, Method, NewUser, PasswordChange, RegisterInfo, RegisterRequest, Role,
+    UserChange, UserEntry, UserId, UserInfo, normalize_email, validate_password,
 };
-pub use self::session::{
-    LOGIN_TOKEN_LIFETIME, SESSION_LIFETIME, SESSION_LIFETIME_DAYS, is_expired, login_token_expiry,
-    new_login_token, new_session_id, session_expiry,
+
+#[cfg(feature = "server")]
+pub use self::core::{
+    PasswordError, SESSION_LIFETIME, TOKEN_LIFETIME, dummy_hash, generate_session_key,
+    hash_password, is_expired, new_session_id, new_token, session_cookie, session_expiry,
+    token_expiry, verify_password, verify_session_cookie,
 };
-
-use std::fmt;
-use std::str::FromStr;
-
-/// Trims and lowercases an email so lookups and comparisons are
-/// case-insensitive.
-pub fn normalize_email(email: &str) -> String {
-    email.trim().to_lowercase()
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum UserRole {
-    Admin,
-    Regular,
-}
-
-impl UserRole {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            UserRole::Admin => "admin",
-            UserRole::Regular => "regular",
-        }
-    }
-}
-
-impl fmt::Display for UserRole {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("unknown user role")]
-pub struct UnknownUserRole;
-
-impl FromStr for UserRole {
-    type Err = UnknownUserRole;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "admin" => Ok(UserRole::Admin),
-            "regular" => Ok(UserRole::Regular),
-            _ => Err(UnknownUserRole),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn role_text_round_trip() {
-        for role in [UserRole::Admin, UserRole::Regular] {
-            assert_eq!(role.as_str().parse::<UserRole>(), Ok(role));
-        }
-
-        assert_eq!("Admin".parse::<UserRole>(), Err(UnknownUserRole));
-    }
-
-    #[test]
-    fn email_normalization() {
-        assert_eq!(normalize_email("  Foo@Example.COM \n"), "foo@example.com");
-    }
-}

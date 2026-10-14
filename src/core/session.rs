@@ -2,9 +2,12 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jiff::{SignedDuration, Timestamp};
 
+/// How long a session lasts, in days.
 pub const SESSION_LIFETIME_DAYS: i64 = 30;
+/// How long a session lasts.
 pub const SESSION_LIFETIME: SignedDuration = SignedDuration::from_hours(SESSION_LIFETIME_DAYS * 24);
-pub const LOGIN_TOKEN_LIFETIME: SignedDuration = SignedDuration::from_hours(7 * 24);
+/// How long a registration or reset link lasts.
+pub const TOKEN_LIFETIME: SignedDuration = SignedDuration::from_hours(7 * 24);
 
 fn random_id() -> String {
     URL_SAFE_NO_PAD.encode(rand::random::<[u8; 16]>())
@@ -16,8 +19,8 @@ pub fn new_session_id() -> String {
     random_id()
 }
 
-/// A new single-use login token, in the same form as a session id.
-pub fn new_login_token() -> String {
+/// A new single-use link token, in the same form as a session id.
+pub fn new_token() -> String {
     random_id()
 }
 
@@ -26,14 +29,17 @@ fn expiry(now: Timestamp, lifetime: SignedDuration) -> Timestamp {
         .expect("saturating addition of a SignedDuration cannot fail")
 }
 
+/// When a session created at `now` expires.
 pub fn session_expiry(now: Timestamp) -> Timestamp {
     expiry(now, SESSION_LIFETIME)
 }
 
-pub fn login_token_expiry(now: Timestamp) -> Timestamp {
-    expiry(now, LOGIN_TOKEN_LIFETIME)
+/// When a link issued at `now` expires.
+pub fn token_expiry(now: Timestamp) -> Timestamp {
+    expiry(now, TOKEN_LIFETIME)
 }
 
+/// Whether something that expires at `expires_at` has expired at `now`.
 pub fn is_expired(expires_at: Timestamp, now: Timestamp) -> bool {
     expires_at <= now
 }
@@ -45,7 +51,7 @@ mod tests {
     #[test]
     fn ids_are_16_bytes_base64url() {
         let a = new_session_id();
-        let b = new_login_token();
+        let b = new_token();
         assert_eq!(a.len(), 22);
         assert_eq!(URL_SAFE_NO_PAD.decode(&a).unwrap().len(), 16);
         assert_eq!(URL_SAFE_NO_PAD.decode(&b).unwrap().len(), 16);
@@ -65,7 +71,7 @@ mod tests {
         assert!(!is_expired(session, session - SignedDuration::from_secs(1)));
         assert!(is_expired(session, session));
 
-        let token = login_token_expiry(now);
+        let token = token_expiry(now);
         assert_eq!(token, "2026-10-08T00:00:00Z".parse::<Timestamp>().unwrap());
         assert!(!is_expired(token, now));
         assert!(is_expired(token, token + SignedDuration::from_secs(1)));
