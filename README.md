@@ -23,7 +23,7 @@ default.
 | `google` | `auth::google` | Google OAuth (implies `server`; not implemented yet) |
 | `axum` | `auth::axum` | extractors, routes, WebSocket session guard (implies `server`; not implemented yet) |
 | `sqll` | `auth::sqll` | `SqllStore` over SQLite (implies `server`; not implemented yet) |
-| `yew` | `auth::yew` | components, `use_auth`, HTTP client (not implemented yet) |
+| `yew` | `auth::yew` | `AuthProvider`, `use_auth`, `SignIn`, `Register` and the `http` client (account and admin components not implemented yet) |
 
 The most-used names are re-exported at the crate root.
 
