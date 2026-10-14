@@ -25,6 +25,7 @@ use crate::types::{
 /// | `GET /api/auth/config` | anyone | [`AuthConfig`] |
 /// | `GET /api/auth/me` | signed in | [`UserInfo`] |
 /// | `POST /api/auth/login` | anyone | [`LoginRequest`] → [`UserInfo`] + cookie; throttled |
+/// | `POST /api/auth/cloudflare` | anyone, feature `cloudflare` | [`UserInfo`] + cookie for the user the request's Access credentials vouch for; activates a pending user |
 /// | `POST /api/auth/logout` | anyone | 204; ends the session and clears the cookie |
 /// | `GET /api/auth/register/{token}` | anyone | [`RegisterInfo`]; 404 unknown, 410 used or expired |
 /// | `POST /api/auth/register/{token}` | anyone | [`RegisterRequest`] → [`UserInfo`] + cookie; ends the user's other sessions |
@@ -53,17 +54,12 @@ where
     Auth: FromRef<S>,
     S: Clone + Send + Sync + 'static,
 {
-    // SEAM(card D, feature `cloudflare`): `POST /api/auth/cloudflare`, which
-    // signs in with the request's Access credentials (`Auth::sign_in_cloudflare`)
-    // and answers `UserInfo` + cookie as `login` does, goes here once the
-    // Cloudflare provider lands. See also `config` below.
-    //
     // SEAM(card E, feature `google`): `GET /api/auth/google`,
     // `GET /api/auth/google/register/{token}`, `GET /api/auth/google/link`
     // (signed in) and the callback at the path of the configured
     // `redirect_url` (default `/api/auth/google/redirect`) go here once the
     // Google provider lands. `register_info` below then reports `google`.
-    Router::new()
+    let router = Router::new()
         .route("/api/auth/config", get(config))
         .route("/api/auth/me", get(me))
         .route("/api/auth/login", post(login))
@@ -85,7 +81,12 @@ where
         )
         .route("/api/auth/users/{id}/sign-out", post(sign_out_everywhere))
         .route("/api/auth/users/{id}/revoke", post(revoke_access))
-        .route("/api/auth/users/{id}/impersonate", post(impersonate))
+        .route("/api/auth/users/{id}/impersonate", post(impersonate));
+
+    #[cfg(feature = "cloudflare")]
+    let router = router.route("/api/auth/cloudflare", post(cloudflare));
+
+    router
 }
 
 /// A JSON body whose rejection is [`AuthError::Invalid`], so a malformed
@@ -174,16 +175,31 @@ fn cookie_header(value: HeaderValue) -> [(header::HeaderName, HeaderValue); 1] {
     [(header::SET_COOKIE, value)]
 }
 
-async fn config(State(auth): State<Auth>) -> Json<AuthConfig> {
-    Json(AuthConfig {
+async fn config(State(auth): State<Auth>, headers: HeaderMap) -> Result<Json<AuthConfig>, Error> {
+    Ok(Json(AuthConfig {
         password: true,
         // SEAM(card E): whether Google sign-in is configured.
         google: false,
-        // SEAM(card D): whether this request presents Access credentials
-        // that map to a user (`presents_access`); takes the request headers.
-        cloudflare: false,
+        cloudflare: cloudflare_available(&auth, &headers).await?,
         logins: auth.uses_logins(),
-    })
+    }))
+}
+
+/// Whether the request's Cloudflare Access credentials sign in a user.
+#[cfg(feature = "cloudflare")]
+async fn cloudflare_available(auth: &Auth, headers: &HeaderMap) -> Result<bool, Error> {
+    auth.cloudflare_available(headers).await
+}
+
+#[cfg(not(feature = "cloudflare"))]
+async fn cloudflare_available(_: &Auth, _: &HeaderMap) -> Result<bool, Error> {
+    Ok(false)
+}
+
+#[cfg(feature = "cloudflare")]
+async fn cloudflare(State(auth): State<Auth>, headers: HeaderMap) -> Result<Response, Error> {
+    let (user, session) = auth.sign_in_cloudflare(&headers).await?;
+    Ok(signed_in(&auth, &headers, &user, &session))
 }
 
 async fn me(signed_in: SignedIn) -> Json<UserInfo> {

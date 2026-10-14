@@ -769,3 +769,188 @@ async fn guard_ends_on_delete_and_expiry() {
     let gone = auth.guard(&root);
     tokio::time::timeout(WAIT, gone.ended()).await.unwrap();
 }
+
+/// `POST /api/auth/cloudflare` and the `cloudflare` flag of
+/// `GET /api/auth/config`, with Access believing the email header.
+#[cfg(feature = "cloudflare")]
+mod cloudflare {
+    use axum::http::HeaderValue;
+
+    use super::*;
+    use crate::cloudflare::EMAIL_HEADER;
+    use crate::types::CloudflareConfig;
+
+    fn header_only() -> CloudflareConfig {
+        CloudflareConfig {
+            enabled: true,
+            team_domain: "example.cloudflareaccess.com".to_owned(),
+            audience: "aud".to_owned(),
+            trust_email_header: true,
+            verify_jwt: false,
+        }
+    }
+
+    /// Calls `uri` with Access vouching for `email`, if any.
+    async fn access(app: &Router, method: Method, uri: &str, email: Option<&str>) -> Answer {
+        let mut request = Request::builder().method(method).uri(uri);
+
+        if let Some(email) = email {
+            request = request.header(EMAIL_HEADER, HeaderValue::from_str(email).unwrap());
+        }
+
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes).unwrap()
+        };
+
+        Answer {
+            status,
+            headers,
+            body,
+        }
+    }
+
+    async fn available(app: &Router, email: Option<&str>) -> bool {
+        let config = access(app, Method::GET, "/api/auth/config", email).await;
+        assert_eq!(config.status, StatusCode::OK, "{}", config.body);
+        config.body["cloudflare"].as_bool().unwrap()
+    }
+
+    /// Creates the pending regular user with `email`, returning their id.
+    async fn pending(app: &Router, admin: &str, email: &str) -> u64 {
+        let created = call(
+            app,
+            Method::POST,
+            "/api/auth/users",
+            Some(admin),
+            Some(json!({ "login": null, "email": email, "role": "regular" })),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::OK, "{}", created.body);
+        let created: CreatedUser = serde_json::from_value(created.body).unwrap();
+        assert_eq!(created.entry.user.access, Access::Pending);
+        created.entry.user.id.0
+    }
+
+    #[tokio::test]
+    async fn sign_in_activates_pending_user() {
+        let auth = Auth::builder(MemoryStore::new(), generate_session_key())
+            .cloudflare(Some(header_only()))
+            .build();
+        let app = router(&auth);
+        let admin = admin(&auth, &app).await;
+        let id = pending(&app, &admin, "alice@example.com").await;
+
+        assert!(!available(&app, None).await);
+        assert!(!available(&app, Some("nobody@example.com")).await);
+        assert!(available(&app, Some("alice@example.com")).await);
+
+        for email in [None, Some("nobody@example.com")] {
+            let refused = access(&app, Method::POST, "/api/auth/cloudflare", email).await;
+            assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+            assert_eq!(refused.error(), "unauthorized");
+            assert!(!refused.headers.contains_key(header::SET_COOKIE));
+        }
+
+        let signed_in = access(
+            &app,
+            Method::POST,
+            "/api/auth/cloudflare",
+            Some("alice@example.com"),
+        )
+        .await;
+        assert_eq!(signed_in.status, StatusCode::OK, "{}", signed_in.body);
+        let cookie = signed_in.cookie();
+        assert!(cookie.starts_with("session="), "{cookie}");
+        let user: UserInfo = serde_json::from_value(signed_in.body).unwrap();
+        assert_eq!(user.id.0, id);
+        assert_eq!(user.access, Access::Active);
+        assert_eq!(user.email.as_deref(), Some("alice@example.com"));
+
+        let me = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
+        assert_eq!(me.status, StatusCode::OK);
+        assert_eq!(serde_json::from_value::<UserInfo>(me.body).unwrap(), user);
+    }
+
+    #[tokio::test]
+    async fn revoked_user_is_refused() {
+        let auth = Auth::builder(MemoryStore::new(), generate_session_key())
+            .cloudflare(Some(header_only()))
+            .build();
+        let app = router(&auth);
+        let admin = admin(&auth, &app).await;
+        let id = pending(&app, &admin, "bob@example.com").await;
+
+        let signed_in = access(
+            &app,
+            Method::POST,
+            "/api/auth/cloudflare",
+            Some("bob@example.com"),
+        )
+        .await;
+        assert_eq!(signed_in.status, StatusCode::OK, "{}", signed_in.body);
+        let cookie = signed_in.cookie();
+
+        let revoked = call(
+            &app,
+            Method::POST,
+            &format!("/api/auth/users/{id}/revoke"),
+            Some(&admin),
+            None,
+        )
+        .await;
+        assert_eq!(revoked.status, StatusCode::OK, "{}", revoked.body);
+
+        assert!(!available(&app, Some("bob@example.com")).await);
+        let refused = access(
+            &app,
+            Method::POST,
+            "/api/auth/cloudflare",
+            Some("bob@example.com"),
+        )
+        .await;
+        assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(refused.error(), "unauthorized");
+        assert!(!refused.headers.contains_key(header::SET_COOKIE));
+
+        let me = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
+        assert_eq!(me.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn follows_runtime_settings() {
+        let auth = Auth::builder(MemoryStore::new(), generate_session_key()).build();
+        let app = router(&auth);
+        let admin = admin(&auth, &app).await;
+        pending(&app, &admin, "carol@example.com").await;
+        let carol = Some("carol@example.com");
+
+        assert!(!available(&app, carol).await);
+        let refused = access(&app, Method::POST, "/api/auth/cloudflare", carol).await;
+        assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+
+        auth.set_cloudflare(Some(header_only()));
+        assert!(available(&app, carol).await);
+        let signed_in = access(&app, Method::POST, "/api/auth/cloudflare", carol).await;
+        assert_eq!(signed_in.status, StatusCode::OK, "{}", signed_in.body);
+
+        auth.set_cloudflare(Some(CloudflareConfig {
+            enabled: false,
+            ..header_only()
+        }));
+        assert!(!available(&app, carol).await);
+        let refused = access(&app, Method::POST, "/api/auth/cloudflare", carol).await;
+        assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    }
+}
