@@ -40,6 +40,10 @@ use crate::types::{
 /// | `POST /api/auth/users/{id}/sign-out` | admin | 204; ends all of the user's sessions |
 /// | `POST /api/auth/users/{id}/revoke` | admin | [`UserInfo`]; revokes access; not self |
 /// | `POST /api/auth/users/{id}/impersonate` | admin, if enabled | [`UserInfo`] + cookie for a session as that user; not self, not revoked |
+/// | `GET /api/auth/google` | anyone | redirect to Google to sign in; 404 unless Google is configured (feature `google`) |
+/// | `GET /api/auth/google/register/{token}` | anyone | redirect to Google to register with the link; 404 unknown, 410 used or expired |
+/// | `GET /api/auth/google/link` | signed in | redirect to Google to switch to it |
+/// | `GET /api/auth/google/redirect` | Google | cookie + redirect to `/`, or to `/?error=auth-failed` or `/?error=user-not-found` |
 ///
 /// `{id}` is the decimal [`UserId`]. Errors are an [`AuthError`] body with
 /// its status: 401, 403, 404, 409, 410, 429, or 400 with a message, which a
@@ -54,11 +58,6 @@ where
     Auth: FromRef<S>,
     S: Clone + Send + Sync + 'static,
 {
-    // SEAM(card E, feature `google`): `GET /api/auth/google`,
-    // `GET /api/auth/google/register/{token}`, `GET /api/auth/google/link`
-    // (signed in) and the callback at the path of the configured
-    // `redirect_url` (default `/api/auth/google/redirect`) go here once the
-    // Google provider lands. `register_info` below then reports `google`.
     let router = Router::new()
         .route("/api/auth/config", get(config))
         .route("/api/auth/me", get(me))
@@ -85,6 +84,10 @@ where
 
     #[cfg(feature = "cloudflare")]
     let router = router.route("/api/auth/cloudflare", post(cloudflare));
+    // Feature `google`: `GET /api/auth/google`, `/google/register/{token}`,
+    // `/google/link` and the callback; see `super::google`.
+    #[cfg(feature = "google")]
+    let router = router.merge(super::google::routes());
 
     router
 }
@@ -131,7 +134,7 @@ where
 }
 
 /// The `{token}` of a link route.
-struct Token(String);
+pub(super) struct Token(pub(super) String);
 
 impl<S> FromRequestParts<S> for Token
 where
@@ -178,8 +181,7 @@ fn cookie_header(value: HeaderValue) -> [(header::HeaderName, HeaderValue); 1] {
 async fn config(State(auth): State<Auth>, headers: HeaderMap) -> Result<Json<AuthConfig>, Error> {
     Ok(Json(AuthConfig {
         password: true,
-        // SEAM(card E): whether Google sign-in is configured.
-        google: false,
+        google: auth.offers_google(),
         cloudflare: cloudflare_available(&auth, &headers).await?,
         logins: auth.uses_logins(),
     }))
@@ -238,8 +240,6 @@ async fn register_info(
     State(auth): State<Auth>,
     Token(token): Token,
 ) -> Result<Json<RegisterInfo>, Error> {
-    // SEAM(card E): `google` is set by `Auth::register_info` once Google is
-    // configurable.
     Ok(Json(auth.register_info(&token).await?))
 }
 

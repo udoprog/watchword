@@ -39,6 +39,8 @@
 
 mod error;
 mod extract;
+#[cfg(feature = "google")]
+mod google;
 mod guard;
 mod live;
 mod routes;

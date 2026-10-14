@@ -56,5 +56,7 @@ pub use self::core::{
 #[cfg(feature = "server")]
 pub use self::store::{MemoryStore, Store};
 
+#[cfg(feature = "google")]
+pub use self::google::GoogleConfig;
 #[cfg(feature = "sqll")]
 pub use self::sqll::SqllStore;

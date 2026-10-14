@@ -159,6 +159,10 @@ pub struct AuthBuilder {
     impersonation: bool,
     #[cfg(feature = "cloudflare")]
     cloudflare: Option<crate::types::CloudflareConfig>,
+    #[cfg(feature = "google")]
+    google: Option<crate::google::GoogleConfig>,
+    #[cfg(feature = "google")]
+    google_endpoints: crate::google::Endpoints,
 }
 
 impl AuthBuilder {
@@ -206,6 +210,10 @@ impl AuthBuilder {
                 events,
                 #[cfg(feature = "cloudflare")]
                 cloudflare: crate::cloudflare::Provider::new(self.cloudflare),
+                #[cfg(feature = "google")]
+                google: self
+                    .google
+                    .map(|config| crate::google::Provider::new(config, self.google_endpoints)),
                 #[cfg(feature = "axum")]
                 live: crate::axum::LiveCache::default(),
             }),
@@ -238,6 +246,9 @@ struct Inner {
     /// The Cloudflare Access settings and their log-once warnings.
     #[cfg(feature = "cloudflare")]
     cloudflare: crate::cloudflare::Provider,
+    /// The Google OAuth client and its pending flows, when configured.
+    #[cfg(feature = "google")]
+    google: Option<crate::google::Provider>,
     /// Recently confirmed live sessions, for the `LiveSession` extractor.
     #[cfg(feature = "axum")]
     live: crate::axum::LiveCache,
@@ -259,6 +270,10 @@ impl Auth {
             impersonation: false,
             #[cfg(feature = "cloudflare")]
             cloudflare: None,
+            #[cfg(feature = "google")]
+            google: None,
+            #[cfg(feature = "google")]
+            google_endpoints: crate::google::Endpoints::default(),
         }
     }
 
@@ -275,6 +290,20 @@ impl Auth {
     /// Whether users have login names; see [`AuthBuilder::logins`].
     pub fn uses_logins(&self) -> bool {
         self.inner.logins
+    }
+
+    /// Whether Google sign-in is configured; see `AuthBuilder::google`
+    /// (feature `google`). This is [`AuthConfig::google`](crate::AuthConfig::google).
+    pub fn offers_google(&self) -> bool {
+        #[cfg(feature = "google")]
+        {
+            self.inner.google.is_some()
+        }
+
+        #[cfg(not(feature = "google"))]
+        {
+            false
+        }
     }
 
     /// Whether admins may impersonate users; see
@@ -511,7 +540,7 @@ impl Auth {
         Ok(RegisterInfo {
             login: user.login,
             email: user.email,
-            google: false,
+            google: self.offers_google(),
         })
     }
 
@@ -1164,6 +1193,9 @@ fn is_https(headers: &HeaderMap) -> bool {
 
 #[cfg(feature = "cloudflare")]
 mod cloudflare;
+
+#[cfg(feature = "google")]
+mod google;
 
 #[cfg(test)]
 mod tests;

@@ -370,7 +370,7 @@ The routes are all JSON. Their errors are `AuthError` with the matching status:
 | `POST /api/auth/login` | anyone | `LoginRequest` → `UserInfo` + cookie; throttled |
 | `POST /api/auth/cloudflare` | anyone | → `UserInfo` + cookie |
 | `GET /api/auth/google`, `/google/register/{token}`, `/google/link` | anyone / anyone / signed in | redirect to Google |
-| `GET <redirect_url path>` (default `/api/auth/google/redirect`) | Google | callback; cookie + redirect |
+| `GET /api/auth/google/redirect` (`auth::google::REDIRECT_PATH`; `redirect_url` must use this path, a different one is logged as a warning) | Google | callback; cookie + redirect to `/`, or `/?error=user-not-found` / `/?error=auth-failed` |
 | `POST /api/auth/logout` | anyone | 204, deletes the session, clears the cookie |
 | `GET /api/auth/register/{token}` | anyone | `RegisterInfo`; 404 unknown, 410 used or expired |
 | `POST /api/auth/register/{token}` | anyone | `RegisterRequest` → `UserInfo` + cookie; ends the user's other sessions |

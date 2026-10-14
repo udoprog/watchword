@@ -20,7 +20,7 @@ default.
 | `musli` | | musli `Encode`/`Decode` on the wire types |
 | `server` | `auth::core`, `auth::store` | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin); the `Store` trait and `MemoryStore` |
 | `cloudflare` | `auth::cloudflare` | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
-| `google` | `auth::google` | Google OAuth (implies `server`; not implemented yet) |
+| `google` | `auth::google` | Google OAuth: `GoogleConfig` for `AuthBuilder::google`; with `axum`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
 | `axum` | `auth::axum` | the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors, `routes()` for the `/api/auth` JSON routes, and `Auth::guard` for WebSocket sessions (implies `server`; the Cloudflare and Google routes are not wired yet) |
 | `sqll` | `auth::sqll` | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA`, and the one-time migrations for track and territory in `docs/sqll/` (implies `server`) |
 | `yew` | `auth::yew` | `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings` and the `http` client |
