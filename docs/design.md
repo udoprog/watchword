@@ -537,7 +537,7 @@ if let Some(email) = &args.bootstrap_email {
 
 The migration renames `auth_method` `plain` → `password`, renames
 `registration_tokens` to `auth_tokens`, and converts the auth timestamps to
-INTEGER ms (if `SqllStore` is chosen).
+INTEGER ms (`SqllStore`'s schema).
 
 **Deletes or shrinks:**
 
@@ -567,11 +567,12 @@ This is a useful check on whether the API is small enough.
 
 ## 5. Open questions
 
-These are the user's choices. Each lists the options, and the recommended one
-is marked **(recommended)**.
+The user approved the design on 2026-10-14 and chose the recommended option
+for every question below, marked **(chosen)**. The other options stay for the
+record.
 
 1. **User identity: login names, emails, or both?**
-   - **(recommended) Both optional, at least one required.** track keeps logins
+   - **(chosen) Both optional, at least one required.** track keeps logins
      (and `root` without an email). territory turns logins off and stays
      email-only. This costs one optional column and a builder flag.
    - Email required everywhere. This is simpler, but track's `root` and any
@@ -579,17 +580,17 @@ is marked **(recommended)**.
    - Login required everywhere. territory would copy emails into logins and
      show both.
 2. **Can one user have both a password and Google?**
-   - **(recommended) No: one method, switchable (territory's model).** It is
+   - **(chosen) No: one method, switchable (territory's model).** It is
      already tested in territory and is the smallest model. Cloudflare Access
      still works for any user by email.
    - Yes: link and unlink Google alongside a password. This is more flexible,
      but adds account UI and rules (for example, never unlink the last method).
 3. **track's first admin on a fresh install.**
-   - **(recommended) A bootstrap link** (`--bootstrap-admin <email|login>`,
+   - **(chosen) A bootstrap link** (`--bootstrap-admin <email|login>`,
      logged at startup), as territory does. No default password.
    - Keep seeding `root` / `root` for new track databases.
 4. **Transport for account and admin operations.**
-   - **(recommended) The library's own JSON routes.** The components are then
+   - **(chosen) The library's own JSON routes.** The components are then
      self-contained, and both apps delete their WS user endpoints. Live admin
      updates come from the app forwarding `AuthEvent`s.
    - Keep them on each app's musli-web WebSocket. The library would provide
@@ -597,7 +598,7 @@ is marked **(recommended)**.
      endpoint definitions and components wiring. This is more code per app,
      and the components would need an app-supplied client trait.
 5. **Storage: ship a SQLite store, or traits only?**
-   - **(recommended) Both.** The `Store` trait is the API, and a `sqll`
+   - **(chosen) Both.** The `Store` trait is the API, and a `sqll`
      feature ships `SqllStore` over a documented schema with migration SQL,
      because both apps use sqll 0.14 and would otherwise write nearly the same
      ~500 lines. Each app migrates its auth columns to that schema once
@@ -606,26 +607,22 @@ is marked **(recommended)**.
      keeps its timestamp encoding, with no schema migration but duplicated
      code.
 6. **Crate layout.**
-   - **(recommended) One crate with disjoint features**, as now.
+   - **(chosen) One crate with disjoint features**, as now.
    - A workspace: `yew-auth` (types), `yew-auth-server`, `yew-auth-yew`. This
      isolates wasm and server dependency trees at the cost of three manifests
      and path dependencies.
 
 ## 6. Implementation cards
 
-The board already has two cards that depend on this one:
-
-- 00170ba3, "Server side: storage traits, providers and axum integration";
-- ec24345c, "Yew components".
-
-Both are large. The breakdown below splits them so that workers can run in
-parallel. The lead can keep the two cards as umbrellas or replace them.
+The board's two original cards, 00170ba3 (server side) and ec24345c (Yew
+components), were too large and are replaced by the breakdown below, which
+lets workers run in parallel.
 
 | # | Card | Depends on | Notes |
 |---|---|---|---|
 | A | **Types and feature layout**: the feature table; `types` module (`UserId`, `Role`, `Access`, `Method`, wire types, `AuthError`, validation); `musli` feature; move existing modules under `core`/`cloudflare`; CI over `--no-default-features`, each feature, `--all-features`, and `--target wasm32-unknown-unknown --features yew` | design | small; unblocks everything |
 | B | **`Store` trait, `MemoryStore`, and the `Auth` service**: builder, cookie config, key helper, throttle (from track), `AuthEvent`, bootstrap, and all operations with the rules of section 3; port territory's `auth/tests.rs` and `bootstrap/tests.rs` and track's throttle tests against `MemoryStore` | A | the core of the server side |
-| C | **`SqllStore`**: schema, migration SQL, implementation; run B's store tests against it | B | only if open question 5 keeps it |
+| C | **`SqllStore`**: schema, migration SQL, implementation; run B's store tests against it | B | kept: open question 5 chose it |
 | D | **Cloudflare provider**: track's identity glue (runtime config, log-once warnings, pending → active) on top of the existing `cloudflare` module | B | can run alongside E and F |
 | E | **Google provider**: port territory's `google_oauth.rs` and its state tests | B | can run alongside D and F |
 | F | **axum integration**: extractors, `routes()`, `guard()` for sockets, `LiveSession` cache; route-level tests with `MemoryStore` and `tower::ServiceExt` | B (routes for D and E are wired when those land, behind their features) | |
