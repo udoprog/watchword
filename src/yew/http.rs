@@ -11,9 +11,13 @@ use std::fmt;
 
 use gloo_net::http::{Request, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use web_sys::RequestCredentials;
 
-use crate::types::{AuthConfig, AuthError, LoginRequest, RegisterInfo, RegisterRequest, UserInfo};
+use crate::types::{
+    AuthConfig, AuthError, Link, LoginRequest, NewUser, PasswordChange, RegisterInfo,
+    RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
+};
 
 /// Why a request to an `/api/auth` route failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +115,106 @@ pub fn google_register_url(token: &str) -> String {
     format!("/api/auth/google/register/{}", encode(token))
 }
 
+/// Where the browser goes to switch the signed-in user to Google:
+/// `GET /api/auth/google/link`.
+pub const GOOGLE_LINK: &str = "/api/auth/google/link";
+
+/// Changes or sets the signed-in user's password:
+/// `POST /api/auth/account/password`. This session stays signed in and the
+/// user's other sessions end; a Google user switches to the password.
+pub async fn change_password(request: &PasswordChange) -> Result<UserInfo, Error> {
+    read(
+        post("/api/auth/account/password")
+            .json(request)?
+            .send()
+            .await?,
+    )
+    .await
+}
+
+/// Changes the signed-in user's own login or email: `PATCH /api/auth/account`.
+/// The role cannot be changed this way, nor the email of a Google user.
+pub async fn update_account(change: &UserChange) -> Result<UserInfo, Error> {
+    read(patch("/api/auth/account").json(change)?.send().await?).await
+}
+
+/// Every user, for admins: `GET /api/auth/users`.
+pub async fn users() -> Result<Vec<UserEntry>, Error> {
+    read(get("/api/auth/users").send().await?).await
+}
+
+/// The answer to [`create_user`]: the new user and their registration link,
+/// whose token is shown only this once.
+///
+/// Its JSON form is `{"entry": UserEntry, "link": Link}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreatedUser {
+    /// The new user.
+    pub entry: UserEntry,
+    /// The new user's registration link.
+    pub link: Link,
+}
+
+/// Creates a user, for admins: `POST /api/auth/users`. Fails with
+/// [`AuthError::Conflict`] when the login or email is taken.
+pub async fn create_user(new: &NewUser) -> Result<CreatedUser, Error> {
+    read(post("/api/auth/users").json(new)?.send().await?).await
+}
+
+/// Changes a user's login, email or role, for admins:
+/// `PATCH /api/auth/users/{id}`. An admin cannot change their own role.
+pub async fn update_user(id: UserId, change: &UserChange) -> Result<UserInfo, Error> {
+    read(patch(&user_path(id, "")).json(change)?.send().await?).await
+}
+
+/// Deletes a user, for admins: `DELETE /api/auth/users/{id}`. An admin cannot
+/// delete themselves.
+pub async fn delete_user(id: UserId) -> Result<(), Error> {
+    check(delete(&user_path(id, "")).send().await?).await?;
+    Ok(())
+}
+
+/// Issues a new registration or reset link for a user, using up their
+/// earlier ones, for admins: `POST /api/auth/users/{id}/link`. The token is
+/// shown only this once.
+pub async fn issue_link(id: UserId) -> Result<Link, Error> {
+    read(post(&user_path(id, "/link")).send().await?).await
+}
+
+/// Uses up a user's live link, for admins: `DELETE /api/auth/users/{id}/link`.
+pub async fn revoke_link(id: UserId) -> Result<(), Error> {
+    check(delete(&user_path(id, "/link")).send().await?).await?;
+    Ok(())
+}
+
+/// Ends every session of a user, for admins:
+/// `POST /api/auth/users/{id}/sign-out`.
+pub async fn sign_out_user(id: UserId) -> Result<(), Error> {
+    check(post(&user_path(id, "/sign-out")).send().await?).await?;
+    Ok(())
+}
+
+/// Revokes a user's access: their password is cleared, their links are used
+/// up and their sessions end, until they are issued a new link. For admins,
+/// and not on themselves: `POST /api/auth/users/{id}/revoke`.
+pub async fn revoke_access(id: UserId) -> Result<(), Error> {
+    check(post(&user_path(id, "/revoke")).send().await?).await?;
+    Ok(())
+}
+
+/// Signs this browser in as another user, for admins when the server enables
+/// impersonation: `POST /api/auth/users/{id}/impersonate`. The session
+/// cookie is replaced; reload the user afterwards, such as with
+/// [`AuthContext::refresh`](super::AuthContext::refresh).
+pub async fn impersonate(id: UserId) -> Result<(), Error> {
+    check(post(&user_path(id, "/impersonate")).send().await?).await?;
+    Ok(())
+}
+
+fn user_path(id: UserId, rest: &str) -> String {
+    format!("/api/auth/users/{id}{rest}")
+}
+
 fn register_path(token: &str) -> String {
     format!("/api/auth/register/{}", encode(token))
 }
@@ -138,6 +242,14 @@ fn get(url: &str) -> RequestBuilder {
 
 fn post(url: &str) -> RequestBuilder {
     Request::post(url).credentials(RequestCredentials::SameOrigin)
+}
+
+fn patch(url: &str) -> RequestBuilder {
+    Request::patch(url).credentials(RequestCredentials::SameOrigin)
+}
+
+fn delete(url: &str) -> RequestBuilder {
+    Request::delete(url).credentials(RequestCredentials::SameOrigin)
 }
 
 async fn read<T>(response: Response) -> Result<T, Error>

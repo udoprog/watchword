@@ -64,7 +64,7 @@ sqll = { version = "0.14.4", optional = true }
 # yew
 yew = { version = "0.23.0", optional = true }
 gloo-net = { version = "0.7.0", default-features = false, features = ["http", "json"], optional = true }
-web-sys = { version = "0.3.83", features = ["History", "HtmlInputElement", "Location", "RequestCredentials", "Window"], optional = true }
+web-sys = { version = "0.3.83", features = ["Clipboard", "History", "HtmlInputElement", "HtmlSelectElement", "Location", "Navigator", "RequestCredentials", "Window"], optional = true }
 wasm-bindgen-futures = { version = "0.4.56", optional = true }
 
 [dev-dependencies]
