@@ -18,7 +18,7 @@ default.
 |---|---|---|
 | *(none)* | `auth::types` | `UserId`, `Role`, `Access`, `Method`, the wire types (`UserInfo`, `AuthConfig`, `LoginRequest`, ...), `AuthError`, `validate_password`, `normalize_email` |
 | `musli` | | musli `Encode`/`Decode` on the wire types |
-| `server` | `auth::core` | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies |
+| `server` | `auth::core`, `auth::store` | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin); the `Store` trait and `MemoryStore` |
 | `cloudflare` | `auth::cloudflare` | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
 | `google` | `auth::google` | Google OAuth (implies `server`; not implemented yet) |
 | `axum` | `auth::axum` | extractors, routes, WebSocket session guard (implies `server`; not implemented yet) |

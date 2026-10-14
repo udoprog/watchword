@@ -5,7 +5,7 @@
 //! |---|---|
 //! | *(none)* | [`types`]: ids, roles, account state, wire types, [`AuthError`], validation |
 //! | `musli` | musli `Encode`/`Decode` on the wire types |
-//! | `server` | `core`: password hashing, ids, signed session cookies |
+//! | `server` | `core`: password hashing, ids, signed session cookies, the `Auth` service; `store`: the `Store` trait and `MemoryStore` |
 //! | `cloudflare` | `cloudflare`: Cloudflare Access (implies `server`) |
 //! | `google` | `google`: Google OAuth (implies `server`) |
 //! | `axum` | `axum`: extractors, routes, WebSocket session guard (implies `server`) |
@@ -20,6 +20,9 @@ pub mod types;
 
 #[cfg(feature = "server")]
 pub mod core;
+
+#[cfg(feature = "server")]
+pub mod store;
 
 #[cfg(feature = "cloudflare")]
 pub mod cloudflare;
@@ -44,7 +47,11 @@ pub use self::types::{
 
 #[cfg(feature = "server")]
 pub use self::core::{
-    PasswordError, SESSION_LIFETIME, TOKEN_LIFETIME, dummy_hash, generate_session_key,
-    hash_password, is_expired, new_session_id, new_token, session_cookie, session_expiry,
-    token_expiry, verify_password, verify_session_cookie,
+    Auth, AuthBuilder, AuthEvent, BootstrapAdmin, CookieConfig, PasswordError, SESSION_LIFETIME,
+    Secure, TOKEN_LIFETIME, dummy_hash, generate_session_key, hash_password, is_expired,
+    load_or_create_key, new_session_id, new_token, session_cookie, session_expiry, token_expiry,
+    verify_password, verify_session_cookie,
 };
+
+#[cfg(feature = "server")]
+pub use self::store::{MemoryStore, Store};

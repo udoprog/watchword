@@ -21,7 +21,7 @@ all-features = true
 [features]
 default = []
 musli = ["dep:musli-core"]
-server = ["dep:base64", "dep:bcrypt", "dep:cookie", "dep:hmac", "dep:http", "dep:rand", "dep:sha2", "dep:tokio"]
+server = ["dep:base64", "dep:bcrypt", "dep:cookie", "dep:hmac", "dep:http", "dep:rand", "dep:sha2", "dep:tokio", "dep:tracing"]
 cloudflare = ["server", "dep:aws-lc-rs", "dep:reqwest", "dep:serde_json"]
 google = ["server", "dep:reqwest", "dep:url", "dep:lru"]
 axum = ["server", "dep:axum"]
@@ -45,7 +45,8 @@ hmac = { version = "0.13.0", optional = true }
 http = { version = "1.5.0", optional = true }
 rand = { version = "0.10.3", optional = true }
 sha2 = { version = "0.11.0", optional = true }
-tokio = { version = "1.53.1", features = ["sync", "time"], optional = true }
+tokio = { version = "1.53.1", features = ["rt", "sync", "time"], optional = true }
+tracing = { version = "0.1.44", optional = true }
 
 # cloudflare, google
 aws-lc-rs = { version = "1.18.1", optional = true }

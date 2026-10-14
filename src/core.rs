@@ -1,15 +1,21 @@
-//! The server core: password hashing, session ids and link tokens, and signed
-//! session cookies.
+//! The server core: password hashing, session ids and link tokens, signed
+//! session cookies, and the [`Auth`] service that enforces the sign-in and
+//! user-management rules over a [`Store`](crate::store::Store).
 //!
-//! Needs the `server` feature. Nothing here touches storage or a web
-//! framework.
+//! Needs the `server` feature. Nothing here depends on a web framework.
 
 mod cookie;
 mod password;
+mod service;
 mod session;
+mod throttle;
 
 pub use self::cookie::{generate_session_key, session_cookie, verify_session_cookie};
 pub use self::password::{PasswordError, dummy_hash, hash_password, verify_password};
+pub use self::service::{
+    Auth, AuthBuilder, AuthEvent, BootstrapAdmin, CookieConfig, Error, Result, Secure,
+    load_or_create_key,
+};
 pub use self::session::{
     SESSION_LIFETIME, SESSION_LIFETIME_DAYS, TOKEN_LIFETIME, is_expired, new_session_id, new_token,
     session_expiry, token_expiry,
