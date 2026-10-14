@@ -11,7 +11,6 @@ use std::fmt;
 
 use gloo_net::http::{Request, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use web_sys::RequestCredentials;
 
 use crate::types::{
@@ -143,17 +142,7 @@ pub async fn users() -> Result<Vec<UserEntry>, Error> {
     read(get("/api/auth/users").send().await?).await
 }
 
-/// The answer to [`create_user`]: the new user and their registration link,
-/// whose token is shown only this once.
-///
-/// Its JSON form is `{"entry": UserEntry, "link": Link}`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CreatedUser {
-    /// The new user.
-    pub entry: UserEntry,
-    /// The new user's registration link.
-    pub link: Link,
-}
+pub use crate::types::CreatedUser;
 
 /// Creates a user, for admins: `POST /api/auth/users`. Fails with
 /// [`AuthError::Conflict`] when the login or email is taken.

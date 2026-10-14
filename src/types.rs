@@ -192,6 +192,20 @@ pub struct UserEntry {
     pub link_expires_at: Option<Timestamp>,
 }
 
+/// The answer to `POST /api/auth/users`: the new user and their
+/// registration link, whose token is shown only this once.
+///
+/// Its JSON form is `{"entry": UserEntry, "link": Link}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "musli", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli", musli(crate = musli_core))]
+pub struct CreatedUser {
+    /// The new user.
+    pub entry: UserEntry,
+    /// The new user's registration link.
+    pub link: Link,
+}
+
 /// What the sign-in page offers, from `GET /api/auth/config`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "musli", derive(Encode, Decode))]

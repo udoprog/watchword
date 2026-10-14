@@ -206,6 +206,8 @@ impl AuthBuilder {
                 events,
                 #[cfg(feature = "cloudflare")]
                 cloudflare: crate::cloudflare::Provider::new(self.cloudflare),
+                #[cfg(feature = "axum")]
+                live: crate::axum::LiveCache::default(),
             }),
         }
     }
@@ -236,6 +238,9 @@ struct Inner {
     /// The Cloudflare Access settings and their log-once warnings.
     #[cfg(feature = "cloudflare")]
     cloudflare: crate::cloudflare::Provider,
+    /// Recently confirmed live sessions, for the `LiveSession` extractor.
+    #[cfg(feature = "axum")]
+    live: crate::axum::LiveCache,
 }
 
 impl Auth {
@@ -261,6 +266,12 @@ impl Auth {
         &*self.inner.store
     }
 
+    /// The cache behind the `LiveSession` extractor.
+    #[cfg(feature = "axum")]
+    pub(crate) fn live_cache(&self) -> &crate::axum::LiveCache {
+        &self.inner.live
+    }
+
     /// Whether users have login names; see [`AuthBuilder::logins`].
     pub fn uses_logins(&self) -> bool {
         self.inner.logins
@@ -278,6 +289,9 @@ impl Auth {
     }
 
     fn emit(&self, event: AuthEvent) {
+        #[cfg(feature = "axum")]
+        self.inner.live.forget(&event);
+
         // Nobody listening is fine.
         let _ = self.inner.events.send(event);
     }

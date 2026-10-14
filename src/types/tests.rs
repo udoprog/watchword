@@ -166,6 +166,31 @@ fn entry_json() {
     assert_eq!(serde_json::from_value::<UserEntry>(value).unwrap(), entry);
 }
 
+/// The answer to `POST /api/auth/users`, as the axum route sends it and
+/// the Yew client reads it.
+#[test]
+fn created_user_json() {
+    let created = CreatedUser {
+        entry: UserEntry {
+            user: user(),
+            link_expires_at: Some(at("2026-10-08T12:00:00Z")),
+        },
+        link: Link {
+            token: "t".to_owned(),
+            expires_at: at("2026-10-08T12:00:00Z"),
+        },
+    };
+
+    let json = serde_json::to_value(&created).unwrap();
+    assert_eq!(json["entry"]["user"]["login"], "root");
+    assert_eq!(json["link"]["token"], "t");
+    assert_eq!(json.as_object().unwrap().len(), 2);
+    assert_eq!(
+        serde_json::from_value::<CreatedUser>(json).unwrap(),
+        created
+    );
+}
+
 #[cfg(feature = "musli")]
 #[test]
 fn musli_round_trip() {

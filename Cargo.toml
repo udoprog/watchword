@@ -24,7 +24,7 @@ musli = ["dep:musli-core"]
 server = ["dep:base64", "dep:bcrypt", "dep:cookie", "dep:hmac", "dep:http", "dep:rand", "dep:sha2", "dep:tokio", "dep:tracing"]
 cloudflare = ["server", "dep:aws-lc-rs", "dep:reqwest", "dep:serde_json"]
 google = ["server", "dep:reqwest", "dep:url", "dep:lru"]
-axum = ["server", "dep:axum"]
+axum = ["server", "dep:axum", "tokio/macros"]
 sqll = ["server", "dep:sqll"]
 yew = ["dep:yew", "dep:gloo-net", "dep:web-sys", "dep:wasm-bindgen-futures", "jiff/js"]
 
@@ -71,3 +71,4 @@ wasm-bindgen-futures = { version = "0.4.56", optional = true }
 musli = { version = "0.1.9", features = ["storage"] }
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
+tower = { version = "0.5.3", features = ["util"] }

@@ -40,7 +40,7 @@ pub mod sqll;
 pub mod yew;
 
 pub use self::types::{
-    Access, AuthConfig, AuthError, CloudflareConfig, Conflict, Link, LoginRequest,
+    Access, AuthConfig, AuthError, CloudflareConfig, Conflict, CreatedUser, Link, LoginRequest,
     MIN_PASSWORD_LEN, Method, NewUser, PasswordChange, RegisterInfo, RegisterRequest, Role,
     UserChange, UserEntry, UserId, UserInfo, normalize_email, validate_password,
 };
