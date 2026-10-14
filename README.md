@@ -21,7 +21,7 @@ default.
 | `server` | `auth::core`, `auth::store` | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin); the `Store` trait and `MemoryStore` |
 | `cloudflare` | `auth::cloudflare` | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
 | `google` | `auth::google` | Google OAuth: `GoogleConfig` for `AuthBuilder::google`; with `axum`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
-| `axum` | `auth::axum` | the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors, `routes()` for the `/api/auth` JSON routes, and `Auth::guard` for WebSocket sessions (implies `server`; the Cloudflare and Google routes are not wired yet) |
+| `axum` | `auth::axum` | the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors, `routes()` for the `/api/auth` JSON routes, and `Auth::guard` for WebSocket sessions, plus the Cloudflare and Google routes when those features are on (implies `server`) |
 | `sqll` | `auth::sqll` | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA`, and the one-time migrations for track and territory in `docs/sqll/` (implies `server`) |
 | `yew` | `auth::yew` | `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings` and the `http` client |
 
@@ -42,6 +42,44 @@ auth = { package = "yew-auth", path = "../yew-auth", features = ["yew"] }
 
 Adjust the path to where this repository is checked out relative to the
 depending crate.
+
+## Example app
+
+[`examples/app`](examples/app) is an axum server and a Yew frontend wired up
+with all three sign-in methods, `MemoryStore` and a WebSocket held open for
+the session: a reference for apps taking the library, and a way to try the
+components by hand. It is its own cargo workspace, so it adds nothing to the
+library's builds or lockfile.
+
+Build the frontend with [trunk](https://trunkrs.dev), then run the server,
+which serves it:
+
+```sh
+cd examples/app/frontend && trunk build
+cd examples/app && cargo run -p yew-auth-example-server -- --bind 127.0.0.1:8080
+```
+
+The server prints a registration link for the bootstrap admin (`admin` by
+default, `--bootstrap-admin NAME` to change it); open it to choose a password
+and sign in. Everything is in memory, so a restart starts over. Google sign-in
+is on when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set, with the
+OAuth client's redirect URL at `PUBLIC_URL/api/auth/google/redirect`
+(`--public-url`, by default `http://` plus the bind address). Cloudflare Access
+is configured on the app's Settings page, or from `CLOUDFLARE_TEAM_DOMAIN` and
+`CLOUDFLARE_AUDIENCE`; `CLOUDFLARE_TRUST_EMAIL_HEADER=1` accepts Access's email
+header alone, for local testing only. `--help` lists the options.
+
+trunk builds with the `wasm-bindgen` CLI matching `examples/app/Cargo.lock`
+(0.2.129), downloading it unless it is installed or already in trunk's cache.
+
+When a change touches the example or the API it uses, also run:
+
+```sh
+cd examples/app && cargo clippy -p yew-auth-example-server -- -D warnings
+cd examples/app && cargo clippy -p yew-auth-example-frontend --target wasm32-unknown-unknown -- -D warnings
+cd examples/app && cargo fmt --all --check
+cd examples/app/frontend && trunk build
+```
 
 ## Checks
 

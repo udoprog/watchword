@@ -1,0 +1,8 @@
+# The example app: an axum server and a Yew frontend over yew-auth.
+#
+# Its own workspace, so the library's builds, features and lockfile are
+# untouched by it. Build each crate on its own: the server natively, the
+# frontend for wasm with trunk (see README.md).
+[workspace]
+resolver = "3"
+members = ["server", "frontend"]

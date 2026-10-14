@@ -1,0 +1,235 @@
+/* The example's styling of the yew-auth components, through their stable
+   auth-* class names (see the `auth::yew` module docs). */
+
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --text: #1d2330;
+  --muted: #687083;
+  --border: #d9dde5;
+  --accent: #3559d6;
+  --accent-text: #ffffff;
+  --danger: #c23434;
+  --ok: #2e7d4f;
+  --warn: #a86b00;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161b;
+    --surface: #1d2027;
+    --text: #e6e8ee;
+    --muted: #9198a8;
+    --border: #343946;
+    --accent: #7d97ff;
+    --accent-text: #10131a;
+    --danger: #ff7b7b;
+    --ok: #6ccf98;
+    --warn: #e8b04a;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 15px/1.5 system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button, input, select { font: inherit; color: inherit; }
+
+input, select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  background: var(--surface);
+}
+
+button:disabled { opacity: 0.6; cursor: default; }
+
+a { color: var(--accent); }
+
+/* The app's own frame. */
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand { font-weight: 600; }
+.nav { display: flex; gap: 4px; flex: 1; }
+.nav-item { border: none; background: none; }
+.nav-item[aria-current="page"] { color: var(--accent); font-weight: 600; }
+
+.content { padding: 24px 20px; display: flex; justify-content: center; }
+
+.panel {
+  width: 100%;
+  max-width: 560px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 24px;
+}
+
+.panel.wide { max-width: 1000px; }
+.hint, .auth-hint { color: var(--muted); font-size: 13px; }
+
+/* Sign-in, registration and splash pages. */
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.auth-splash .auth-title { color: var(--muted); }
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 28px;
+}
+
+.auth-title { margin: 0 0 4px; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+.auth-heading { margin: 0 0 16px; font-size: 22px; }
+.auth-subheading { margin: 20px 0 8px; font-size: 16px; }
+
+.auth-form { display: flex; flex-direction: column; gap: 12px; }
+.auth-field { display: flex; flex-direction: column; gap: 4px; }
+.auth-label { color: var(--muted); font-size: 13px; }
+.auth-input { width: 100%; }
+.auth-value { font-weight: 500; }
+.auth-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+
+.auth-submit, .auth-retry, .auth-cloudflare, .auth-add, .auth-confirm-yes {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.auth-alternatives {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.auth-google {
+  display: inline-block;
+  text-align: center;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  color: var(--text);
+}
+
+.auth-message:empty { display: none; }
+.auth-error { color: var(--danger); margin: 0 0 12px; }
+.auth-notice { color: var(--warn); margin: 0 0 12px; }
+.auth-status { color: var(--muted); }
+
+.auth-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* The user menu. */
+
+.auth-menu { position: relative; }
+.auth-menu-button { border-radius: 999px; }
+
+.auth-menu-items {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 10;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  min-width: 140px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.15);
+}
+
+.auth-menu-item { display: block; width: 100%; text-align: left; border: none; background: none; }
+.auth-menu-item:hover { background: var(--bg); }
+
+/* The account panel. */
+
+.auth-account { display: flex; flex-direction: column; gap: 8px; }
+.auth-details { display: flex; gap: 32px; }
+.auth-details .auth-field { gap: 0; }
+.auth-sign-out { color: var(--danger); }
+
+/* Admin users. */
+
+.auth-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.auth-toolbar .auth-heading { margin: 0; flex: 1; }
+.auth-filter { display: flex; gap: 6px; margin-bottom: 8px; }
+.auth-filter .auth-input { flex: 1; }
+.auth-clear { white-space: nowrap; }
+.auth-add-user { margin-bottom: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+
+.auth-users { width: 100%; border-collapse: collapse; }
+.auth-users th, .auth-users td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.auth-users th { color: var(--muted); font-weight: 500; font-size: 13px; }
+.auth-user-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.auth-user-actions button { font-size: 13px; padding: 3px 8px; }
+.auth-me { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+
+.auth-badge {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.auth-muted { color: var(--muted); }
+.auth-access.auth-active { color: var(--ok); }
+.auth-access.auth-pending { color: var(--warn); }
+.auth-access.auth-revoked { color: var(--danger); }
+.auth-link-state { color: var(--muted); font-size: 13px; }
+.auth-link { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
+.auth-link-url { flex: 1; min-width: 240px; }
+.auth-danger { color: var(--danger); }
+.auth-confirm { display: inline-flex; gap: 4px; align-items: center; }
+.auth-pages { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 12px; }
+
+/* Cloudflare settings. */
+
+.auth-cloudflare-settings .auth-instructions { color: var(--muted); font-size: 14px; }
+.auth-toggle { flex-direction: row; align-items: center; gap: 8px; }

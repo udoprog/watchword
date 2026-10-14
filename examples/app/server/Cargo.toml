@@ -1,0 +1,17 @@
+[package]
+name = "yew-auth-example-server"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "The yew-auth example's axum server."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+auth = { package = "yew-auth", path = "../../..", features = ["axum", "cloudflare", "google"] }
+axum = { version = "0.8.9", features = ["ws"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tower-http = { version = "0.6.11", features = ["fs"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = "2.5.8"
