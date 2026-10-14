@@ -1,0 +1,117 @@
+//! Cloudflare Access sign-in on [`Auth`] (feature `cloudflare`).
+//!
+//! Access vouches for an email, which finds an existing user; users are never
+//! created. Signing in mints an ordinary session, so Access is consulted only
+//! when signing in. A pending user who signs in becomes active, and a revoked
+//! user is refused.
+
+use http::HeaderMap;
+
+use super::{Auth, AuthBuilder, AuthEvent, Result};
+use crate::store::{Session, User};
+use crate::types::{Access, AuthError, CloudflareConfig};
+
+impl AuthBuilder {
+    /// The Cloudflare Access settings to start with, which are logged when
+    /// the service is built. `None` and settings that are not `enabled` both
+    /// turn Access sign-in off. Change them later with
+    /// [`Auth::set_cloudflare`]. The default is `None`.
+    pub fn cloudflare(mut self, config: Option<CloudflareConfig>) -> Self {
+        self.cloudflare = config;
+        self
+    }
+}
+
+impl Auth {
+    /// Applies changed Cloudflare Access settings, such as when an admin
+    /// saves them in the app's settings page. `None` and settings that are
+    /// not `enabled` both turn Access sign-in off. Settings that differ from
+    /// the current ones are logged, with a warning when they are unsafe or
+    /// let no one sign in; the same settings again change nothing.
+    pub fn set_cloudflare(&self, config: Option<CloudflareConfig>) {
+        self.inner.cloudflare.set(config);
+    }
+
+    /// Whether the request carries Cloudflare Access credentials that sign in
+    /// an existing, not revoked user, as
+    /// [`sign_in_cloudflare`](Auth::sign_in_cloudflare) would. This is
+    /// [`AuthConfig::cloudflare`](crate::AuthConfig::cloudflare).
+    ///
+    /// When the request carries Access credentials that do not, the reason
+    /// is logged as a warning, at most once a minute.
+    pub async fn cloudflare_available(&self, headers: &HeaderMap) -> Result<bool> {
+        Ok(self.cloudflare_user(headers).await?.is_some())
+    }
+
+    /// Signs in the user whose email the request's Cloudflare Access
+    /// credentials vouch for, whatever their [`Method`](crate::Method).
+    ///
+    /// A pending user becomes active, because Access has vouched for their
+    /// email. Anything else that is not an active user, including a revoked
+    /// user, an unknown email and Access being disabled, is
+    /// [`AuthError::Unauthorized`], with the reason logged as for
+    /// [`cloudflare_available`](Auth::cloudflare_available).
+    pub async fn sign_in_cloudflare(&self, headers: &HeaderMap) -> Result<(User, Session)> {
+        let mut user = self
+            .cloudflare_user(headers)
+            .await?
+            .ok_or(AuthError::Unauthorized)?;
+
+        if user.access == Access::Pending {
+            if !self.store().set_access(user.id, Access::Active).await? {
+                return Err(AuthError::Unauthorized.into());
+            }
+
+            user = self
+                .store()
+                .user(user.id)
+                .await?
+                .ok_or(AuthError::Unauthorized)?;
+
+            tracing::info!(user = %user.id, "Cloudflare Access activated a pending user");
+            self.emit(AuthEvent::UserChanged(user.info()));
+        }
+
+        if user.access != Access::Active {
+            return Err(AuthError::Unauthorized.into());
+        }
+
+        let session = self.create_session(user.id).await?;
+        Ok((user, session))
+    }
+
+    /// The user the request's Access credentials sign in: an existing user
+    /// with the vouched-for email who is not revoked.
+    async fn cloudflare_user(&self, headers: &HeaderMap) -> Result<Option<User>> {
+        let provider = &self.inner.cloudflare;
+
+        let Some(email) = provider.email(headers).await else {
+            return Ok(None);
+        };
+
+        let Some(user) = self.store().user_by_email(&email).await? else {
+            provider.warn(format!(
+                "Cloudflare Access sign-in failed: no user has the email {email}"
+            ));
+            return Ok(None);
+        };
+
+        if user.access == Access::Revoked {
+            provider.warn(format!(
+                "Cloudflare Access sign-in failed: the user with the email {email} has had their access revoked"
+            ));
+            return Ok(None);
+        }
+
+        Ok(Some(user))
+    }
+
+    /// The Cloudflare Access warnings logged within the last minute.
+    #[cfg(test)]
+    pub(crate) fn cloudflare_warnings(&self) -> Vec<String> {
+        self.inner.cloudflare.warnings()
+    }
+}
+
+#[cfg(test)]
+mod tests;

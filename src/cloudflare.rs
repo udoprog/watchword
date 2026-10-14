@@ -4,6 +4,14 @@
 //! JWT (RS256) in a header and the `CF_Authorization` cookie. The JWT is
 //! verified against the team's signing keys published at
 //! `https://<team_domain>/cdn-cgi/access/certs`.
+//!
+//! [`Access`] identifies a request's user by email. The [`Auth`](crate::Auth)
+//! service builds on it: it takes the settings as a
+//! [`CloudflareConfig`](crate::CloudflareConfig) (see
+//! [`AuthBuilder::cloudflare`](crate::AuthBuilder::cloudflare) and
+//! [`Auth::set_cloudflare`](crate::Auth::set_cloudflare)), matches the
+//! email to an existing user, and signs them in with
+//! [`Auth::sign_in_cloudflare`](crate::Auth::sign_in_cloudflare).
 
 use std::collections::HashMap;
 use std::error::Error as StdError;
@@ -22,8 +30,14 @@ use serde::Deserialize;
 
 use crate::types::normalize_email;
 
+mod provider;
+pub(crate) use self::provider::Provider;
+
+/// The header in which Access sends the authenticated user's email.
 pub const EMAIL_HEADER: &str = "cf-access-authenticated-user-email";
+/// The header in which Access sends its signed JWT.
 pub const JWT_HEADER: &str = "cf-access-jwt-assertion";
+/// The cookie in which Access keeps its signed JWT.
 pub const JWT_COOKIE: &str = "CF_Authorization";
 
 /// Tolerated clock skew when checking `exp` and `nbf`.
@@ -36,6 +50,7 @@ const MIN_REFETCH_INTERVAL: Duration = Duration::from_secs(60);
 /// How long fetching the signing keys may take.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How [`Access`] identifies a request's user.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// The team's host, such as `example.cloudflareaccess.com`.
@@ -48,6 +63,7 @@ pub struct Config {
     pub verify_jwt: bool,
 }
 
+/// Why [`Access`] did not identify a request's user.
 #[derive(Debug, thiserror::Error)]
 pub enum AccessError {
     #[error("neither the email header nor the JWT is enabled")]
@@ -85,13 +101,17 @@ pub enum AccessError {
 /// An RSA signing key, with `n` and `e` as big-endian bytes.
 #[derive(Debug, Clone)]
 pub struct Jwk {
+    /// The key id, as named by a JWT's `kid`.
     pub kid: String,
+    /// The modulus.
     pub n: Vec<u8>,
+    /// The public exponent.
     pub e: Vec<u8>,
 }
 
 /// Fetches a team's current signing keys.
 pub trait KeyFetcher: Send + Sync {
+    /// Fetches the signing keys of the team at `team_domain`.
     fn fetch(
         &self,
         team_domain: &str,
@@ -105,6 +125,7 @@ pub struct HttpKeyFetcher {
 }
 
 impl HttpKeyFetcher {
+    /// Fetches with `client`.
     pub fn new(client: reqwest::Client) -> Self {
         Self { client }
     }
@@ -126,6 +147,7 @@ impl KeyFetcher for HttpKeyFetcher {
     }
 }
 
+/// Why a key set could not be parsed.
 #[derive(Debug, thiserror::Error)]
 pub enum JwksError {
     #[error("malformed key set")]
@@ -189,6 +211,7 @@ pub struct Access<F = HttpKeyFetcher> {
 }
 
 impl Access<HttpKeyFetcher> {
+    /// Identifies users as `config` says, fetching keys from Cloudflare.
     pub fn new(config: Config) -> Self {
         Self::with_fetcher(config, HttpKeyFetcher::default())
     }
@@ -198,6 +221,7 @@ impl<F> Access<F>
 where
     F: KeyFetcher,
 {
+    /// Identifies users as `config` says, fetching keys with `fetcher`.
     pub fn with_fetcher(config: Config, fetcher: F) -> Self {
         Self {
             config,
@@ -400,6 +424,21 @@ where
         .decode(part)
         .map_err(|_| AccessError::Malformed)?;
     serde_json::from_slice(&bytes).map_err(|_| AccessError::Malformed)
+}
+
+/// Whether the request carries anything Cloudflare Access adds: its email
+/// header, its JWT header or its cookie. Whether it is valid is another
+/// matter; see [`Access::email`].
+pub fn presents_access(headers: &HeaderMap) -> bool {
+    headers.contains_key(EMAIL_HEADER)
+        || headers.contains_key(JWT_HEADER)
+        || headers
+            .get_all(COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(Cookie::split_parse)
+            .filter_map(Result::ok)
+            .any(|c| c.name() == JWT_COOKIE)
 }
 
 fn jwt_from_headers(headers: &HeaderMap) -> Option<String> {

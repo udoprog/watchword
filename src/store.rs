@@ -322,6 +322,9 @@ pub(crate) trait DynStore: Send + Sync + 'static {
     // Used by the Google sign-in paths.
     #[cfg_attr(not(test), allow(dead_code))]
     fn bind_google_sub<'a>(&'a self, id: UserId, sub: &'a str) -> BoxFuture<'a, bool>;
+    // Used by Cloudflare Access sign-in, which activates pending users.
+    #[cfg_attr(not(feature = "cloudflare"), allow(dead_code))]
+    fn set_access(&self, id: UserId, access: Access) -> BoxFuture<'_, bool>;
     fn revoke(&self, id: UserId, now: Timestamp) -> BoxFuture<'_, bool>;
     fn create_session<'a>(&'a self, session: &'a Session) -> BoxFuture<'a, ()>;
     fn session<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<Session>>;
@@ -399,6 +402,10 @@ where
 
     fn bind_google_sub<'a>(&'a self, id: UserId, sub: &'a str) -> BoxFuture<'a, bool> {
         Box::pin(Store::bind_google_sub(self, id, sub))
+    }
+
+    fn set_access(&self, id: UserId, access: Access) -> BoxFuture<'_, bool> {
+        Box::pin(Store::set_access(self, id, access))
     }
 
     fn revoke(&self, id: UserId, now: Timestamp) -> BoxFuture<'_, bool> {

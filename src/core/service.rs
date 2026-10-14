@@ -157,6 +157,8 @@ pub struct AuthBuilder {
     logins: bool,
     trusted_proxies: Vec<IpAddr>,
     impersonation: bool,
+    #[cfg(feature = "cloudflare")]
+    cloudflare: Option<crate::types::CloudflareConfig>,
 }
 
 impl AuthBuilder {
@@ -202,6 +204,8 @@ impl AuthBuilder {
                 impersonation: self.impersonation,
                 throttle: LoginThrottle::new(&self.trusted_proxies),
                 events,
+                #[cfg(feature = "cloudflare")]
+                cloudflare: crate::cloudflare::Provider::new(self.cloudflare),
             }),
         }
     }
@@ -229,6 +233,9 @@ struct Inner {
     impersonation: bool,
     throttle: LoginThrottle,
     events: broadcast::Sender<AuthEvent>,
+    /// The Cloudflare Access settings and their log-once warnings.
+    #[cfg(feature = "cloudflare")]
+    cloudflare: crate::cloudflare::Provider,
 }
 
 impl Auth {
@@ -245,6 +252,8 @@ impl Auth {
             logins: true,
             trusted_proxies: Vec::new(),
             impersonation: false,
+            #[cfg(feature = "cloudflare")]
+            cloudflare: None,
         }
     }
 
@@ -1136,6 +1145,9 @@ fn is_https(headers: &HeaderMap) -> bool {
         .and_then(|v| v.split(',').next())
         .is_some_and(|proto| proto.trim().eq_ignore_ascii_case("https"))
 }
+
+#[cfg(feature = "cloudflare")]
+mod cloudflare;
 
 #[cfg(test)]
 mod tests;
