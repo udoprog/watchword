@@ -1,7 +1,15 @@
 [package]
-name = "auth"
+name = "yew-auth"
+version = "0.1.0"
+authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
+description = "Storage-agnostic authentication primitives: roles, password hashing, sessions, signed cookies and Cloudflare Access."
+license = "MIT OR Apache-2.0"
+readme = "README.md"
 publish = false
+
+[lib]
+name = "auth"
 
 [dependencies]
 aws-lc-rs = "1.18.1"
