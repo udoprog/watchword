@@ -216,6 +216,8 @@ mod statements {
         pub(super) set_google_sub: TypedStatement<(String, i64), ()>,
         #[sql = "UPDATE users SET access = ? WHERE id = ? RETURNING id"]
         pub(super) set_access: TypedStatement<(String, i64), i64>,
+        #[sql = "UPDATE users SET access = 'active' WHERE id = ? AND access = 'pending' RETURNING id"]
+        pub(super) activate: TypedStatement<(i64,), i64>,
         #[sql = "UPDATE users SET access = 'revoked', password_hash = NULL WHERE id = ? RETURNING id"]
         pub(super) revoke: TypedStatement<(i64,), i64>,
 
@@ -499,6 +501,12 @@ where
         self.write(move |w| {
             let sql = sql_id(id);
 
+            // Read inside the transaction, so a revocation cannot land in
+            // between.
+            if w.read.user(id)?.is_none_or(|u| u.access == Access::Revoked) {
+                return Ok(false);
+            }
+
             if !w.set_credential(sql, &cred)? {
                 return Ok(false);
             }
@@ -538,6 +546,11 @@ where
             Ok(row.first()?.is_some())
         })
         .await
+    }
+
+    async fn activate(&self, id: UserId) -> Result<bool> {
+        self.write(move |w| Ok(w.activate.bind((sql_id(id),))?.first()?.is_some()))
+            .await
     }
 
     async fn revoke(&self, id: UserId, now: Timestamp) -> Result<bool> {

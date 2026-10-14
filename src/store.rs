@@ -212,7 +212,10 @@ pub trait Store: Send + Sync + 'static {
 
     /// In one transaction: sets the credential (setting
     /// [`User::method`] to match), marks the user active, and deletes the
-    /// user's sessions except `keep`. Returns whether the user existed.
+    /// user's sessions except `keep`. Returns whether it did: `false`, with
+    /// nothing changed, when there is no such user or the user is revoked,
+    /// so that a revocation that lands after the caller read the user is
+    /// not undone.
     fn set_credential(
         &self,
         id: UserId,
@@ -226,6 +229,12 @@ pub trait Store: Send + Sync + 'static {
 
     /// Sets the user's access. Returns whether the user existed.
     fn set_access(&self, id: UserId, access: Access) -> impl Future<Output = Result<bool>> + Send;
+
+    /// Sets the user's access to active only if it is pending, as one atomic
+    /// change. Returns whether it changed: `false`, with nothing changed,
+    /// when there is no such user or the user is not pending, such as one
+    /// revoked after the caller read them.
+    fn activate(&self, id: UserId) -> impl Future<Output = Result<bool>> + Send;
 
     /// In one transaction: sets access to revoked, clears the password, uses
     /// up the user's unused tokens at `now` and deletes their sessions.
@@ -324,7 +333,7 @@ pub(crate) trait DynStore: Send + Sync + 'static {
     fn bind_google_sub<'a>(&'a self, id: UserId, sub: &'a str) -> BoxFuture<'a, bool>;
     // Used by Cloudflare Access sign-in, which activates pending users.
     #[cfg_attr(not(feature = "cloudflare"), allow(dead_code))]
-    fn set_access(&self, id: UserId, access: Access) -> BoxFuture<'_, bool>;
+    fn activate(&self, id: UserId) -> BoxFuture<'_, bool>;
     fn revoke(&self, id: UserId, now: Timestamp) -> BoxFuture<'_, bool>;
     fn create_session<'a>(&'a self, session: &'a Session) -> BoxFuture<'a, ()>;
     fn session<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<Session>>;
@@ -404,8 +413,8 @@ where
         Box::pin(Store::bind_google_sub(self, id, sub))
     }
 
-    fn set_access(&self, id: UserId, access: Access) -> BoxFuture<'_, bool> {
-        Box::pin(Store::set_access(self, id, access))
+    fn activate(&self, id: UserId) -> BoxFuture<'_, bool> {
+        Box::pin(Store::activate(self, id))
     }
 
     fn revoke(&self, id: UserId, now: Timestamp) -> BoxFuture<'_, bool> {

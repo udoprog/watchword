@@ -58,6 +58,8 @@ macro_rules! store_suite {
             impersonation,
             events_are_sent,
             users_lists_live_links,
+            activation_only_changes_pending_users,
+            credentials_are_not_set_on_revoked_users,
         }
     };
 
@@ -1474,5 +1476,68 @@ where
     assert_eq!(entry(active.id).link_expires_at, None);
     assert!(entry(active.id).user.has_password);
     assert!(!entry(pending.id).user.has_password);
+    Ok(())
+}
+
+pub(crate) async fn activation_only_changes_pending_users<S>(store: S) -> TestResult
+where
+    S: Store + Clone,
+{
+    let env = env(store).await?;
+
+    let (pending, _) = env.invite("pending@example.com").await?;
+    assert!(env.store.activate(pending.id).await?);
+    assert_eq!(env.reload(pending.id).await?.access, Access::Active);
+
+    // Activating again reports no change.
+    assert!(!env.store.activate(pending.id).await?);
+    assert_eq!(env.reload(pending.id).await?.access, Access::Active);
+
+    // A revocation that lands after the caller read a pending user is not
+    // undone.
+    let (revoked, _) = env.invite("revoked@example.com").await?;
+    assert!(env.store.revoke(revoked.id, Timestamp::now()).await?);
+    assert!(!env.store.activate(revoked.id).await?);
+    assert_eq!(env.reload(revoked.id).await?.access, Access::Revoked);
+
+    assert!(!env.store.activate(UserId(9999)).await?);
+    Ok(())
+}
+
+pub(crate) async fn credentials_are_not_set_on_revoked_users<S>(store: S) -> TestResult
+where
+    S: Store + Clone,
+{
+    let env = env(store).await?;
+
+    let user = env.password_user("someone@example.com").await?;
+    let (_, session) = env.password_login("someone@example.com", PASSWORD).await?;
+    assert!(env.store.revoke(user.id, Timestamp::now()).await?);
+
+    let cred = Credential::Google {
+        sub: sub("someone@example.com"),
+        email: "someone@example.com".to_owned(),
+    };
+    assert!(!env.store.set_credential(user.id, &cred, None).await?);
+    let hash = Credential::Password("hash".to_owned());
+    assert!(
+        !env.store
+            .set_credential(user.id, &hash, Some(&session.id))
+            .await?
+    );
+
+    let after = env.reload(user.id).await?;
+    assert_eq!(after.access, Access::Revoked);
+    assert_eq!(after.method, Method::Password);
+    assert_eq!(after.google_sub, None);
+    assert_eq!(after.password_hash, None);
+
+    // A link still restores a revoked user.
+    let token = env.issue(user.id).await?;
+    let request = RegisterRequest {
+        password: PASSWORD.to_owned(),
+    };
+    env.auth.register(&token, &request).await?;
+    assert_eq!(env.reload(user.id).await?.access, Access::Active);
     Ok(())
 }

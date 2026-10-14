@@ -236,10 +236,15 @@ pub trait Store: Send + Sync + 'static {
     async fn delete_user(&self, id: UserId) -> Result<bool>;               // sessions and tokens go with it
     /// Sets the credential (password hash, or Google subject and email),
     /// marks the user active, and deletes the user's sessions except `keep`.
+    /// Refuses (false) a revoked user, so a concurrent revoke is not undone.
     async fn set_credential(&self, id: UserId, cred: &Credential, keep: Option<&str>) -> Result<bool>;
     /// Binds a Google subject only if the user has none or the same one.
     async fn bind_google_sub(&self, id: UserId, sub: &str) -> Result<bool>;
     async fn set_access(&self, id: UserId, access: Access) -> Result<bool>;
+    /// Pending -> active only, atomically; false when the user is not pending
+    /// (such as one revoked since it was read). Every activation outside a
+    /// link goes through this, never a read followed by `set_access`.
+    async fn activate(&self, id: UserId) -> Result<bool>;
     /// access=revoked, password cleared, unused tokens used up, sessions deleted.
     async fn revoke(&self, id: UserId, now: Timestamp) -> Result<bool>;
 

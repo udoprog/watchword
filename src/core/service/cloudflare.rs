@@ -58,9 +58,9 @@ impl Auth {
             .ok_or(AuthError::Unauthorized)?;
 
         if user.access == Access::Pending {
-            if !self.store().set_access(user.id, Access::Active).await? {
-                return Err(AuthError::Unauthorized.into());
-            }
+            // Only a user who is still pending is activated, so a revocation
+            // since the read above is not undone.
+            let activated = self.store().activate(user.id).await?;
 
             user = self
                 .store()
@@ -68,8 +68,10 @@ impl Auth {
                 .await?
                 .ok_or(AuthError::Unauthorized)?;
 
-            tracing::info!(user = %user.id, "Cloudflare Access activated a pending user");
-            self.emit(AuthEvent::UserChanged(user.info()));
+            if activated {
+                tracing::info!(user = %user.id, "Cloudflare Access activated a pending user");
+                self.emit(AuthEvent::UserChanged(user.info()));
+            }
         }
 
         if user.access != Access::Active {

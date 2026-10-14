@@ -20,6 +20,10 @@ struct Inner {
     sessions: HashMap<String, Session>,
     tokens: HashMap<String, Token>,
     config: HashMap<String, String>,
+    /// A user to revoke at the start of the next conditional write, to stand
+    /// in for a concurrent revocation in tests.
+    #[cfg(test)]
+    revoke_before_write: Option<UserId>,
 }
 
 impl MemoryStore {
@@ -32,6 +36,30 @@ impl MemoryStore {
         // Every change is applied whole before the lock is released, so the
         // data is consistent even if a panic poisoned it.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Revokes the user `id` at the start of the next
+    /// [`activate`](Store::activate) or
+    /// [`set_credential`](Store::set_credential), after the caller has read
+    /// the user, as a concurrent revocation would.
+    #[cfg(test)]
+    pub(crate) fn revoke_before_next_write(&self, id: UserId) {
+        self.lock().revoke_before_write = Some(id);
+    }
+
+    /// Locks the store for a conditional write, first applying the
+    /// revocation set by
+    /// [`revoke_before_next_write`](Self::revoke_before_next_write).
+    fn lock_for_write(&self) -> MutexGuard<'_, Inner> {
+        #[allow(unused_mut)]
+        let mut inner = self.lock();
+
+        #[cfg(test)]
+        if let Some(id) = inner.revoke_before_write.take() {
+            inner.revoke(id, Timestamp::now());
+        }
+
+        inner
     }
 }
 
@@ -90,6 +118,18 @@ impl Inner {
 
         user.access = Access::Active;
         Ok(true)
+    }
+
+    fn revoke(&mut self, id: UserId, now: Timestamp) -> bool {
+        let Some(user) = self.users.get_mut(&id) else {
+            return false;
+        };
+
+        user.access = Access::Revoked;
+        user.password_hash = None;
+        self.use_up_tokens(id, now);
+        self.delete_sessions(id, None);
+        true
     }
 
     fn delete_sessions(&mut self, user: UserId, keep: Option<&str>) {
@@ -236,7 +276,15 @@ impl Store for MemoryStore {
         cred: &Credential,
         keep: Option<&str>,
     ) -> Result<bool> {
-        let mut inner = self.lock();
+        let mut inner = self.lock_for_write();
+
+        if inner
+            .users
+            .get(&id)
+            .is_none_or(|u| u.access == Access::Revoked)
+        {
+            return Ok(false);
+        }
 
         if !inner.set_credential(id, cred)? {
             return Ok(false);
@@ -281,18 +329,23 @@ impl Store for MemoryStore {
         Ok(true)
     }
 
-    async fn revoke(&self, id: UserId, now: Timestamp) -> Result<bool> {
-        let mut inner = self.lock();
+    async fn activate(&self, id: UserId) -> Result<bool> {
+        let mut inner = self.lock_for_write();
 
         let Some(user) = inner.users.get_mut(&id) else {
             return Ok(false);
         };
 
-        user.access = Access::Revoked;
-        user.password_hash = None;
-        inner.use_up_tokens(id, now);
-        inner.delete_sessions(id, None);
+        if user.access != Access::Pending {
+            return Ok(false);
+        }
+
+        user.access = Access::Active;
         Ok(true)
+    }
+
+    async fn revoke(&self, id: UserId, now: Timestamp) -> Result<bool> {
+        Ok(self.lock().revoke(id, now))
     }
 
     async fn create_session(&self, session: &Session) -> Result<()> {

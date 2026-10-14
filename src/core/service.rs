@@ -689,8 +689,10 @@ impl Auth {
         cred: &Credential,
         keep: Option<&str>,
     ) -> Result<User> {
+        // Refused for a user revoked since the caller read them.
         if !self.store().set_credential(id, cred, keep).await? {
-            return Err(AuthError::NotFound.into());
+            self.user(id).await?;
+            return Err(AuthError::Unauthorized.into());
         }
 
         let user = self.user(id).await?;

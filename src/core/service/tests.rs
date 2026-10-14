@@ -2,6 +2,7 @@ use http::{HeaderMap, HeaderValue, header};
 
 use super::*;
 use crate::store::MemoryStore;
+use crate::types::{NewUser, PasswordChange};
 
 fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
     let mut headers = HeaderMap::new();
@@ -135,4 +136,43 @@ fn bootstrap_admin_names() {
             .public_url,
         Some("https://x".to_owned())
     );
+}
+
+/// A user revoked after a password change read them is refused, and keeps
+/// no password.
+#[tokio::test]
+async fn a_concurrent_revocation_refuses_a_password_change()
+-> Result<(), Box<dyn std::error::Error>> {
+    let store = MemoryStore::new();
+    let auth = Auth::builder(store.clone(), generate_session_key()).build();
+
+    let new = NewUser {
+        login: None,
+        email: Some("erin@example.com".to_owned()),
+        role: Role::Regular,
+    };
+    let user = Store::create_user(&store, &new, Timestamp::now())
+        .await?
+        .unwrap();
+    let cred = Credential::Password(hash_blocking("first password here").await?);
+    assert!(Store::set_credential(&store, user.id, &cred, None).await?);
+    let user = Store::user(&store, user.id).await?.unwrap();
+    let session = auth.create_session(user.id).await?;
+
+    let change = PasswordChange {
+        old_password: Some("first password here".to_owned()),
+        new_password: "second password here".to_owned(),
+    };
+
+    store.revoke_before_next_write(user.id);
+    let error = auth.change_password(&user, &session, &change).await;
+    assert_eq!(
+        error.err().and_then(|e| e.auth_error().cloned()),
+        Some(AuthError::Unauthorized)
+    );
+
+    let user = Store::user(&store, user.id).await?.unwrap();
+    assert_eq!(user.access, Access::Revoked);
+    assert_eq!(user.password_hash, None);
+    Ok(())
 }

@@ -305,3 +305,20 @@ async fn settings_change_at_runtime() -> TestResult {
     assert_eq!(error, AuthError::Unauthorized);
     Ok(())
 }
+
+/// A pending user revoked after sign-in read them, but before it activated
+/// them, is refused and stays revoked.
+#[tokio::test]
+async fn a_concurrent_revocation_is_not_undone() -> TestResult {
+    let store = MemoryStore::new();
+    let erin = pending(&store, "erin@example.com").await?;
+    let auth = auth(&store, Some(header_only()));
+    let mut events = auth.events();
+
+    store.revoke_before_next_write(erin.id);
+    let error = refused(auth.sign_in_cloudflare(&email("erin@example.com")).await);
+    assert_eq!(error, AuthError::Unauthorized);
+    assert_eq!(store.user(erin.id).await?.unwrap().access, Access::Revoked);
+    assert!(events.try_recv().is_err());
+    Ok(())
+}
