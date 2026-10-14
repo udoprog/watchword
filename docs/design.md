@@ -281,6 +281,26 @@ keeps its own columns and foreign keys on `users` (track's per-user data,
 territory's groups), and the store reads and writes only its own columns (see
 open question 4).
 
+`SqllStore` (card C) works on a sqll `Pool`. It exports its statement
+collections, `auth::sqll::Read` and `auth::sqll::Write`. An app nests these in
+its own pool with `#[sql(statements)]` and implements `AsMut` to reach them,
+so auth shares the app's single write connection; `SqllStore::new(pool)` then
+takes the app's `Arc<Pool<R, W>>`. A store over a pool of its own is
+`SqllStore<Read, Write>`. Its schema:
+
+| Table | Columns |
+|---|---|
+| `users` | `id` INTEGER PRIMARY KEY, `login` TEXT UNIQUE, `email` TEXT UNIQUE, `role` TEXT, `access` TEXT, `method` TEXT, `password_hash` TEXT, `google_sub` TEXT UNIQUE, `created_at` INTEGER ms |
+| `sessions` | `id` TEXT PRIMARY KEY, `user_id` → users, `created_at` and `expires_at` INTEGER ms |
+| `auth_tokens` | `id` TEXT PRIMARY KEY, `user_id` → users, `kind` TEXT (`registration`/`reset`), `expires_at` and `used_at` INTEGER ms |
+| `config` | `key` TEXT PRIMARY KEY, `value` TEXT |
+
+`auth::sqll::SCHEMA` creates the tables in a new database. The one-time
+migrations from each app's current tables are `docs/sqll/track.sql` and
+`docs/sqll/territory.sql`; the tests run both against copies of the apps'
+current auth tables. The store deletes a user's sessions and links itself
+rather than relying on `ON DELETE CASCADE`.
+
 ### 2.5 Providers
 
 - **Password** (`server`). The user is found by login or email. With
@@ -497,6 +517,12 @@ The migration adds `access` (all existing users become `active`), `method`
 `auth_tokens` and adds `kind`. The `root`/`root` seed stays only for databases
 that already have it.
 
+The SQL is `docs/sqll/track.sql`. `users.login` becomes optional, which SQLite
+can only do by rebuilding `users`. Rebuilding with foreign keys on would
+cascade the drop into track's per-user tables, so the migration aborts unless
+foreign keys are off, as they are on track's migration connection. Outstanding
+login links become `reset` links, because their users are now active.
+
 **Deletes or shrinks:**
 
 | Server | Frontend |
@@ -538,6 +564,10 @@ if let Some(email) = &args.bootstrap_email {
 The migration renames `auth_method` `plain` → `password`, renames
 `registration_tokens` to `auth_tokens`, and converts the auth timestamps to
 INTEGER ms (`SqllStore`'s schema).
+
+The SQL is `docs/sqll/territory.sql`. It also renames the column `auth_method`
+to `method`, and adds an optional unique `login`. Timestamps are truncated to
+the millisecond. It never rebuilds `users`, so it is safe with foreign keys on.
 
 **Deletes or shrinks:**
 

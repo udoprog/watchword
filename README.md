@@ -22,8 +22,8 @@ default.
 | `cloudflare` | `auth::cloudflare` | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
 | `google` | `auth::google` | Google OAuth (implies `server`; not implemented yet) |
 | `axum` | `auth::axum` | the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors, `routes()` for the `/api/auth` JSON routes, and `Auth::guard` for WebSocket sessions (implies `server`; the Cloudflare and Google routes are not wired yet) |
-| `sqll` | `auth::sqll` | `SqllStore` over SQLite (implies `server`; not implemented yet) |
-| `yew` | `auth::yew` | `AuthProvider`, `use_auth`, `SignIn`, `Register` and the `http` client (account and admin components not implemented yet) |
+| `sqll` | `auth::sqll` | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA`, and the one-time migrations for track and territory in `docs/sqll/` (implies `server`) |
+| `yew` | `auth::yew` | `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings` and the `http` client |
 
 The most-used names are re-exported at the crate root.
 

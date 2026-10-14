@@ -55,3 +55,6 @@ pub use self::core::{
 
 #[cfg(feature = "server")]
 pub use self::store::{MemoryStore, Store};
+
+#[cfg(feature = "sqll")]
+pub use self::sqll::SqllStore;
