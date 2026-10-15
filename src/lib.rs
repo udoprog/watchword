@@ -15,22 +15,29 @@
 //!
 //! Each layer sits behind a cargo feature, so an app takes only what it uses.
 //! Server-only and browser-only dependencies never share a feature, so a wasm
-//! frontend can take `yew` without pulling in server code. No feature is on by
-//! default. On docs.rs, items that need a feature are marked with it.
+//! frontend can take `yew023` without pulling in server code. No feature is on
+//! by default. On docs.rs, items that need a feature are marked with it.
+//!
+//! A dependency that is not yet 1.0 and appears in the API is named after its
+//! version: its feature and module are `axum08` for axum 0.8, `sqll014` for
+//! sqll 0.14, `musli01` for musli 0.1 and `yew023` for yew 0.23. A later
+//! version is added beside it, so a watchword upgrade never forces an app onto
+//! a new axum, sqll, musli or yew, and an app moves when it chooses.
 //!
 //! | Feature | Module | What it provides |
 //! |---|---|---|
-//! | *(none)* | [`types`] | `UserId`, `Role`, `Access`, `Method`, the wire types (`UserInfo`, `AuthConfig`, `LoginRequest`, `CreatedUser`, ...), `AuthError`, `validate_password`, `normalize_email` |
-//! | `musli` | | musli `Encode`/`Decode` on the wire types |
-//! | `server` | [`core`], [`store`] | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin); the `Store` trait and `MemoryStore` |
+//! | *(none)* | [`types`] | `UserId`, `Role`, `Access`, `Method`, the wire types (`UserInfo`, `AuthConfig`, `LoginRequest`, `CreatedUser`, ...), `AuthError`, `validate_password`, `normalize_email`, from the [watchword-core] crate |
+//! | `musli01` | | musli 0.1 `Encode`/`Decode` on the wire types |
+//! | `server` | [`core`], [`store`] | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin) and `Auth::guard` for WebSocket sessions; the `Store` trait and `MemoryStore` |
 //! | `cloudflare` | [`cloudflare`] | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
-//! | `google` | [`google`] | Google OAuth: `GoogleConfig` for `AuthBuilder::google`; with `axum`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
-//! | `axum` | [`axum`] | the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors, `routes()` for the `/api/auth` JSON routes, and `Auth::guard` for WebSocket sessions, plus the Cloudflare and Google routes when those features are on (implies `server`) |
-//! | `sqll` | [`sqll`] | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA`, and the one-time migrations for track and territory in `docs/sqll/` (implies `server`) |
-//! | `test-util` | [`google::fake`] | for an app's tests: `AuthBuilder::google_endpoints`, and with `axum` `FakeGoogle`, a local fake Google to sign in through offline (implies `google`) |
-//! | `yew` | [`yew`] | `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings` and the `http` client |
+//! | `google` | [`google`] | Google OAuth: `GoogleConfig` for `AuthBuilder::google`; with `axum08`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
+//! | `axum08` | [`axum08`] | for axum 0.8: the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors and `routes()` for the `/api/auth` JSON routes, plus the Cloudflare and Google routes when those features are on (implies `server`) |
+//! | `sqll014` | [`sqll014`] | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA`, and the one-time migrations for track and territory in `docs/sqll/` (implies `server`) |
+//! | `test-util` | [`google::fake`] | for an app's tests: `AuthBuilder::google_endpoints`, and with `axum08` `FakeGoogle`, a local fake Google to sign in through offline (implies `google`) |
+//! | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings` and the `http` client, from the [watchword-yew023] crate |
 //!
-//! The most-used names are re-exported at the crate root.
+//! The most-used names that do not depend on a versioned feature are
+//! re-exported at the crate root.
 //!
 //! <br>
 //!
@@ -43,9 +50,9 @@
 //! ```toml
 //! [dependencies]
 //! # Server crate.
-//! auth = { package = "watchword", version = "0.1", features = ["axum", "cloudflare"] }
+//! auth = { package = "watchword", version = "0.1", features = ["axum08", "cloudflare"] }
 //! # Frontend crate.
-//! auth = { package = "watchword", version = "0.1", features = ["yew"] }
+//! auth = { package = "watchword", version = "0.1", features = ["yew023"] }
 //! ```
 //!
 //! <br>
@@ -78,22 +85,31 @@
 //! trunk builds with the `wasm-bindgen` CLI matching `examples/app/Cargo.lock`,
 //! downloading it unless it is installed or already in trunk's cache.
 //!
-//! [`axum`]: https://docs.rs/watchword/latest/watchword/axum/index.html
+//! [`axum08`]: https://docs.rs/watchword/latest/watchword/axum08/index.html
 //! [`cloudflare`]: https://docs.rs/watchword/latest/watchword/cloudflare/index.html
 //! [`core`]: https://docs.rs/watchword/latest/watchword/core/index.html
 //! [`docs/design.md`]: https://github.com/udoprog/watchword/blob/main/docs/design.md
 //! [`examples/app`]: https://github.com/udoprog/watchword/tree/main/examples/app
 //! [`google::fake`]: https://docs.rs/watchword/latest/watchword/google/fake/index.html
 //! [`google`]: https://docs.rs/watchword/latest/watchword/google/index.html
-//! [`sqll`]: https://docs.rs/watchword/latest/watchword/sqll/index.html
+//! [`sqll014`]: https://docs.rs/watchword/latest/watchword/sqll014/index.html
 //! [`store`]: https://docs.rs/watchword/latest/watchword/store/index.html
 //! [`types`]: https://docs.rs/watchword/latest/watchword/types/index.html
-//! [`yew`]: https://docs.rs/watchword/latest/watchword/yew/index.html
+//! [`yew023`]: https://docs.rs/watchword/latest/watchword/yew023/index.html
 //! [trunk]: https://trunkrs.dev
+//! [watchword-core]: https://docs.rs/watchword-core
+//! [watchword-yew023]: https://docs.rs/watchword-yew023
 
 #![cfg_attr(watchword_docsrs, feature(doc_cfg))]
 
-pub mod types;
+// `#[derive(Statements)]` expands to `::sqll::` paths. This alias goes once a
+// sqll release accepts `#[sql(crate = sqll014)]` on `Statements`, as it does
+// on `Row`.
+#[cfg(feature = "sqll014")]
+extern crate sqll014 as sqll;
+
+#[doc(inline)]
+pub use watchword_core as types;
 
 #[cfg(feature = "server")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "server")))]
@@ -111,17 +127,18 @@ pub mod cloudflare;
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "google")))]
 pub mod google;
 
-#[cfg(feature = "axum")]
-#[cfg_attr(watchword_docsrs, doc(cfg(feature = "axum")))]
-pub mod axum;
+#[cfg(feature = "axum08")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "axum08")))]
+pub mod axum08;
 
-#[cfg(feature = "sqll")]
-#[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll")))]
-pub mod sqll;
+#[cfg(feature = "sqll014")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll014")))]
+pub mod sqll014;
 
-#[cfg(feature = "yew")]
-#[cfg_attr(watchword_docsrs, doc(cfg(feature = "yew")))]
-pub mod yew;
+#[cfg(feature = "yew023")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "yew023")))]
+#[doc(inline)]
+pub use watchword_yew023 as yew023;
 
 pub use self::types::{
     Access, AuthConfig, AuthError, CloudflareConfig, Conflict, CreatedUser, Impersonator, Link,
@@ -133,9 +150,9 @@ pub use self::types::{
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "server")))]
 pub use self::core::{
     Auth, AuthBuilder, AuthEvent, BootstrapAdmin, CookieConfig, PasswordError, SESSION_LIFETIME,
-    Secure, TOKEN_LIFETIME, dummy_hash, generate_session_key, hash_password, is_expired,
-    load_or_create_key, new_session_id, new_token, session_cookie, session_expiry, token_expiry,
-    verify_password, verify_session_cookie,
+    Secure, SessionGuard, TOKEN_LIFETIME, dummy_hash, generate_session_key, hash_password,
+    is_expired, load_or_create_key, new_session_id, new_token, session_cookie, session_expiry,
+    token_expiry, verify_password, verify_session_cookie,
 };
 
 #[cfg(feature = "server")]
@@ -145,6 +162,3 @@ pub use self::store::{MemoryStore, Store};
 #[cfg(feature = "google")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "google")))]
 pub use self::google::GoogleConfig;
-#[cfg(feature = "sqll")]
-#[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll")))]
-pub use self::sqll::SqllStore;

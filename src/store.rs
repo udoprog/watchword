@@ -2,7 +2,7 @@
 //! the records it stores, and [`MemoryStore`].
 //!
 //! Needs the `server` feature. An app implements [`Store`] over its own
-//! database, or uses `SqllStore` (feature `sqll`). [`Auth`](crate::core::Auth)
+//! database, or uses `SqllStore` (feature `sqll014`). [`Auth`](crate::core::Auth)
 //! enforces every rule; a store only keeps the records and makes the
 //! documented multi-record changes atomic.
 //!

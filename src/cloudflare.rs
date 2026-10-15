@@ -125,8 +125,9 @@ pub struct HttpKeyFetcher {
 }
 
 impl HttpKeyFetcher {
-    /// Fetches with `client`.
-    pub fn new(client: reqwest::Client) -> Self {
+    /// Fetches with `client`. Crate-private so reqwest stays out of the
+    /// public API; apps use [`HttpKeyFetcher::default`].
+    pub(crate) fn new(client: reqwest::Client) -> Self {
         Self { client }
     }
 }

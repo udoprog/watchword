@@ -4,7 +4,7 @@
 use yew::AttrValue;
 
 use super::http::Error;
-use crate::types::{AuthError, Conflict, UserChange};
+use watchword_core::{AuthError, Conflict, UserChange};
 
 /// The message for a failed request, where `failed` says what failed, such
 /// as "Saving".

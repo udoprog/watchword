@@ -1,5 +1,6 @@
-//! axum integration (the `axum` feature): extractors, the `/api/auth` JSON
-//! routes and the WebSocket session guard.
+//! axum 0.8 integration (the `axum08` feature): extractors and the
+//! `/api/auth` JSON routes. A WebSocket watches its session with
+//! [`Auth::guard`](crate::Auth::guard), which needs no axum.
 //!
 //! Every extractor and the routes need [`Auth`](crate::Auth) to be
 //! extractable from the app's state, through `FromRef`. An app whose state
@@ -7,9 +8,10 @@
 //! `FromRef<AppState> for Auth`.
 //!
 //! ```no_run
+//! # extern crate axum08 as axum;
 //! use std::net::SocketAddr;
 //!
-//! use watchword::axum::{SignedIn, routes};
+//! use watchword::axum08::{SignedIn, routes};
 //! use watchword::{Auth, MemoryStore, generate_session_key};
 //! use axum::Router;
 //! use axum::routing::get;
@@ -41,7 +43,6 @@ mod error;
 mod extract;
 #[cfg(feature = "google")]
 mod google;
-mod guard;
 mod live;
 mod routes;
 
@@ -49,6 +50,5 @@ mod routes;
 mod tests;
 
 pub use self::extract::{Admin, LiveSession, MaybeSignedIn, SignedIn};
-pub use self::guard::SessionGuard;
 pub(crate) use self::live::LiveCache;
 pub use self::routes::routes;

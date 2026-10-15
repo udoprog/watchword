@@ -1,5 +1,5 @@
-use axum::extract::{FromRef, FromRequestParts};
-use axum::http::request::Parts;
+use axum08::extract::{FromRef, FromRequestParts};
+use axum08::http::request::Parts;
 
 use crate::Auth;
 use crate::core::Error;

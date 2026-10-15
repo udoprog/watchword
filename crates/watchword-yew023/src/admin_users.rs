@@ -10,7 +10,9 @@ use super::browser;
 use super::context::AuthContext;
 use super::form::{error_message, identity_change, optional};
 use super::http::{self, CreatedUser, Error};
-use crate::types::{Access, Link, Method, NewUser, Role, UserChange, UserEntry, UserId, UserInfo};
+use watchword_core::{
+    Access, Link, Method, NewUser, Role, UserChange, UserEntry, UserId, UserInfo,
+};
 
 /// The default `page_size` of [`AdminUsers`].
 pub const PAGE_SIZE: usize = 25;

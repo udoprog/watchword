@@ -208,7 +208,7 @@ fn created_user_json() {
     );
 }
 
-#[cfg(feature = "musli")]
+#[cfg(feature = "musli01")]
 #[test]
 fn musli_round_trip() {
     fn round_trip<T>(value: T)

@@ -2587,7 +2587,6 @@ dependencies = [
  "base64 0.22.1",
  "bcrypt",
  "cookie",
- "gloo-net 0.7.0",
  "hmac",
  "http 1.5.0",
  "jiff",
@@ -2601,9 +2600,18 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "wasm-bindgen-futures",
- "web-sys",
- "yew",
+ "watchword-core",
+ "watchword-yew023",
+]
+
+[[package]]
+name = "watchword-core"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "jiff",
+ "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -2632,6 +2640,19 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "watchword",
+]
+
+[[package]]
+name = "watchword-yew023"
+version = "0.1.0"
+dependencies = [
+ "gloo-net 0.7.0",
+ "jiff",
+ "serde",
+ "wasm-bindgen-futures",
+ "watchword-core",
+ "web-sys",
+ "yew",
 ]
 
 [[package]]

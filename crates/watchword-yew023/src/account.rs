@@ -5,7 +5,7 @@ use super::browser;
 use super::context::use_auth;
 use super::form::{error_message, identity_change, optional};
 use super::http::{self, Error};
-use crate::types::{
+use watchword_core::{
     AuthError, Method, PasswordChange, Role, UserChange, UserInfo, validate_password,
 };
 

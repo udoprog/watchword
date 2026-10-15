@@ -93,31 +93,66 @@ shape of the library.
 
 ### 2.1 Layout and features
 
-The crate stays a single package, `watchword`, with features.
+The repository is a workspace of three crates, versioned and released in
+lockstep, each pinning the others with an exact `=` version (as musli-web pins
+musli-web-macros):
+
+- **watchword-core**: the types of 2.2 (`UserId`, `Role`, `Access`, `Method`,
+  the wire types, `AuthError`, `validate_password`, `normalize_email`). Safe
+  for wasm32. Its `musli01` feature adds musli's derives, and its `axum08`
+  feature `IntoResponse` for `AuthError` (Rust's orphan rule keeps that impl in
+  the crate defining `AuthError`).
+- **watchword-yew023**: everything for yew 0.23 (components, context,
+  `use_auth`, the HTTP client and browser helpers). It depends on yew under
+  the key `yew`, because yew's macros (`html!`, `#[function_component]`,
+  `#[derive(Properties)]`, `#[hook]`) expand to `::yew::` paths, and on
+  watchword-core rather than watchword.
+- **watchword**: everything else, with features. It re-exports watchword-core
+  as `watchword::types` and at its root, so server code keeps its paths, and
+  watchword-yew023 as `watchword::yew023` behind the `yew023` feature, so a
+  frontend still needs only `watchword = { features = ["yew023"] }`.
+
 The server-only dependencies (bcrypt, aws-lc-rs, tokio, axum, reqwest, sqll) and
 the browser-only ones (yew, gloo-net, web-sys) sit behind disjoint features.
 That keeps trunk's wasm build of a frontend crate free of server code. Both apps
 already compile their frontend crate on the host under
 `cargo clippy --workspace`, so a host build with both feature sets enabled at
-once must also compile; CI covers that with `--all-features`. The open
-questions list the split into a workspace as the alternative.
+once must also compile; CI covers that with `--all-features`.
+
+**Versioned dependencies.** yew, axum, sqll and musli are not 1.0 and change a
+lot between releases. Everything tied to one version of such a crate that
+appears in watchword's public API goes under a feature named after its version
+(`yew023` for yew 0.23), with the dependency key and module named the same way,
+so watchword can support several versions side by side and an app upgrades
+when it chooses. A dependency used only internally stays unversioned, since it
+can be upgraded without breaking anyone. Version-specific items live only under
+their versioned module and are not re-exported at the root, so the root never
+changes meaning when the lead version moves. Doc examples for apps write
+`# extern crate axum08 as axum;` to keep the app's idiomatic `axum::` paths. A
+later yew is another crate, `watchword-yew024`, beside the first. Two follow
+from the rule: `Auth::guard` is in `core` and takes the user and session, not
+axum's `SignedIn`, so an `axum09` could use it too; and
+`cloudflare::HttpKeyFetcher::new(reqwest::Client)` is crate-private, keeping
+reqwest out of the API (`HttpKeyFetcher::default()` stays). jiff 0.2 is in the
+API through the types' `Timestamp` fields and is not versioned: that would mean
+restructuring the types.
 
 | Feature | Enables | Pulls in |
 |---|---|---|
-| *(none)* | `types`: `UserId`, `Role`, `Access`, `Method`, wire types, `validate_password`, `normalize_email`, `MIN_PASSWORD_LEN` | serde, jiff |
-| `musli` | `Encode`/`Decode` on the wire types, so an app can embed them in its own WS messages | musli-core |
-| `server` | `core` (hashing, ids, cookies, tokens), `Store`, `Auth`, throttle, events, bootstrap | bcrypt, hmac, sha2, rand, cookie, http, tokio (sync, time) |
+| *(none)* | `types` (watchword-core): `UserId`, `Role`, `Access`, `Method`, wire types, `validate_password`, `normalize_email`, `MIN_PASSWORD_LEN` | serde, jiff |
+| `musli01` | `Encode`/`Decode` on the wire types, so an app can embed them in its own WS messages | musli-core 0.1 |
+| `server` | `core` (hashing, ids, cookies, tokens), `Store`, `Auth`, throttle, events, bootstrap, WS session guard | bcrypt, hmac, sha2, rand, cookie, http, tokio (sync, time, macros) |
 | `cloudflare` | `server` + the Cloudflare Access provider | aws-lc-rs, reqwest |
 | `google` | `server` + the Google OAuth provider | reqwest, url, lru |
-| `axum` | `server` + extractors, routes, WS session guard | axum 0.8 |
-| `sqll` | `server` + `SqllStore`, a `Store` over SQLite with a fixed schema and its migration SQL (see open question 4) | sqll 0.14 |
-| `yew` | components, context, hook, HTTP client | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures |
-| `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum` also `google::fake::FakeGoogle` (see 2.5) | nothing more |
+| `axum08` | `server` + extractors, routes | axum 0.8 |
+| `sqll014` | `server` + `SqllStore`, a `Store` over SQLite with a fixed schema and its migration SQL (see open question 4) | sqll 0.14 |
+| `yew023` | watchword-yew023: components, context, hook, HTTP client | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures |
+| `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum08` also `google::fake::FakeGoogle` (see 2.5) | nothing more |
 
-The modules are `watchword::{types, core, store, cloudflare, google, axum, sqll, yew}`,
-and the most-used names are re-exported at the root. The existing
-`cloudflare.rs`, `cookie.rs`, `password.rs` and `session.rs` move under `core`
-and `cloudflare` largely unchanged.
+The modules are `watchword::{types, core, store, cloudflare, google, axum08, sqll014, yew023}`,
+and the most-used names that need no versioned feature are re-exported at the
+root. The existing `cloudflare.rs`, `cookie.rs`, `password.rs` and `session.rs`
+move under `core` and `cloudflare` largely unchanged.
 
 ### 2.2 Types (always available)
 
@@ -293,14 +328,14 @@ pub enum Credential { Password(String /* hash */), Google { sub: String, email: 
 ```
 
 The library ships `MemoryStore`, used by its own tests and examples, and,
-behind `sqll`, `SqllStore`, which works over tables `users`, `sessions` and
+behind `sqll014`, `SqllStore`, which works over tables `users`, `sessions` and
 `auth_tokens` with a documented set of columns and the migration SQL. An app
 keeps its own columns and foreign keys on `users` (track's per-user data,
 territory's groups), and the store reads and writes only its own columns (see
 open question 4).
 
 `SqllStore` (card C) works on a sqll `Pool`. It exports its statement
-collections, `watchword::sqll::Read` and `watchword::sqll::Write`. An app nests these in
+collections, `watchword::sqll014::Read` and `watchword::sqll014::Write`. An app nests these in
 its own pool with `#[sql(statements)]` and implements `AsMut` to reach them,
 so auth shares the app's single write connection; `SqllStore::new(pool)` then
 takes the app's `Arc<Pool<R, W>>`. A store over a pool of its own is
@@ -313,7 +348,7 @@ takes the app's `Arc<Pool<R, W>>`. A store over a pool of its own is
 | `auth_tokens` | `id` TEXT PRIMARY KEY, `user_id` → users, `kind` TEXT (`registration`/`reset`), `expires_at` and `used_at` INTEGER ms |
 | `config` | `key` TEXT PRIMARY KEY, `value` TEXT |
 
-`watchword::sqll::SCHEMA` creates the tables in a new database. The one-time
+`watchword::sqll014::SCHEMA` creates the tables in a new database. The one-time
 migrations from each app's current tables are `docs/sqll/track.sql` and
 `docs/sqll/territory.sql`; the tests run both against copies of the apps'
 current auth tables. A database made with the schema from before sessions had
@@ -353,7 +388,7 @@ rather than relying on `ON DELETE CASCADE`.
   whose `Default` is Google's own; production always uses it. For an app to
   test a Google sign-in, registration through a link, or switching to Google
   without the network, the `test-util` feature adds
-  `AuthBuilder::google_endpoints(Endpoints)`, and with `axum` also
+  `AuthBuilder::google_endpoints(Endpoints)`, and with `axum08` also
   `google::fake::FakeGoogle`: a local server on `127.0.0.1:0` serving the
   token and tokeninfo endpoints for one `GoogleConfig`. The test plays the
   browser: `FakeGoogle::approve(auth_url, FakeAccount { sub, email,
@@ -364,7 +399,7 @@ rather than relying on `ON DELETE CASCADE`.
   of each exchange, and a code and its access token work once. The crate's
   own Google route tests use it.
 
-### 2.6 axum integration (`axum`)
+### 2.6 axum integration (`axum08`)
 
 ```rust
 // Extractors; each needs `Auth: FromRef<S>`.
@@ -377,7 +412,8 @@ LiveSession(SessionId)                      // liveness only, cached for 10 s (t
 pub fn routes<S>() -> Router<S> where Auth: FromRef<S>, S: Clone + Send + Sync + 'static;
 
 // WebSocket: resolves when the socket's session has ended, for the app's select! loop.
-let mut guard = auth.guard(&signed_in);
+// In `core` (feature `server`): it takes the user and session, not an axum type.
+let mut guard = auth.guard(&signed_in.user, &signed_in.session);
 tokio::select! {
     end = guard.ended() => break,            // logout, revoke, credential change, delete, expiry; the impersonating admin revoked, demoted or deleted
     change = guard.changed() => { /* UserInfo: role/email changed, e.g. reload groups, admin flag */ }
@@ -422,12 +458,12 @@ The frontend route `/register/{token}` that links point to is unchanged in both
 apps. Links already handed out therefore keep working, because only the API
 path moves (from `/api/register/{token}` to `/api/auth/register/{token}`).
 
-### 2.7 Yew components (`yew`)
+### 2.7 Yew components (`yew023`)
 
 The components render plain semantic HTML with stable `auth-*` class names and
 take a `class` prop. Each app styles them with its own CSS. They talk to the
-server through `watchword::yew::http`, which uses gloo-net with same-origin cookies,
-so the library does not depend on the app's gloo version.
+server through `watchword::yew023::http`, which uses gloo-net with same-origin
+cookies, so the library does not depend on the app's gloo version.
 
 - `<AuthProvider>` is the gate.
   - It fetches `/api/auth/config` and `/api/auth/me`.
@@ -554,11 +590,11 @@ so the library does not depend on the app's gloo version.
 **Server** (`crates/track`):
 
 ```toml
-auth = { package = "watchword", path = "../../../watchword", features = ["axum", "cloudflare", "sqll"] }
+auth = { package = "watchword", path = "../../../watchword", features = ["axum08", "cloudflare", "sqll014"] }
 ```
 
 ```rust
-let store = auth::sqll::SqllStore::new(db.pool());          // or TrackStore(db) implementing Store
+let store = auth::sqll014::SqllStore::new(db.pool());          // or TrackStore(db) implementing Store
 let key = auth::load_or_create_key(&store).await?;
 let auth = Auth::builder(store, key)
     .cookie(CookieConfig::new("track_session"))
@@ -567,8 +603,8 @@ let auth = Auth::builder(store, key)
     .cloudflare(config.cloudflare_access.enabled.then(|| config.cloudflare_access.clone().into()))
     .build();
 // on Settings change: auth.set_cloudflare(...)
-// router: .merge(auth::axum::routes())
-// ws_handler: `user: SignedIn`, `let mut guard = state.auth.guard(&user)` in the select! loop,
+// router: .merge(auth::axum08::routes())
+// ws_handler: `user: SignedIn`, `state.auth.guard(&user.user, &user.session)` in the select! loop,
 //   replacing the revocation receiver and session_check interval.
 // ws authorize: `requires_admin` keeps the app's own admin requests; is_admin uses auth.
 ```
@@ -602,7 +638,7 @@ login links become `reset` links, because their users are now active.
 **Server** (`crates/territory`):
 
 ```toml
-auth = { package = "watchword", path = "../../../watchword", features = ["axum", "google", "sqll"] }
+auth = { package = "watchword", path = "../../../watchword", features = ["axum08", "google", "sqll014"] }
 ```
 
 ```rust
@@ -615,7 +651,7 @@ let auth = Auth::builder(store, key)
 if let Some(email) = &args.bootstrap_email {
     auth.bootstrap_admin(&BootstrapAdmin::email(email).public_url(args.public_url.clone())).await?;
 }
-// router: .merge(auth::axum::routes()); /api/config keeps only `title`
+// router: .merge(auth::axum08::routes()); /api/config keeps only `title`
 // tiles: `LiveSession` extractor replaces the cookie check and SessionCache
 // ws: `SignedIn` + guard; guard.changed() updates `admin` and reloads groups;
 //   forward AuthEvent::{UserCreated, UserChanged, UserDeleted} into the app broadcast
@@ -699,10 +735,14 @@ record.
      keeps its timestamp encoding, with no schema migration but duplicated
      code.
 6. **Crate layout.**
-   - **(chosen) One crate with disjoint features**, as now.
-   - A workspace: `watchword` (types), `watchword-server`, `watchword-yew`. This
-     isolates wasm and server dependency trees at the cost of three manifests
-     and path dependencies.
+   - One crate with disjoint features. This was the first choice, until
+     versioning yew (2.1) met yew's macros, which hardcode `::yew::` paths, so
+     yew code can only live in a crate whose own dependency key is `yew`.
+   - **(chosen, card cc509288) A workspace of three crates**: `watchword-core`
+     (types), `watchword-yew023` (all yew 0.23 code, dependency key `yew`) and
+     `watchword` (the rest, re-exporting the shim as `watchword::yew023`).
+     A later yew is another shim crate and feature beside it. The cost is
+     three manifests released in lockstep.
 
 ## 6. Implementation cards
 

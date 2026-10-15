@@ -1,5 +1,5 @@
 //! A fake Google for testing Google sign-in offline (features `test-util`
-//! and `axum`).
+//! and `axum08`).
 //!
 //! [`FakeGoogle::start`] serves the token and tokeninfo endpoints on a local
 //! port; point the service at it with
@@ -42,11 +42,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use axum::Router;
-use axum::extract::{Query, State};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum08::Router;
+use axum08::extract::{Query, State};
+use axum08::http::StatusCode;
+use axum08::response::{IntoResponse, Response};
+use axum08::routing::{get, post};
 use serde_json::json;
 
 use super::{Endpoints, GoogleConfig, Url};
@@ -124,7 +124,7 @@ impl FakeGoogle {
         let task = tokio::spawn(async move {
             // Serving only ends with an I/O error on the listener, after
             // which the fake answers nothing and the test fails visibly.
-            let _ = axum::serve(listener, app).await;
+            let _ = axum08::serve(listener, app).await;
         });
 
         let url = |path: &str| {
@@ -224,7 +224,7 @@ impl Drop for FakeGoogle {
 fn bad_request(error: &str) -> Response {
     (
         StatusCode::BAD_REQUEST,
-        axum::Json(json!({ "error": error })),
+        axum08::Json(json!({ "error": error })),
     )
         .into_response()
 }
@@ -257,7 +257,7 @@ async fn token(State(shared): State<Arc<Shared>>, body: String) -> Response {
     let access_token = crate::core::new_token();
     lock(&shared.tokens).insert(access_token.clone(), account);
 
-    axum::Json(json!({
+    axum08::Json(json!({
         "access_token": access_token,
         "token_type": "Bearer",
         "expires_in": 3599,
@@ -278,7 +278,7 @@ async fn tokeninfo(
     };
 
     // Google reports `email_verified` as a string.
-    axum::Json(json!({
+    axum08::Json(json!({
         "aud": shared.config.client_id,
         "sub": account.sub,
         "email": account.email,

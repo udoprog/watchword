@@ -7,7 +7,7 @@ description = "The watchword example's Yew frontend, built with trunk."
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-auth = { package = "watchword", path = "../../..", features = ["yew"] }
+auth = { package = "watchword", path = "../../..", features = ["yew023"] }
 gloo-net = { version = "0.7.0", default-features = false, features = ["http", "json"] }
 serde = "1.0.229"
 serde_json = "1.0.151"

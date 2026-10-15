@@ -5,7 +5,7 @@
 //! crate's own gloo-net, so an app does not need to match its gloo version.
 //!
 //! Each function maps an error status to [`Error::Auth`] when the body is an
-//! [`AuthError`], as every route of the `axum` feature answers.
+//! [`AuthError`], as every route of watchword's `axum08` feature answers.
 
 use std::fmt;
 
@@ -13,7 +13,7 @@ use gloo_net::http::{Request, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
 use web_sys::RequestCredentials;
 
-use crate::types::{
+use watchword_core::{
     AuthConfig, AuthError, Link, LoginRequest, NewUser, PasswordChange, RegisterInfo,
     RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
 };
@@ -142,7 +142,7 @@ pub async fn users() -> Result<Vec<UserEntry>, Error> {
     read(get("/api/auth/users").send().await?).await
 }
 
-pub use crate::types::CreatedUser;
+pub use watchword_core::CreatedUser;
 
 /// Creates a user, for admins: `POST /api/auth/users`. Fails with
 /// [`AuthError::Conflict`] when the login or email is taken.

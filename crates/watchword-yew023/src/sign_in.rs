@@ -3,7 +3,7 @@ use yew::prelude::*;
 
 use super::browser;
 use super::http::{self, Error};
-use crate::types::{AuthConfig, AuthError, LoginRequest, UserInfo};
+use watchword_core::{AuthConfig, AuthError, LoginRequest, UserInfo};
 
 /// The properties of [`SignIn`].
 #[derive(Properties, PartialEq)]

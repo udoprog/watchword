@@ -1,12 +1,12 @@
 use std::net::SocketAddr;
 
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{ConnectInfo, FromRef, FromRequest, FromRequestParts, Path, Request, State};
-use axum::http::request::Parts;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum08::extract::rejection::JsonRejection;
+use axum08::extract::{ConnectInfo, FromRef, FromRequest, FromRequestParts, Path, Request, State};
+use axum08::http::request::Parts;
+use axum08::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum08::response::{IntoResponse, Response};
+use axum08::routing::{get, post};
+use axum08::{Json, Router};
 use serde::de::DeserializeOwned;
 
 use super::{Admin, SignedIn};
@@ -68,12 +68,12 @@ where
             "/api/auth/register/{token}",
             get(register_info).post(register),
         )
-        .route("/api/auth/account", axum::routing::patch(update_account))
+        .route("/api/auth/account", axum08::routing::patch(update_account))
         .route("/api/auth/account/password", post(change_password))
         .route("/api/auth/users", get(users).post(create_user))
         .route(
             "/api/auth/users/{id}",
-            axum::routing::patch(update_user).delete(delete_user),
+            axum08::routing::patch(update_user).delete(delete_user),
         )
         .route(
             "/api/auth/users/{id}/link",

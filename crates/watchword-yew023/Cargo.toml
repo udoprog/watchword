@@ -1,0 +1,33 @@
+[package]
+name = "watchword-yew023"
+version = "0.1.0"
+authors = ["John-John Tedro <udoprog@tedro.se>"]
+edition = "2024"
+description = "watchword's Yew 0.23 frontend: sign-in, registration, account and user management components, the auth context and its HTTP client."
+documentation = "https://docs.rs/watchword"
+readme = "README.md"
+repository = "https://github.com/udoprog/watchword"
+license = "MIT OR Apache-2.0"
+keywords = ["authentication", "session", "wasm", "yew"]
+categories = ["authentication", "wasm", "web-programming"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(watchword_docsrs)'] }
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "watchword_docsrs"]
+
+# yew's macros (`html!`, `#[function_component]`, `#[derive(Properties)]`,
+# `#[hook]`) expand to `::yew::` paths, so this crate keeps the dependency key
+# `yew`; a later yew is another crate beside it (see docs/design.md).
+[dependencies]
+watchword-core = { path = "../watchword-core", version = "=0.1.0" }
+yew = "0.23.0"
+gloo-net = { version = "0.7.0", default-features = false, features = ["http", "json"] }
+jiff = { version = "0.2.37", features = ["js"] }
+serde = "1.0.229"
+wasm-bindgen-futures = "0.4.56"
+web-sys = { version = "0.3.83", features = ["Clipboard", "History", "HtmlInputElement", "HtmlSelectElement", "Location", "Navigator", "RequestCredentials", "Window"] }
+
+[dev-dependencies]
+serde_json = "1.0.151"

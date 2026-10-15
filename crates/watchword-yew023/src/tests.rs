@@ -9,7 +9,7 @@ use super::http::{CreatedUser, Error};
 use super::provider::replace_user;
 use super::sign_in::query_error_message;
 use super::user_menu::{impersonation_banner, stop_error_message};
-use crate::types::{
+use watchword_core::{
     Access, AuthError, CloudflareConfig, Impersonator, Link, Method, Role, UserChange, UserEntry,
     UserId, UserInfo,
 };

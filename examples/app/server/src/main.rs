@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use auth::axum::{Admin, SignedIn};
+use auth::axum08::{Admin, SignedIn};
 use auth::{Auth, AuthEvent, BootstrapAdmin, CloudflareConfig, GoogleConfig, MemoryStore};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRef, State};
@@ -240,7 +240,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(get_cloudflare).put(put_cloudflare),
         )
         .route("/api/example/ws", get(ws))
-        .merge(auth::axum::routes())
+        .merge(auth::axum08::routes())
         .route(
             "/api/{*rest}",
             axum::routing::any(|| async { StatusCode::NOT_FOUND }),
@@ -291,7 +291,7 @@ async fn ws(State(state): State<AppState>, user: SignedIn, upgrade: WebSocketUpg
 }
 
 async fn session_socket(auth: Auth, user: SignedIn, mut socket: WebSocket) {
-    let guard = auth.guard(&user);
+    let guard = auth.guard(&user.user, &user.session);
     let mut events = auth.events();
 
     loop {

@@ -4,8 +4,8 @@
 //! and completes it with the verified account through the service's Google
 //! paths: signing in, registering with a link, and switching to Google.
 
-// The flow is driven by the `axum` routes.
-#![cfg_attr(not(feature = "axum"), allow(dead_code))]
+// The flow is driven by the `axum08` routes.
+#![cfg_attr(not(feature = "axum08"), allow(dead_code))]
 
 use jiff::Timestamp;
 

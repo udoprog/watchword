@@ -7,7 +7,7 @@ use super::context::AuthContext;
 use super::http::{self, Error};
 use super::register::Register;
 use super::sign_in::SignIn;
-use crate::types::{AuthConfig, UserInfo};
+use watchword_core::{AuthConfig, UserInfo};
 
 /// The default `signed_out_notice` of [`AuthProvider`].
 pub const SESSION_ENDED: &str = "Your session has ended. Sign in again.";

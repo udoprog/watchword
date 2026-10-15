@@ -1,7 +1,7 @@
 use yew::prelude::*;
 
 use super::browser;
-use crate::types::CloudflareConfig;
+use watchword_core::CloudflareConfig;
 
 /// The properties of [`CloudflareSettings`].
 #[derive(Properties, PartialEq)]

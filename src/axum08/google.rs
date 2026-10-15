@@ -1,12 +1,12 @@
-//! The Google OAuth routes (features `axum` and `google`); see
+//! The Google OAuth routes (features `axum08` and `google`); see
 //! [`crate::google`].
 
-use axum::Router;
-use axum::extract::rejection::QueryRejection;
-use axum::extract::{FromRef, Query, State};
-use axum::http::{HeaderMap, header};
-use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::get;
+use axum08::Router;
+use axum08::extract::rejection::QueryRejection;
+use axum08::extract::{FromRef, Query, State};
+use axum08::http::{HeaderMap, header};
+use axum08::response::{IntoResponse, Redirect, Response};
+use axum08::routing::get;
 
 use super::SignedIn;
 use super::routes::Token;

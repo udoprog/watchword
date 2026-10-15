@@ -1,11 +1,11 @@
-//! [`SqllStore`], a [`Store`] over SQLite through [sqll] 0.14 (the `sqll`
+//! [`SqllStore`], a [`Store`] over SQLite through [sqll] 0.14 (the `sqll014`
 //! feature).
 //!
 //! The store works over four tables with a fixed set of columns, created by
 //! [`SCHEMA`] in a new database:
 //!
 //! ```sql
-#![doc = include_str!("sqll/schema.sql")]
+#![doc = include_str!("sqll014/schema.sql")]
 //! ```
 //!
 //! An app keeps its own columns on `users` (with defaults, since the store
@@ -16,7 +16,7 @@
 //!
 //! # Sharing the app's pool
 //!
-//! The store runs its statements on a [`sqll::Pool`]. An app with its own
+//! The store runs its statements on a [`sqll014::Pool`]. An app with its own
 //! pool nests [`Read`] and [`Write`] in its statement collections and gives
 //! the store access to them through [`AsMut`], so that auth and the app share
 //! one write connection:
@@ -26,17 +26,17 @@
 //! #[sql(read_only)]
 //! struct AppRead {
 //!     #[sql(statements)]
-//!     auth: watchword::sqll::Read,
+//!     auth: watchword::sqll014::Read,
 //!     // the app's own statements
 //! }
 //!
-//! impl AsMut<watchword::sqll::Read> for AppRead {
-//!     fn as_mut(&mut self) -> &mut watchword::sqll::Read {
+//! impl AsMut<watchword::sqll014::Read> for AppRead {
+//!     fn as_mut(&mut self) -> &mut watchword::sqll014::Read {
 //!         &mut self.auth
 //!     }
 //! }
 //!
-//! // ...and the same for `AppWrite` with `watchword::sqll::Write`.
+//! // ...and the same for `AppWrite` with `watchword::sqll014::Write`.
 //!
 //! let pool: Arc<Pool<AppRead, AppWrite>> = /* the app's pool */;
 //! let store = SqllStore::new(pool.clone());
@@ -77,7 +77,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 
 use jiff::Timestamp;
-use sqll::{IsReadOnly, Pool, Row, Statements, TypedStatement};
+use sqll014::{IsReadOnly, Pool, Row, Statements, TypedStatement};
 use tokio::task::spawn_blocking;
 
 use crate::store::{Credential, Result, Session, Store, StoreError, Token, TokenKind, User};
@@ -88,9 +88,9 @@ mod tests;
 
 /// The SQL that creates the store's tables in a new database. Every statement
 /// is `IF NOT EXISTS`, so running it again changes nothing.
-pub const SCHEMA: &str = include_str!("sqll/schema.sql");
+pub const SCHEMA: &str = include_str!("sqll014/schema.sql");
 
-/// A [`Store`] over SQLite, on a [`sqll::Pool`] whose read and write
+/// A [`Store`] over SQLite, on a [`sqll014::Pool`] whose read and write
 /// statement collections contain [`Read`] and [`Write`]. See the [module
 /// documentation](self) for the schema and for sharing an app's pool.
 ///
@@ -699,14 +699,15 @@ where
     }
 }
 
-impl From<sqll::Error> for StoreError {
+impl From<sqll014::Error> for StoreError {
     #[inline]
-    fn from(error: sqll::Error) -> Self {
+    fn from(error: sqll014::Error) -> Self {
         StoreError::new(error)
     }
 }
 
 #[derive(Row)]
+#[sql(crate = sqll014)]
 struct UserRow {
     id: i64,
     login: Option<String>,
@@ -739,6 +740,7 @@ impl TryFrom<UserRow> for User {
 
 /// A [`UserRow`] with the expiry of the user's live link.
 #[derive(Row)]
+#[sql(crate = sqll014)]
 struct UserLinkRow {
     id: i64,
     login: Option<String>,
@@ -771,6 +773,7 @@ impl UserLinkRow {
 }
 
 #[derive(Row)]
+#[sql(crate = sqll014)]
 struct SessionRow {
     id: String,
     user_id: i64,
@@ -794,6 +797,7 @@ impl TryFrom<SessionRow> for Session {
 }
 
 #[derive(Row)]
+#[sql(crate = sqll014)]
 struct TokenRow {
     id: String,
     user_id: i64,

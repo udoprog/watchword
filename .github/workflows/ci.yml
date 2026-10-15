@@ -18,10 +18,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
-    # No feature is on by default, so this covers only the `types` module.
-    - run: cargo test --no-default-features
-    - run: cargo test --all-features --all-targets
-    - run: cargo test --all-features --doc
+    # No feature is on by default, so this covers only the types.
+    - run: cargo test --workspace --no-default-features
+    - run: cargo test --workspace --all-features --all-targets
+    - run: cargo test --workspace --all-features --doc
 
   # Each feature is checked alone, because a feature that only compiles
   # alongside another breaks the apps that take it alone.
@@ -33,15 +33,19 @@ jobs:
       with:
         components: clippy
     - run: cargo clippy --all-targets --no-default-features -- -D warnings
-    - run: cargo clippy --all-targets --no-default-features --features musli -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features musli01 -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features server -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features cloudflare -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features google -- -D warnings
-    - run: cargo clippy --all-targets --no-default-features --features axum -- -D warnings
-    - run: cargo clippy --all-targets --no-default-features --features sqll -- -D warnings
-    - run: cargo clippy --all-targets --no-default-features --features yew -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features axum08 -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features sqll014 -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features yew023 -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features test-util -- -D warnings
     - run: cargo clippy --all-targets --all-features -- -D warnings
+    - run: cargo clippy -p watchword-core --all-targets --no-default-features -- -D warnings
+    - run: cargo clippy -p watchword-core --all-targets --no-default-features --features musli01 -- -D warnings
+    - run: cargo clippy -p watchword-core --all-targets --no-default-features --features axum08 -- -D warnings
+    - run: cargo clippy -p watchword-yew023 --all-targets -- -D warnings
 
   wasm:
     runs-on: ubuntu-latest
@@ -50,8 +54,12 @@ jobs:
     - uses: dtolnay/rust-toolchain@stable
       with:
         targets: wasm32-unknown-unknown
-    - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew
-    - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew,musli
+        components: clippy
+    - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew023
+    - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew023,musli01
+    - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features
+    - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features musli01
+    - run: cargo clippy -p watchword-yew023 --target wasm32-unknown-unknown -- -D warnings
 
   docs:
     runs-on: ubuntu-latest
@@ -60,9 +68,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
-    - run: cargo doc --all-features --no-deps
+    - run: cargo doc --workspace --all-features --no-deps
 
-  # How docs.rs builds the docs, with the feature badges of `doc(cfg)`.
+  # How docs.rs builds the docs of each crate, with the feature badges of
+  # `doc(cfg)`.
   docsrs:
     runs-on: ubuntu-latest
     env:
@@ -70,7 +79,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@nightly
-    - run: cargo doc --all-features --no-deps
+    - run: cargo doc -p watchword --all-features --no-deps
+    - run: cargo doc -p watchword-core --all-features --no-deps
+    - run: cargo doc -p watchword-yew023 --all-features --no-deps
 
   rustfmt:
     runs-on: ubuntu-latest

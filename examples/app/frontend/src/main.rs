@@ -6,7 +6,7 @@
 use std::rc::Rc;
 
 use auth::CloudflareConfig;
-use auth::yew::{
+use auth::yew023::{
     AccountPanel, AdminUsers, AuthProvider, CloudflareSettings, UserMenu, UsersQuery, use_auth,
 };
 use gloo_net::http::Request;

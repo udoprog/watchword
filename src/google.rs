@@ -1,7 +1,7 @@
 //! Signing in with Google OAuth (the `google` feature).
 //!
 //! This is territory's authorization-code flow. Configure it with
-//! [`AuthBuilder::google`](crate::AuthBuilder::google); the `axum` feature
+//! [`AuthBuilder::google`](crate::AuthBuilder::google); the `axum08` feature
 //! serves its routes:
 //!
 //! - `GET /api/auth/google` starts signing in.
@@ -35,14 +35,14 @@ pub use url::Url;
 
 use crate::types::UserId;
 
-#[cfg(all(feature = "axum", any(test, feature = "test-util")))]
+#[cfg(all(feature = "axum08", any(test, feature = "test-util")))]
 #[cfg_attr(
     watchword_docsrs,
-    doc(cfg(all(feature = "axum", feature = "test-util")))
+    doc(cfg(all(feature = "axum08", feature = "test-util")))
 )]
 pub mod fake;
 
-/// The path the callback is served at by the `axum` routes, which the
+/// The path the callback is served at by the `axum08` routes, which the
 /// [`redirect_url`](GoogleConfig::redirect_url) must have.
 pub const REDIRECT_PATH: &str = "/api/auth/google/redirect";
 
@@ -83,7 +83,7 @@ impl fmt::Debug for GoogleConfig {
 /// is all an app uses in production; with the `test-util` feature,
 /// [`AuthBuilder::google_endpoints`](crate::AuthBuilder::google_endpoints)
 /// points the client elsewhere, such as at a [`fake::FakeGoogle`] (which
-/// also needs `axum`).
+/// also needs `axum08`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoints {
     /// Where the browser is sent to sign in.

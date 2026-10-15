@@ -6,9 +6,8 @@ use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, MissedTickBehavior};
 
-use super::SignedIn;
-use crate::Auth;
-use crate::core::AuthEvent;
+use super::{Auth, AuthEvent};
+use crate::store::{Session, User};
 use crate::types::{Access, UserId, UserInfo};
 
 /// How often a guard re-checks its session in the store, to notice a session
@@ -16,11 +15,13 @@ use crate::types::{Access, UserId, UserInfo};
 const RECHECK: Duration = Duration::from_secs(5 * 60);
 
 impl Auth {
-    /// Watches the session of `signed_in`, for a WebSocket's `select!` loop:
+    /// Watches `session`, signed in as `user` (as loaded for the request,
+    /// such as the `SignedIn` extractor's fields), for a WebSocket's
+    /// `select!` loop:
     ///
     /// ```no_run
-    /// # async fn ws(auth: watchword::Auth, user: watchword::axum::SignedIn) {
-    /// let guard = auth.guard(&user);
+    /// # async fn ws(auth: watchword::Auth, user: watchword::store::User, session: watchword::store::Session) {
+    /// let guard = auth.guard(&user, &session);
     ///
     /// loop {
     ///     tokio::select! {
@@ -39,19 +40,18 @@ impl Auth {
     /// minutes, so a session deleted by another process still ends the
     /// socket. It runs a task on the current Tokio runtime until it is
     /// dropped or the session ends.
-    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "axum")))]
-    pub fn guard(&self, signed_in: &SignedIn) -> SessionGuard {
+    pub fn guard(&self, user: &User, session: &Session) -> SessionGuard {
         let (ended_tx, ended) = watch::channel(false);
-        let (changed_tx, changed) = watch::channel(signed_in.user.info());
+        let (changed_tx, changed) = watch::channel(user.info());
 
         let watcher = Watcher {
             auth: self.clone(),
             // Subscribe now, so nothing sent after this call is missed.
             events: self.events(),
-            session: signed_in.session.id.clone(),
-            user: signed_in.user.id,
-            impersonator: signed_in.session.impersonator,
-            expires_at: signed_in.session.expires_at,
+            session: session.id.clone(),
+            user: user.id,
+            impersonator: session.impersonator,
+            expires_at: session.expires_at,
             ended: ended_tx,
             changed: changed_tx,
         };

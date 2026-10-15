@@ -4,11 +4,11 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
-use axum::Router;
-use axum::body::Body;
-use axum::extract::connect_info::MockConnectInfo;
-use axum::http::{HeaderMap, Method, Request, StatusCode, header};
-use axum::routing::get;
+use axum08::Router;
+use axum08::body::Body;
+use axum08::extract::connect_info::MockConnectInfo;
+use axum08::http::{HeaderMap, Method, Request, StatusCode, header};
+use axum08::routing::get;
 use jiff::{SignedDuration, Timestamp};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -79,7 +79,7 @@ async fn call(
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let headers = response.headers().clone();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+    let bytes = axum08::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
 
@@ -703,7 +703,8 @@ async fn impersonation_ends_with_its_admin() {
     let as_pat = call(&app, Method::POST, &path, Some(&boss), None).await;
     assert_eq!(as_pat.status, StatusCode::OK);
     let as_pat = as_pat.cookie();
-    let guard = auth.guard(&loaded(&auth, &as_pat).await.unwrap());
+    let signed_in = loaded(&auth, &as_pat).await.unwrap();
+    let guard = auth.guard(&signed_in.user, &signed_in.session);
     let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
     assert_eq!(tile.status, StatusCode::OK);
 
@@ -737,7 +738,8 @@ async fn impersonation_ends_with_its_admin() {
     let as_pat = call(&app, Method::POST, &path, Some(&boss), None).await;
     assert_eq!(as_pat.status, StatusCode::OK);
     let as_pat = as_pat.cookie();
-    let guard = auth.guard(&loaded(&auth, &as_pat).await.unwrap());
+    let signed_in = loaded(&auth, &as_pat).await.unwrap();
+    let guard = auth.guard(&signed_in.user, &signed_in.session);
     let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
     assert_eq!(tile.status, StatusCode::OK);
 
@@ -800,7 +802,7 @@ const BRIEFLY: Duration = Duration::from_millis(100);
 async fn guard_ends_on_sign_out() {
     let auth = auth();
     let root = signed_in(&auth).await;
-    let guard = auth.guard(&root);
+    let guard = auth.guard(&root.user, &root.session);
 
     // Ending another session of the user keeps this one.
     let address = IpAddr::V4(Ipv4Addr::LOCALHOST);
@@ -834,7 +836,7 @@ async fn guard_follows_user_changes() {
         .await
         .unwrap();
 
-    let guard = auth.guard(&root);
+    let guard = auth.guard(&root.user, &root.session);
 
     // Another user's change is not this socket's.
     let rename = UserChange {
@@ -884,7 +886,7 @@ async fn guard_ends_on_delete_and_expiry() {
     // Expiry, from the session the request loaded.
     let mut soon = root.clone();
     soon.session.expires_at = Timestamp::now() + SignedDuration::from_millis(200);
-    let guard = auth.guard(&soon);
+    let guard = auth.guard(&soon.user, &soon.session);
     assert!(tokio::time::timeout(BRIEFLY, guard.ended()).await.is_err());
     tokio::time::timeout(WAIT, guard.ended()).await.unwrap();
 
@@ -912,12 +914,12 @@ async fn guard_ends_on_delete_and_expiry() {
         google_sub: None,
         created_at: pat.user.created_at,
     };
-    let guard = auth.guard(&root);
+    let guard = auth.guard(&root.user, &root.session);
     assert!(tokio::time::timeout(BRIEFLY, guard.ended()).await.is_err());
     auth.delete_user(&pat, root.user.id).await.unwrap();
     tokio::time::timeout(WAIT, guard.ended()).await.unwrap();
 
-    let gone = auth.guard(&root);
+    let gone = auth.guard(&root.user, &root.session);
     tokio::time::timeout(WAIT, gone.ended()).await.unwrap();
 }
 
@@ -925,7 +927,7 @@ async fn guard_ends_on_delete_and_expiry() {
 /// `GET /api/auth/config`, with Access believing the email header.
 #[cfg(feature = "cloudflare")]
 mod cloudflare {
-    use axum::http::HeaderValue;
+    use axum08::http::HeaderValue;
 
     use super::*;
     use crate::cloudflare::EMAIL_HEADER;
@@ -956,7 +958,7 @@ mod cloudflare {
             .unwrap();
         let status = response.status();
         let headers = response.headers().clone();
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        let bytes = axum08::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
         let body = if bytes.is_empty() {

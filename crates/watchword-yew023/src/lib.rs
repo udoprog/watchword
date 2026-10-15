@@ -1,12 +1,35 @@
-//! Yew components, the auth context and hook, and the HTTP client (the `yew`
-//! feature).
+//! [<img alt="github" src="https://img.shields.io/badge/github-udoprog/watchword-8da0cb?style=for-the-badge&logo=github" height="20">](https://github.com/udoprog/watchword)
+//! [<img alt="crates.io" src="https://img.shields.io/crates/v/watchword-yew023.svg?style=for-the-badge&color=fc8d62&logo=rust" height="20">](https://crates.io/crates/watchword-yew023)
+//! [<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-watchword--yew023-66c2a5?style=for-the-badge&logoColor=white&logo=data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTIiPjxwYXRoIGZpbGw9IiNmNWY1ZjUiIGQ9Ik00ODguNiAyNTAuMkwzOTIgMjE0VjEwNS41YzAtMTUtOS4zLTI4LjQtMjMuNC0zMy43bC0xMDAtMzcuNWMtOC4xLTMuMS0xNy4xLTMuMS0yNS4zIDBsLTEwMCAzNy41Yy0xNC4xIDUuMy0yMy40IDE4LjctMjMuNCAzMy43VjIxNGwtOTYuNiAzNi4yQzkuMyAyNTUuNSAwIDI2OC45IDAgMjgzLjlWMzk0YzAgMTMuNiA3LjcgMjYuMSAxOS45IDMyLjJsMTAwIDUwYzEwLjEgNS4xIDIyLjEgNS4xIDMyLjIgMGwxMDMuOS01MiAxMDMuOSA1MmMxMC4xIDUuMSAyMi4xIDUuMSAzMi4yIDBsMTAwLTUwYzEyLjItNi4xIDE5LjktMTguNiAxOS45LTMyLjJWMjgzLjljMC0xNS05LjMtMjguNC0yMy40LTMzLjd6TTM1OCAyMTQuOGwtODUgMzEuOXYtNjguMmw4NS0zN3Y3My4zek0xNTQgMTA0LjFsMTAyLTM4LjIgMTAyIDM4LjJ2LjZsLTEwMiA0MS40LTEwMi00MS40di0uNnptODQgMjkxLjFsLTg1IDQyLjV2LTc5LjFsODUtMzguOHY3NS40em0wLTExMmwtMTAyIDQxLjQtMTAyLTQxLjR2LS42bDEwMi0zOC4yIDEwMiAzOC4ydi42em0yNDAgMTEybC04NSA0Mi41di03OS4xbDg1LTM4Ljh2NzUuNHptMC0xMTJsLTEwMiA0MS40LTEwMi00MS40di0uNmwxMDItMzguMiAxMDIgMzguMnYuNnoiPjwvcGF0aD48L3N2Zz4K" height="20">](https://docs.rs/watchword-yew023)
+//!
+//! [watchword]'s frontend for [Yew] 0.23: the sign-in, registration, account
+//! and user management components, the auth context and hook, and the HTTP
+//! client for watchword's `/api/auth` routes. Built for
+//! `wasm32-unknown-unknown`.
+//!
+//! Apps take it through watchword's `yew023` feature, as `watchword::yew023`,
+//! so a frontend needs only one dependency:
+//!
+//! ```toml
+//! [dependencies]
+//! auth = { package = "watchword", version = "0.1", features = ["yew023"] }
+//! ```
+//!
+//! It is a crate of its own because yew's macros expand to `::yew::` paths, so
+//! its code must depend on yew under the key `yew`. A later yew gets a crate of
+//! its own beside it, so an app moves to it when it chooses. Released in
+//! lockstep with watchword.
+//!
+//! <br>
+//!
+//! ## Usage
 //!
 //! Wrap the app in [`AuthProvider`]. It signs the user in (or registers them
 //! from a `/register/{token}` link) before rendering its children, and gives
 //! them an [`AuthContext`] through [`use_auth`]:
 //!
 //! ```ignore
-//! use watchword::yew::{AuthProvider, use_auth};
+//! use watchword::yew023::{AuthProvider, use_auth};
 //! use yew::prelude::*;
 //!
 //! #[function_component]
@@ -32,7 +55,9 @@
 //! for admins, and [`CloudflareSettings`] edits the Cloudflare Access
 //! settings an app stores. They talk to the server through [`http`].
 //!
-//! # Styling
+//! <br>
+//!
+//! ## Styling
 //!
 //! The components render plain semantic HTML with stable class names and take
 //! a `class` prop that is added to their outermost element. The class names
@@ -95,6 +120,19 @@
 //! | `auth-cloudflare-settings` | the outermost `<section>` of [`CloudflareSettings`] |
 //! | `auth-instructions` | the Cloudflare setup instructions |
 //! | `auth-toggle` | a field with a checkbox |
+//!
+//! [`AccountPanel`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AccountPanel.html
+//! [`AdminUsers`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AdminUsers.html
+//! [`AuthContext`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html
+//! [`AuthProvider`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthProvider.html
+//! [`CloudflareSettings`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.CloudflareSettings.html
+//! [`http`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/http/index.html
+//! [`use_auth`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth.html
+//! [`UserMenu`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.UserMenu.html
+//! [watchword]: https://docs.rs/watchword
+//! [Yew]: https://yew.rs
+
+#![cfg_attr(watchword_docsrs, feature(doc_cfg))]
 
 pub mod http;
 

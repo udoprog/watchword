@@ -217,8 +217,8 @@ impl AuthBuilder {
                 google: self
                     .google
                     .map(|config| crate::google::Provider::new(config, self.google_endpoints)),
-                #[cfg(feature = "axum")]
-                live: crate::axum::LiveCache::default(),
+                #[cfg(feature = "axum08")]
+                live: crate::axum08::LiveCache::default(),
             }),
         }
     }
@@ -253,8 +253,8 @@ struct Inner {
     #[cfg(feature = "google")]
     google: Option<crate::google::Provider>,
     /// Recently confirmed live sessions, for the `LiveSession` extractor.
-    #[cfg(feature = "axum")]
-    live: crate::axum::LiveCache,
+    #[cfg(feature = "axum08")]
+    live: crate::axum08::LiveCache,
 }
 
 impl Auth {
@@ -285,8 +285,8 @@ impl Auth {
     }
 
     /// The cache behind the `LiveSession` extractor.
-    #[cfg(feature = "axum")]
-    pub(crate) fn live_cache(&self) -> &crate::axum::LiveCache {
+    #[cfg(feature = "axum08")]
+    pub(crate) fn live_cache(&self) -> &crate::axum08::LiveCache {
         &self.inner.live
     }
 
@@ -321,7 +321,7 @@ impl Auth {
     }
 
     fn emit(&self, event: AuthEvent) {
-        #[cfg(feature = "axum")]
+        #[cfg(feature = "axum08")]
         self.inner.live.forget(&event);
 
         // Nobody listening is fine.

@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sqll::{Connection, OpenOptions, PoolBuilder};
+use sqll014::{Connection, OpenOptions, PoolBuilder};
 
 use super::*;
 use crate::core::{Auth, generate_session_key, hash_password, new_session_id};
@@ -59,7 +59,7 @@ fn store(uri: &str, create: bool) -> SqllStore {
 
 /// Runs `sql` as a migration: in one transaction, which a failure rolls
 /// back, as both apps' migration runners do.
-fn migrate(c: &Connection, sql: &str) -> sqll::Result<()> {
+fn migrate(c: &Connection, sql: &str) -> sqll014::Result<()> {
     c.execute("BEGIN IMMEDIATE")?;
 
     let result = c.execute(sql).and_then(|()| c.execute("COMMIT"));
@@ -72,7 +72,7 @@ fn migrate(c: &Connection, sql: &str) -> sqll::Result<()> {
 }
 
 /// Executes a prepared statement again.
-fn run(stmt: &mut sqll::Statement, bind: impl sqll::Bind) -> sqll::Result<()> {
+fn run(stmt: &mut sqll014::Statement, bind: impl sqll014::Bind) -> sqll014::Result<()> {
     stmt.reset()?;
     stmt.execute(bind)
 }
@@ -519,15 +519,15 @@ async fn migrates_territory() -> TestResult {
 
 /// An app's read statements with the store's nested, as the module
 /// documentation shows.
-#[derive(sqll::Statements)]
+#[derive(sqll014::Statements)]
 #[sql(read_only)]
 struct AppRead {
     #[sql(statements)]
     auth: Read,
     #[sql = "SELECT login FROM users WHERE login LIKE ? ORDER BY login"]
-    logins_like: sqll::TypedStatement<(String,), String>,
+    logins_like: sqll014::TypedStatement<(String,), String>,
     #[sql = "SELECT login FROM users ORDER BY login LIMIT ?"]
-    first_logins: sqll::TypedStatement<(i64,), String>,
+    first_logins: sqll014::TypedStatement<(i64,), String>,
 }
 
 impl AsMut<Read> for AppRead {
@@ -537,14 +537,14 @@ impl AsMut<Read> for AppRead {
 }
 
 /// The write side of [`AppRead`].
-#[derive(sqll::Statements)]
+#[derive(sqll014::Statements)]
 struct AppWrite {
     #[sql(statements)]
     auth: Write,
     #[sql = "SELECT login FROM users WHERE login LIKE ? ORDER BY login"]
-    logins_like: sqll::TypedStatement<(String,), String>,
+    logins_like: sqll014::TypedStatement<(String,), String>,
     #[sql = "SELECT login FROM users ORDER BY login LIMIT ?"]
-    first_logins: sqll::TypedStatement<(i64,), String>,
+    first_logins: sqll014::TypedStatement<(i64,), String>,
 }
 
 impl AsMut<Write> for AppWrite {
@@ -553,10 +553,10 @@ impl AsMut<Write> for AppWrite {
     }
 }
 
-fn logins<I: sqll::Bind>(
-    stmt: &mut sqll::TypedStatement<I, String>,
-    bind: impl sqll::Bind,
-) -> sqll::Result<Vec<String>> {
+fn logins<I: sqll014::Bind>(
+    stmt: &mut sqll014::TypedStatement<I, String>,
+    bind: impl sqll014::Bind,
+) -> sqll014::Result<Vec<String>> {
     let mut stmt = stmt.bind(bind)?;
     let mut out = Vec::new();
 

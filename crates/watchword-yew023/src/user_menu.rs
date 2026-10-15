@@ -4,7 +4,7 @@ use yew::prelude::*;
 use super::context::use_auth;
 use super::form::error_message;
 use super::http::{self, Error};
-use crate::types::{AuthError, UserInfo};
+use watchword_core::{AuthError, UserInfo};
 
 /// The properties of [`UserMenu`].
 #[derive(Properties, PartialEq)]

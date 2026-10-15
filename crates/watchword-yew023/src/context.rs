@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use yew::prelude::*;
 
-use crate::types::{AuthConfig, UserInfo};
+use watchword_core::{AuthConfig, UserInfo};
 
 /// The signed-in user and what the app can do about the session, given by
 /// [`AuthProvider`](super::AuthProvider) to its children. Get it with

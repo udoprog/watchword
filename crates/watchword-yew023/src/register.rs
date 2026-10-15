@@ -3,7 +3,7 @@ use yew::prelude::*;
 
 use super::browser;
 use super::http::{self, Error};
-use crate::types::{AuthError, RegisterInfo, RegisterRequest, UserInfo, validate_password};
+use watchword_core::{AuthError, RegisterInfo, RegisterRequest, UserInfo, validate_password};
 
 /// The properties of [`Register`].
 #[derive(Properties, PartialEq)]
