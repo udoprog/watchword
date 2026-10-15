@@ -1,4 +1,4 @@
-# yew-auth
+# watchword
 
 Authentication shared by the Rust web apps (axum server, Yew/WASM frontend)
 in this family: track, army and territory. It grew out of `crates/auth` in
@@ -16,29 +16,30 @@ default.
 
 | Feature | Module | What it provides |
 |---|---|---|
-| *(none)* | `auth::types` | `UserId`, `Role`, `Access`, `Method`, the wire types (`UserInfo`, `AuthConfig`, `LoginRequest`, `CreatedUser`, ...), `AuthError`, `validate_password`, `normalize_email` |
+| *(none)* | `watchword::types` | `UserId`, `Role`, `Access`, `Method`, the wire types (`UserInfo`, `AuthConfig`, `LoginRequest`, `CreatedUser`, ...), `AuthError`, `validate_password`, `normalize_email` |
 | `musli` | | musli `Encode`/`Decode` on the wire types |
-| `server` | `auth::core`, `auth::store` | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin); the `Store` trait and `MemoryStore` |
-| `cloudflare` | `auth::cloudflare` | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
-| `google` | `auth::google` | Google OAuth: `GoogleConfig` for `AuthBuilder::google`; with `axum`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
-| `axum` | `auth::axum` | the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors, `routes()` for the `/api/auth` JSON routes, and `Auth::guard` for WebSocket sessions, plus the Cloudflare and Google routes when those features are on (implies `server`) |
-| `sqll` | `auth::sqll` | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA`, and the one-time migrations for track and territory in `docs/sqll/` (implies `server`) |
-| `test-util` | `auth::google::fake` | for an app's tests: `AuthBuilder::google_endpoints`, and with `axum` `FakeGoogle`, a local fake Google to sign in through offline (implies `google`) |
-| `yew` | `auth::yew` | `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings` and the `http` client |
+| `server` | `watchword::core`, `watchword::store` | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin); the `Store` trait and `MemoryStore` |
+| `cloudflare` | `watchword::cloudflare` | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
+| `google` | `watchword::google` | Google OAuth: `GoogleConfig` for `AuthBuilder::google`; with `axum`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
+| `axum` | `watchword::axum` | the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors, `routes()` for the `/api/auth` JSON routes, and `Auth::guard` for WebSocket sessions, plus the Cloudflare and Google routes when those features are on (implies `server`) |
+| `sqll` | `watchword::sqll` | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA`, and the one-time migrations for track and territory in `docs/sqll/` (implies `server`) |
+| `test-util` | `watchword::google::fake` | for an app's tests: `AuthBuilder::google_endpoints`, and with `axum` `FakeGoogle`, a local fake Google to sign in through offline (implies `google`) |
+| `yew` | `watchword::yew` | `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings` and the `http` client |
 
 The most-used names are re-exported at the crate root.
 
 ## Using it
 
 The crate is not published. Depend on it by path; the package is named
-`yew-auth` and the library `auth`, so code refers to it as `auth`:
+`watchword` and the library `watchword`; a dependency key of `auth` keeps code
+referring to it as `auth`:
 
 ```toml
 [dependencies]
 # Server crate.
-auth = { package = "yew-auth", path = "../yew-auth", features = ["axum", "cloudflare"] }
+auth = { package = "watchword", path = "../watchword", features = ["axum", "cloudflare"] }
 # Frontend crate.
-auth = { package = "yew-auth", path = "../yew-auth", features = ["yew"] }
+auth = { package = "watchword", path = "../watchword", features = ["yew"] }
 ```
 
 Adjust the path to where this repository is checked out relative to the
@@ -57,7 +58,7 @@ which serves it:
 
 ```sh
 cd examples/app/frontend && trunk build
-cd examples/app && cargo run -p yew-auth-example-server -- --bind 127.0.0.1:8080
+cd examples/app && cargo run -p watchword-example-server -- --bind 127.0.0.1:8080
 ```
 
 The server prints a registration link for the bootstrap admin (`admin` by
@@ -76,8 +77,8 @@ trunk builds with the `wasm-bindgen` CLI matching `examples/app/Cargo.lock`
 When a change touches the example or the API it uses, also run:
 
 ```sh
-cd examples/app && cargo clippy -p yew-auth-example-server -- -D warnings
-cd examples/app && cargo clippy -p yew-auth-example-frontend --target wasm32-unknown-unknown -- -D warnings
+cd examples/app && cargo clippy -p watchword-example-server -- -D warnings
+cd examples/app && cargo clippy -p watchword-example-frontend --target wasm32-unknown-unknown -- -D warnings
 cd examples/app && cargo fmt --all --check
 cd examples/app/frontend && trunk build
 ```

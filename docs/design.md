@@ -1,6 +1,6 @@
-# yew-auth design
+# watchword design
 
-yew-auth carries the authentication of an axum + Yew application across every
+watchword carries the authentication of an axum + Yew application across every
 layer: the sign-in methods themselves (Cloudflare Access, Google OAuth, and
 simple email/login + password with invite links and a bootstrap admin), session
 and token handling, storage, the HTTP routes and extractors, WebSocket session
@@ -93,7 +93,7 @@ shape of the library.
 
 ### 2.1 Layout and features
 
-The crate stays a single package, `yew-auth` (lib name `auth`), with features.
+The crate stays a single package, `watchword`, with features.
 The server-only dependencies (bcrypt, aws-lc-rs, tokio, axum, reqwest, sqll) and
 the browser-only ones (yew, gloo-net, web-sys) sit behind disjoint features.
 That keeps trunk's wasm build of a frontend crate free of server code. Both apps
@@ -114,7 +114,7 @@ questions list the split into a workspace as the alternative.
 | `yew` | components, context, hook, HTTP client | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures |
 | `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum` also `google::fake::FakeGoogle` (see 2.5) | nothing more |
 
-The modules are `auth::{types, core, store, cloudflare, google, axum, sqll, yew}`,
+The modules are `watchword::{types, core, store, cloudflare, google, axum, sqll, yew}`,
 and the most-used names are re-exported at the root. The existing
 `cloudflare.rs`, `cookie.rs`, `password.rs` and `session.rs` move under `core`
 and `cloudflare` largely unchanged.
@@ -300,7 +300,7 @@ territory's groups), and the store reads and writes only its own columns (see
 open question 4).
 
 `SqllStore` (card C) works on a sqll `Pool`. It exports its statement
-collections, `auth::sqll::Read` and `auth::sqll::Write`. An app nests these in
+collections, `watchword::sqll::Read` and `watchword::sqll::Write`. An app nests these in
 its own pool with `#[sql(statements)]` and implements `AsMut` to reach them,
 so auth shares the app's single write connection; `SqllStore::new(pool)` then
 takes the app's `Arc<Pool<R, W>>`. A store over a pool of its own is
@@ -313,7 +313,7 @@ takes the app's `Arc<Pool<R, W>>`. A store over a pool of its own is
 | `auth_tokens` | `id` TEXT PRIMARY KEY, `user_id` → users, `kind` TEXT (`registration`/`reset`), `expires_at` and `used_at` INTEGER ms |
 | `config` | `key` TEXT PRIMARY KEY, `value` TEXT |
 
-`auth::sqll::SCHEMA` creates the tables in a new database. The one-time
+`watchword::sqll::SCHEMA` creates the tables in a new database. The one-time
 migrations from each app's current tables are `docs/sqll/track.sql` and
 `docs/sqll/territory.sql`; the tests run both against copies of the apps'
 current auth tables. A database made with the schema from before sessions had
@@ -402,7 +402,7 @@ The routes are all JSON. Their errors are `AuthError` with the matching status:
 | `POST /api/auth/login` | anyone | `LoginRequest` → `UserInfo` + cookie; throttled |
 | `POST /api/auth/cloudflare` | anyone | → `UserInfo` + cookie |
 | `GET /api/auth/google`, `/google/register/{token}`, `/google/link` | anyone / anyone / signed in | redirect to Google |
-| `GET /api/auth/google/redirect` (`auth::google::REDIRECT_PATH`; `redirect_url` must use this path, a different one is logged as a warning) | Google | callback; cookie + redirect to `/`, or `/?error=user-not-found` / `/?error=auth-failed` |
+| `GET /api/auth/google/redirect` (`watchword::google::REDIRECT_PATH`; `redirect_url` must use this path, a different one is logged as a warning) | Google | callback; cookie + redirect to `/`, or `/?error=user-not-found` / `/?error=auth-failed` |
 | `POST /api/auth/logout` | anyone | 204, deletes the session, clears the cookie |
 | `GET /api/auth/register/{token}` | anyone | `RegisterInfo`; 404 unknown, 410 used or expired |
 | `POST /api/auth/register/{token}` | anyone | `RegisterRequest` → `UserInfo` + cookie; ends the user's other sessions |
@@ -426,7 +426,7 @@ path moves (from `/api/register/{token}` to `/api/auth/register/{token}`).
 
 The components render plain semantic HTML with stable `auth-*` class names and
 take a `class` prop. Each app styles them with its own CSS. They talk to the
-server through `auth::yew::http`, which uses gloo-net with same-origin cookies,
+server through `watchword::yew::http`, which uses gloo-net with same-origin cookies,
 so the library does not depend on the app's gloo version.
 
 - `<AuthProvider>` is the gate.
@@ -554,7 +554,7 @@ so the library does not depend on the app's gloo version.
 **Server** (`crates/track`):
 
 ```toml
-yew-auth = { path = "../../../yew-auth", features = ["axum", "cloudflare", "sqll"] }
+auth = { package = "watchword", path = "../../../watchword", features = ["axum", "cloudflare", "sqll"] }
 ```
 
 ```rust
@@ -602,7 +602,7 @@ login links become `reset` links, because their users are now active.
 **Server** (`crates/territory`):
 
 ```toml
-yew-auth = { path = "../../../yew-auth", features = ["axum", "google", "sqll"] }
+auth = { package = "watchword", path = "../../../watchword", features = ["axum", "google", "sqll"] }
 ```
 
 ```rust
@@ -700,7 +700,7 @@ record.
      code.
 6. **Crate layout.**
    - **(chosen) One crate with disjoint features**, as now.
-   - A workspace: `yew-auth` (types), `yew-auth-server`, `yew-auth-yew`. This
+   - A workspace: `watchword` (types), `watchword-server`, `watchword-yew`. This
      isolates wasm and server dependency trees at the cost of three manifests
      and path dependencies.
 
@@ -722,6 +722,6 @@ lets workers run in parallel.
 | H | **Yew account and admin**: `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings` | G | |
 | I | **Example app** in `examples/`: axum + Yew with `MemoryStore`, all three methods, for manual checks and as the consumers' reference | F, H | |
 
-After these cards, moving track and territory onto yew-auth belongs on their
+After these cards, moving track and territory onto watchword belongs on their
 own boards (section 4 is their checklist). This board does not change either
 repository.

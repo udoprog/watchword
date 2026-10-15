@@ -1,4 +1,4 @@
-# The example app: an axum server and a Yew frontend over yew-auth.
+# The example app: an axum server and a Yew frontend over watchword.
 #
 # Its own workspace, so the library's builds, features and lockfile are
 # untouched by it. Build each crate on its own: the server natively, the

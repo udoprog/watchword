@@ -19,7 +19,7 @@ impl Auth {
     /// Watches the session of `signed_in`, for a WebSocket's `select!` loop:
     ///
     /// ```no_run
-    /// # async fn ws(auth: auth::Auth, user: auth::axum::SignedIn) {
+    /// # async fn ws(auth: watchword::Auth, user: watchword::axum::SignedIn) {
     /// let guard = auth.guard(&user);
     ///
     /// loop {

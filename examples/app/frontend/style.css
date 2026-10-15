@@ -1,5 +1,5 @@
-/* The example's styling of the yew-auth components, through their stable
-   auth-* class names (see the `auth::yew` module docs). */
+/* The example's styling of the watchword components, through their stable
+   auth-* class names (see the `watchword::yew` module docs). */
 
 :root {
   --bg: #f5f6f8;

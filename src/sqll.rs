@@ -26,17 +26,17 @@
 //! #[sql(read_only)]
 //! struct AppRead {
 //!     #[sql(statements)]
-//!     auth: auth::sqll::Read,
+//!     auth: watchword::sqll::Read,
 //!     // the app's own statements
 //! }
 //!
-//! impl AsMut<auth::sqll::Read> for AppRead {
-//!     fn as_mut(&mut self) -> &mut auth::sqll::Read {
+//! impl AsMut<watchword::sqll::Read> for AppRead {
+//!     fn as_mut(&mut self) -> &mut watchword::sqll::Read {
 //!         &mut self.auth
 //!     }
 //! }
 //!
-//! // ...and the same for `AppWrite` with `auth::sqll::Write`.
+//! // ...and the same for `AppWrite` with `watchword::sqll::Write`.
 //!
 //! let pool: Arc<Pool<AppRead, AppWrite>> = /* the app's pool */;
 //! let store = SqllStore::new(pool.clone());

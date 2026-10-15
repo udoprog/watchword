@@ -6,16 +6,16 @@
 -- table. Dropping the old table with foreign keys on would cascade into every
 -- table that references users, so the first statements abort the migration
 -- (by a CHECK failure) unless foreign keys are off on this connection.
-CREATE TEMP TABLE yew_auth_foreign_keys_off (foreign_keys INTEGER CHECK (foreign_keys = 0));
+CREATE TEMP TABLE watchword_foreign_keys_off (foreign_keys INTEGER CHECK (foreign_keys = 0));
 
 INSERT INTO
-    yew_auth_foreign_keys_off
+    watchword_foreign_keys_off
 SELECT
     foreign_keys
 FROM
     pragma_foreign_keys;
 
-DROP TABLE yew_auth_foreign_keys_off;
+DROP TABLE watchword_foreign_keys_off;
 
 -- Every existing user becomes active with a password method, so users without
 -- a password keep signing in through Cloudflare Access or a login link.

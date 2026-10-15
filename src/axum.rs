@@ -9,8 +9,8 @@
 //! ```no_run
 //! use std::net::SocketAddr;
 //!
-//! use auth::axum::{SignedIn, routes};
-//! use auth::{Auth, MemoryStore, generate_session_key};
+//! use watchword::axum::{SignedIn, routes};
+//! use watchword::{Auth, MemoryStore, generate_session_key};
 //! use axum::Router;
 //! use axum::routing::get;
 //!

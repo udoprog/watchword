@@ -1,4 +1,4 @@
-//! The yew-auth example server: axum with a `MemoryStore` and all three
+//! The watchword example server: axum with a `MemoryStore` and all three
 //! sign-in methods, serving the trunk-built frontend.
 //!
 //! Simple auth works out of the box: on an empty store the server logs a
@@ -27,9 +27,9 @@ use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
 const HELP: &str = "\
-The yew-auth example server.
+The watchword example server.
 
-Usage: yew-auth-example-server [OPTIONS]
+Usage: watchword-example-server [OPTIONS]
 
 Options:
   --bind ADDR              Address to listen on [default: 127.0.0.1:8080]

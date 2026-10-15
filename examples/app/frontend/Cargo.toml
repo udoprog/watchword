@@ -1,13 +1,13 @@
 [package]
-name = "yew-auth-example-frontend"
+name = "watchword-example-frontend"
 version = "0.0.0"
 edition = "2024"
 publish = false
-description = "The yew-auth example's Yew frontend, built with trunk."
+description = "The watchword example's Yew frontend, built with trunk."
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-auth = { package = "yew-auth", path = "../../..", features = ["yew"] }
+auth = { package = "watchword", path = "../../..", features = ["yew"] }
 gloo-net = { version = "0.7.0", default-features = false, features = ["http", "json"] }
 serde = "1.0.229"
 serde_json = "1.0.151"

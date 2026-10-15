@@ -20,7 +20,7 @@ fn scratch_uri() -> String {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     format!(
-        "file:yew-auth-sqll-{}-{n}?mode=memory&cache=shared",
+        "file:watchword-sqll-{}-{n}?mode=memory&cache=shared",
         std::process::id()
     )
 }

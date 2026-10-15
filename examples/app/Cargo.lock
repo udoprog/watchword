@@ -2579,6 +2579,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "watchword"
+version = "0.1.0"
+dependencies = [
+ "aws-lc-rs",
+ "axum",
+ "base64 0.22.1",
+ "bcrypt",
+ "cookie",
+ "gloo-net 0.7.0",
+ "hmac",
+ "http 1.5.0",
+ "jiff",
+ "lru",
+ "rand 0.10.3",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "yew",
+]
+
+[[package]]
+name = "watchword-example-frontend"
+version = "0.0.0"
+dependencies = [
+ "gloo-net 0.7.0",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "watchword",
+ "web-sys",
+ "yew",
+]
+
+[[package]]
+name = "watchword-example-server"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "serde_json",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "watchword",
+]
+
+[[package]]
 name = "web-sys"
 version = "0.3.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2748,62 +2804,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "yew-macro",
-]
-
-[[package]]
-name = "yew-auth"
-version = "0.1.0"
-dependencies = [
- "aws-lc-rs",
- "axum",
- "base64 0.22.1",
- "bcrypt",
- "cookie",
- "gloo-net 0.7.0",
- "hmac",
- "http 1.5.0",
- "jiff",
- "lru",
- "rand 0.10.3",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "url",
- "wasm-bindgen-futures",
- "web-sys",
- "yew",
-]
-
-[[package]]
-name = "yew-auth-example-frontend"
-version = "0.0.0"
-dependencies = [
- "gloo-net 0.7.0",
- "serde",
- "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "yew",
- "yew-auth",
-]
-
-[[package]]
-name = "yew-auth-example-server"
-version = "0.0.0"
-dependencies = [
- "axum",
- "serde_json",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "url",
- "yew-auth",
 ]
 
 [[package]]

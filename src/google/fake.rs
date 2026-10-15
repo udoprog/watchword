@@ -10,9 +10,9 @@
 //!
 //! ```no_run
 //! # async fn test() -> std::io::Result<()> {
-//! use auth::google::fake::{FakeAccount, FakeGoogle};
-//! use auth::google::{GoogleConfig, REDIRECT_PATH, Url};
-//! use auth::{Auth, MemoryStore, generate_session_key};
+//! use watchword::google::fake::{FakeAccount, FakeGoogle};
+//! use watchword::google::{GoogleConfig, REDIRECT_PATH, Url};
+//! use watchword::{Auth, MemoryStore, generate_session_key};
 //!
 //! let config = GoogleConfig {
 //!     client_id: "client".to_owned(),

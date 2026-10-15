@@ -1,5 +1,5 @@
 [package]
-name = "yew-auth"
+name = "watchword"
 version = "0.1.0"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
@@ -9,7 +9,7 @@ readme = "README.md"
 publish = false
 
 [lib]
-name = "auth"
+name = "watchword"
 
 [package.metadata.docs.rs]
 all-features = true

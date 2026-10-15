@@ -6,7 +6,7 @@
 //! them an [`AuthContext`] through [`use_auth`]:
 //!
 //! ```ignore
-//! use auth::yew::{AuthProvider, use_auth};
+//! use watchword::yew::{AuthProvider, use_auth};
 //! use yew::prelude::*;
 //!
 //! #[function_component]

@@ -1,4 +1,4 @@
-//! The yew-auth example frontend: `AuthProvider` in front of a small app
+//! The watchword example frontend: `AuthProvider` in front of a small app
 //! with the user menu, the account panel, admin user management and the
 //! Cloudflare Access settings, plus a socket that lives as long as the
 //! session.
@@ -15,7 +15,7 @@ use wasm_bindgen::closure::Closure;
 use web_sys::{CloseEvent, MessageEvent, WebSocket};
 use yew::prelude::*;
 
-const TITLE: &str = "yew-auth example";
+const TITLE: &str = "watchword example";
 
 fn main() {
     yew::Renderer::<Root>::new().render();
