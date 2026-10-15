@@ -4,9 +4,15 @@ version = "0.1.0"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
 description = "Authentication for axum servers and Yew frontends: password, Cloudflare Access and Google sign-in, sessions and user management."
+documentation = "https://docs.rs/watchword"
 readme = "README.md"
+repository = "https://github.com/udoprog/watchword"
 license = "MIT OR Apache-2.0"
-publish = false
+keywords = ["authentication", "axum", "oauth", "session", "yew"]
+categories = ["authentication", "wasm", "web-programming"]
+# The sqll tests include the migrations under docs/sqll; examples/app, CI
+# config and build output stay out of the package.
+include = ["/src/**", "/docs/**", "/README.md", "/LICENSE-*", "/Cargo.toml"]
 
 [lib]
 name = "watchword"

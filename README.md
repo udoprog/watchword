@@ -39,20 +39,17 @@ The most-used names are re-exported at the crate root.
 
 ## Using it
 
-The crate is not published. Depend on it by path; the package and the library
-are both named `watchword`, and a dependency key of `auth` keeps code
-referring to it as `auth`:
+Add it from crates.io with the features each crate needs. The package and
+the library are both named `watchword`; a dependency key of `auth` keeps
+code referring to it as `auth`:
 
 ```toml
 [dependencies]
 # Server crate.
-auth = { package = "watchword", path = "../watchword", features = ["axum", "cloudflare"] }
+auth = { package = "watchword", version = "0.1", features = ["axum", "cloudflare"] }
 # Frontend crate.
-auth = { package = "watchword", path = "../watchword", features = ["yew"] }
+auth = { package = "watchword", version = "0.1", features = ["yew"] }
 ```
-
-Adjust the path to where this repository is checked out relative to the
-depending crate.
 
 <br>
 
