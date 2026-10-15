@@ -1,0 +1,12 @@
+[package]
+name = "watchword-example-api"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "The watchword example's own musli-web API, shared by its server and frontend."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+musli = "0.1.9"
+# `define!` expands to `::musli_web::` paths, so the key is the crate's name.
+musli-web = { version = "0.4.11", default-features = false, features = ["api"] }

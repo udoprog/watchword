@@ -1,8 +1,14 @@
 //! The watchword example frontend: `AuthProvider` in front of a small app
 //! with the user menu, the account panel, admin user management and the
-//! Cloudflare Access settings, plus a socket that lives as long as the
-//! session.
+//! Cloudflare Access settings, plus a musli-web socket that lives as long as
+//! the session.
+//!
+//! The socket is the wiring of `docs/design.md` section 2.7, see
+//! [`use_session_socket`]: handed to watchword with `set_socket`, it carries
+//! the components' account and admin requests and the server's
+//! `AuthBroadcast`, beside the app's own API (the `api` crate).
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use auth::CloudflareConfig;
@@ -10,9 +16,7 @@ use auth::yew023::{
     AccountPanel, AdminUsers, AuthProvider, CloudflareSettings, UserMenu, UsersQuery, use_auth,
 };
 use gloo_net::http::Request;
-use wasm_bindgen::JsCast;
-use wasm_bindgen::closure::Closure;
-use web_sys::{CloseEvent, MessageEvent, WebSocket};
+use musli_web::web03::prelude::ws;
 use yew::prelude::*;
 
 const TITLE: &str = "watchword example";
@@ -42,10 +46,8 @@ enum Page {
 fn App() -> Html {
     let auth = use_auth();
     let page = use_state(|| Page::Home);
-    let users_refresh = use_reducer(Counter::default);
     let query = use_state(UsersQuery::default);
-
-    use_session_socket(users_refresh.dispatcher());
+    let socket = use_session_socket();
 
     let go = |to: Page| {
         let page = page.clone();
@@ -65,19 +67,23 @@ fn App() -> Html {
     };
 
     let content = match shown {
-        Page::Home => html! { <Home /> },
+        Page::Home => html! { <Home socket={socket.handle.clone()} /> },
         Page::Account => html! {
             <section class="panel">
                 <AccountPanel />
             </section>
         },
         Page::Users => {
-            // After impersonating, the cookie is the other user's: load them.
+            // After impersonating, the cookie is the other user's: reconnect
+            // the socket, which still speaks for the admin's session, and
+            // load them.
             let on_impersonate = {
                 let auth = auth.clone();
                 let page = page.clone();
+                let reconnect = socket.reconnect.clone();
                 Callback::from(move |_| {
                     page.set(Page::Home);
+                    reconnect.emit(());
                     auth.refresh();
                 })
             };
@@ -90,7 +96,6 @@ fn App() -> Html {
                 <section class="panel wide">
                     <AdminUsers
                         me={auth.user.clone()}
-                        refresh={users_refresh.0}
                         query={(*query).clone()}
                         {on_query_change}
                         {on_impersonate}
@@ -99,6 +104,17 @@ fn App() -> Html {
             }
         }
         Page::Settings => html! { <Settings /> },
+    };
+
+    // Stopping replaces the cookie with the admin's session again, so the
+    // socket reconnects with it too.
+    let on_stop_impersonating = {
+        let to_users = go(Page::Users);
+        let reconnect = socket.reconnect.clone();
+        Callback::from(move |()| {
+            reconnect.emit(());
+            to_users.emit(());
+        })
     };
 
     html! {
@@ -114,7 +130,7 @@ fn App() -> Html {
                 <UserMenu
                     on_account={go(Page::Account)}
                     on_admin={go(Page::Users)}
-                    on_stop_impersonating={go(Page::Users)}
+                    {on_stop_impersonating}
                 />
             </header>
             <main class="content">{content}</main>
@@ -122,20 +138,13 @@ fn App() -> Html {
     }
 }
 
-/// Counts `users` messages, for the `refresh` prop of `AdminUsers`.
-#[derive(Default, PartialEq)]
-struct Counter(u64);
-
-impl Reducible for Counter {
-    type Action = ();
-
-    fn reduce(self: Rc<Self>, (): ()) -> Rc<Self> {
-        Rc::new(Counter(self.0 + 1))
-    }
+#[derive(Properties, PartialEq)]
+struct HomeProps {
+    socket: ws::Handle,
 }
 
 #[function_component]
-fn Home() -> Html {
+fn Home(props: &HomeProps) -> Html {
     let auth = use_auth();
     let user = &auth.user;
 
@@ -152,8 +161,9 @@ fn Home() -> Html {
                 {" and to sign out."}
                 if auth.is_admin() { {" Settings holds the Cloudflare Access configuration."} }
             </p>
+            <ServerStatus socket={props.socket.clone()} />
             <p class="hint">
-                {"This page holds a WebSocket open for the session. Signing out elsewhere, being revoked or deleted closes it, and the app then shows the sign-in page with \"Your session has ended\"."}
+                {"The app holds a WebSocket open for the session. It carries the account and user-management requests and their live updates (open Users in two windows to see one follow the other), and the app's own requests, such as the status above. Signing out elsewhere, being revoked or deleted closes it, and the app then shows the sign-in page with \"Your session has ended\"."}
             </p>
         </section>
     }
@@ -242,89 +252,136 @@ where
     response.json().await.map_err(|e| e.to_string())
 }
 
-/// Keeps `/api/example/ws` open while signed in.
-///
-/// A `user` message updates the signed-in user, a `users` message bumps
-/// `users_refresh` (the `refresh` prop of `AdminUsers`), and when the socket
-/// closes the session is checked: a 401 shows the sign-in page with "Your
-/// session has ended". Otherwise it reconnects after a few seconds.
-#[hook]
-fn use_session_socket(users_refresh: UseReducerDispatcher<Counter>) {
-    let auth = use_auth();
-    let generation = use_state(|| 0u32);
-
-    use_effect_with(*generation, move |_| {
-        let socket = open_socket();
-
-        let on_message = {
-            let auth = auth.clone();
-            let users_refresh = users_refresh.clone();
-
-            Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
-                let Some(text) = e.data().as_string() else {
-                    return;
-                };
-
-                let Ok(message) = serde_json::from_str::<serde_json::Value>(&text) else {
-                    return;
-                };
-
-                match message["type"].as_str() {
-                    Some("user") => {
-                        if let Ok(user) = serde_json::from_value(message["user"].clone()) {
-                            auth.set_user(user);
-                        }
-                    }
-                    Some("users") => users_refresh.dispatch(()),
-                    _ => {}
-                }
-            })
-        };
-
-        let on_close = {
-            let generation = generation.clone();
-
-            Closure::<dyn FnMut(CloseEvent)>::new(move |_: CloseEvent| {
-                auth.check_session();
-
-                // If the session is still live (the server restarted, say),
-                // reconnect; if not, this component is gone by then.
-                let generation = generation.clone();
-                let reconnect = Closure::once_into_js(move || generation.set(*generation + 1));
-
-                if let Some(window) = web_sys::window() {
-                    let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
-                        reconnect.unchecked_ref(),
-                        3000,
-                    );
-                }
-            })
-        };
-
-        if let Some(socket) = &socket {
-            socket.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
-            socket.set_onclose(Some(on_close.as_ref().unchecked_ref()));
-        }
-
-        move || {
-            if let Some(socket) = socket {
-                socket.set_onmessage(None);
-                socket.set_onclose(None);
-                let _ = socket.close();
-            }
-
-            drop((on_message, on_close));
-        }
-    });
+/// The app's musli-web socket, from [`use_session_socket`].
+struct SessionSocket {
+    /// The handle, for the app's own requests.
+    handle: ws::Handle,
+    /// Closes the socket and opens it again, so that its upgrade carries the
+    /// current session cookie.
+    reconnect: Callback<()>,
 }
 
-fn open_socket() -> Option<WebSocket> {
-    let location = web_sys::window()?.location();
-    let scheme = if location.protocol().ok()? == "https:" {
-        "wss"
-    } else {
-        "ws"
+/// Keeps the app's musli-web socket, `/api/example/ws`, open while signed
+/// in, and hands it to watchword.
+///
+/// - `set_socket` gives watchword the handle once. From then on the account
+///   panel, the admin page and `refresh()` send their requests over it while
+///   it is open, and over HTTP while it reconnects. `AuthProvider` follows
+///   the server's `AuthBroadcast` for the user, and `AdminUsers` for its
+///   list, so the list needs no `refresh` prop.
+/// - When the socket closes the session is checked over HTTP: a 401 shows
+///   the sign-in page with "Your session has ended", which unmounts the app
+///   and so drops the socket. Otherwise musli-web reconnects by itself, with
+///   backoff.
+/// - The socket speaks for the session its upgrade carried. Impersonating,
+///   and stopping it, replace the session cookie, so the app calls
+///   `reconnect` then. Until the socket reconnects watchword marks it stale
+///   and uses HTTP, so the requests are right either way; reconnecting puts
+///   them, and the live updates, back on the socket.
+#[hook]
+fn use_session_socket() -> SessionSocket {
+    let auth = use_auth();
+
+    let service = use_memo((), |()| {
+        ws::connect(ws::Connect::location("/api/example/ws"))
+            .close_before_unload()
+            .build()
+    });
+
+    {
+        let handle = service.handle().clone();
+
+        use_effect_with((), move |()| {
+            auth.set_socket(Some(handle.clone()));
+
+            let (_, listener) = handle.on_state_change(move |state: ws::State| {
+                if !state.is_open() {
+                    auth.check_session();
+                }
+            });
+
+            move || drop(listener)
+        });
+    }
+
+    let reconnect = {
+        let service = service.clone();
+
+        use_callback((), move |(), _| {
+            service.close();
+            service.open();
+        })
     };
-    let url = format!("{scheme}://{}/api/example/ws", location.host().ok()?);
-    WebSocket::new(&url).ok()
+
+    SessionSocket {
+        handle: service.handle().clone(),
+        reconnect,
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct ServerStatusProps {
+    socket: ws::Handle,
+}
+
+/// The server's status, from the app's own `Status` endpoint, asked for
+/// each time the socket opens.
+#[function_component]
+fn ServerStatus(props: &ServerStatusProps) -> Html {
+    let status = use_state(|| None::<Result<api::StatusResponse, String>>);
+
+    {
+        let status = status.clone();
+
+        use_effect_with(props.socket.clone(), move |socket| {
+            let request = Rc::new(RefCell::new(ws::Request::default()));
+
+            let ask = {
+                let socket = socket.clone();
+                let request = request.clone();
+
+                move || {
+                    let status = status.clone();
+
+                    let sent = socket
+                        .request()
+                        .body(api::StatusRequest)
+                        .on_packet(move |packet: Result<ws::Packet<api::Status>, ws::Error>| {
+                            let response = packet.and_then(|packet| packet.decode());
+                            status.set(Some(response.map_err(|e| e.to_string())));
+                        })
+                        .send();
+
+                    *request.borrow_mut() = sent;
+                }
+            };
+
+            let (state, listener) = socket.on_state_change({
+                let ask = ask.clone();
+
+                move |state: ws::State| {
+                    if state.is_open() {
+                        ask();
+                    }
+                }
+            });
+
+            if state.is_open() {
+                ask();
+            }
+
+            move || drop((listener, request))
+        });
+    }
+
+    let text = match &*status {
+        None => "Server: waiting for the socket.".to_owned(),
+        Some(Ok(status)) => format!(
+            "Server: up {} s, {} socket(s) open.",
+            status.uptime, status.sockets
+        ),
+        Some(Err(error)) => format!("Server: {error}"),
+    };
+
+    html! { <p class="hint">{text}</p> }
 }

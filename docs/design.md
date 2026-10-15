@@ -516,8 +516,9 @@ cookies, so the library does not depend on the app's gloo version.
 *Status: built are the types (`watchword::musliweb04`), the server's
 `Connection` (`new`, `update`, `handle` and `handles`), and the components
 following the broadcasts and sending their requests over the socket
-(`AuthContext::set_socket`). Decisions 13 and 16–19 record why it is shaped
-this way.*
+(`AuthContext::set_socket`). `examples/app` is wired this way and is the
+reference for an app. Decisions 13 and 16–19 record why it is shaped this
+way.*
 
 An app whose frontend already talks to its server over a musli-web WebSocket
 can carry watchword's account and user-management operations, and its live
@@ -713,7 +714,25 @@ the requests go over HTTP and `<AuthProvider>` ignores its `Me`. It stops
 being stale when it next closes: its reconnect upgrades with the new
 cookie. An app that keeps its socket open across impersonation therefore
 runs on HTTP until it reconnects, which it may do itself when its user
-changes.
+changes. musli-web reconnects cleanly with `Service::close` and then
+`Service::open`: `close` reports the socket closed at once, which clears
+the stale mark, and `open` upgrades again with the current cookie, keeping
+the same `Handle`, so nothing is handed over again. `examples/app` does
+this from `<AdminUsers>`'s `on_impersonate` and `<UserMenu>`'s
+`on_stop_impersonating`, which both run after the components marked the
+socket stale.
+
+The example's wiring, as a reference: a shared `api` crate with the app's
+own `define!` list (implicit ids), next to which watchword's list rides on
+the same socket. The server's `/ws` route extracts `SignedIn`, makes the
+`Connection` from it, and its `ws::Handler` answers the app's ids and
+delegates `Unknown(id)` to `conn.handle`. Its connection loop selects over
+`server.run()`, `guard.ended()` (which drops the server, closing the
+socket) and `auth.events()`, broadcasting what `conn.update` returns and
+skipping a lag, which the guard handles. The frontend builds the web03
+`Service` once inside `<AuthProvider>`, hands its handle over with
+`set_socket`, and calls `check_session()` whenever the socket closes;
+musli-web reconnects by itself while the session lives.
 
 watchword-yew023 takes musli-web under `musli-web04` with `web03`; it calls
 no musli-web macros, so it needs no alias.

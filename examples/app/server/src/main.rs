@@ -6,22 +6,30 @@
 //! are configured through the environment (and Cloudflare also at runtime,
 //! on the frontend's Settings page). See `--help`.
 //!
+//! The frontend keeps a musli-web socket open for the session at
+//! `/api/example/ws`. It carries the app's own API (the `api` crate) and
+//! watchword's account and user-management requests and live updates, the
+//! wiring of `docs/design.md` section 2.7: see [`ws`].
+//!
 //! Everything is in memory, so a restart starts over with a new bootstrap
 //! link.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use auth::axum08::{Admin, SignedIn};
-use auth::{Auth, AuthEvent, BootstrapAdmin, CloudflareConfig, GoogleConfig, MemoryStore};
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use auth::musliweb04::Connection;
+use auth::{Auth, BootstrapAdmin, CloudflareConfig, GoogleConfig, MemoryStore};
+use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRef, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
+use musli_web::ws;
 use tokio::sync::broadcast::error::RecvError;
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
@@ -54,12 +62,15 @@ Environment:
       Log filter [default: info]
 ";
 
-/// The app's state: the auth service and the Cloudflare settings the app
-/// stores (here in memory) and applies with `Auth::set_cloudflare`.
+/// The app's state: the auth service, the Cloudflare settings the app
+/// stores (here in memory) and applies with `Auth::set_cloudflare`, and what
+/// the app's own `Status` endpoint reports.
 #[derive(Clone)]
 struct AppState {
     auth: Auth,
     cloudflare: Arc<Mutex<CloudflareConfig>>,
+    started: Instant,
+    sockets: Arc<AtomicU32>,
 }
 
 impl FromRef<AppState> for Auth {
@@ -220,6 +231,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         auth,
         cloudflare: Arc::new(Mutex::new(cloudflare)),
+        started: Instant::now(),
+        sockets: Arc::new(AtomicU32::new(0)),
     };
 
     let index = args.dist.join("index.html");
@@ -280,44 +293,122 @@ async fn put_cloudflare(
     Json(config)
 }
 
-/// `GET /api/example/ws`: a socket that lives as long as the session.
+/// `GET /api/example/ws`: the app's musli-web socket, which lives as long
+/// as the session.
 ///
-/// It sends `{"type":"user","user":UserInfo}` when the user changes and
-/// `{"type":"users"}` when any user is created, changed or deleted (for the
-/// admin page's `refresh`), and closes when the session ends, after which
-/// the frontend calls `check_session()`.
+/// The upgrade needs a session, so the route extracts [`SignedIn`] as any
+/// other route does, and watchword's [`Connection`] is made from it here.
+/// The socket then carries:
+///
+/// - the app's own requests (`api::Request`), answered by [`Handler`];
+/// - watchword's account and admin requests: [`Handler`] hands every id the
+///   app's API does not know to [`Connection::handle`], which answers those
+///   in watchword's band (32000–32255);
+/// - watchword's `AuthBroadcast`: each `AuthEvent` goes through
+///   [`Connection::update`], which passes on what this socket's user may see.
+///
+/// It closes when the session ends ([`Auth::guard`]), after which the
+/// frontend calls `check_session()` and shows the sign-in page.
 async fn ws(State(state): State<AppState>, user: SignedIn, upgrade: WebSocketUpgrade) -> Response {
-    upgrade.on_upgrade(move |socket| session_socket(state.auth, user, socket))
+    let conn = Connection::new(state.auth.clone(), &user);
+    upgrade.on_upgrade(move |socket| session_socket(state, user, conn, socket))
 }
 
-async fn session_socket(auth: Auth, user: SignedIn, mut socket: WebSocket) {
-    let guard = auth.guard(&user.user, &user.session);
-    let mut events = auth.events();
+async fn session_socket(state: AppState, user: SignedIn, conn: Connection, socket: WebSocket) {
+    let guard = state.auth.guard(&user.user, &user.session);
+    let mut events = state.auth.events();
+
+    let handler = Handler {
+        state: state.clone(),
+        conn: conn.clone(),
+    };
+
+    // Nothing can be sent before the client has negotiated a format.
+    let mut server = match musli_web::axum08::server(socket, handler).connect().await {
+        Ok(server) => server,
+        Err(error) => {
+            tracing::debug!("Socket negotiation failed: {error}");
+            return;
+        }
+    };
+
+    state.sockets.fetch_add(1, Ordering::Relaxed);
 
     loop {
-        let message = tokio::select! {
+        tokio::select! {
+            // Dropping the server closes the socket.
             _ = guard.ended() => break,
-            info = guard.changed() => serde_json::json!({ "type": "user", "user": info }),
-            event = events.recv() => match event {
-                Ok(AuthEvent::UserCreated(..) | AuthEvent::UserChanged(..) | AuthEvent::UserDeleted(..))
-                | Err(RecvError::Lagged(..)) => serde_json::json!({ "type": "users" }),
-                Ok(..) => continue,
-                Err(RecvError::Closed) => break,
-            },
-            incoming = socket.recv() => match incoming {
-                Some(Ok(Message::Close(..))) | Some(Err(..)) | None => return,
-                Some(Ok(..)) => continue,
-            },
-        };
+            event = events.recv() => {
+                let event = match event {
+                    Ok(event) => event,
+                    // The guard re-checks the session itself on lag.
+                    Err(RecvError::Lagged(..)) => continue,
+                    Err(RecvError::Closed) => break,
+                };
 
-        if socket
-            .send(Message::Text(message.to_string().into()))
-            .await
-            .is_err()
-        {
-            return;
+                let update = match conn.update(&event).await {
+                    Ok(update) => update,
+                    Err(error) => {
+                        tracing::warn!("Filtering an auth event failed: {error}");
+                        continue;
+                    }
+                };
+
+                if let Some(update) = update
+                    && let Err(error) = server.broadcast(update)
+                {
+                    tracing::warn!("Broadcasting an auth update failed: {error}");
+                    break;
+                }
+            }
+            result = server.run() => {
+                if let Err(error) = result {
+                    tracing::debug!("Socket closed: {error}");
+                }
+
+                break;
+            }
         }
     }
 
-    let _ = socket.send(Message::Close(None)).await;
+    state.sockets.fetch_sub(1, Ordering::Relaxed);
+}
+
+/// Answers the socket's requests: the app's own, and watchword's through
+/// [`Connection::handle`].
+#[derive(Clone)]
+struct Handler {
+    state: AppState,
+    conn: Connection,
+}
+
+impl ws::Handler for Handler {
+    type Id = api::Request;
+    type Response = auth::core::Result<bool>;
+
+    async fn handle(
+        &self,
+        id: api::Request,
+        incoming: &mut ws::Incoming<'_>,
+        outgoing: &mut ws::Outgoing<'_>,
+    ) -> Self::Response {
+        match id {
+            api::Request::Status => {
+                let Some(api::StatusRequest) = incoming.read() else {
+                    return Ok(false);
+                };
+
+                outgoing.write(api::StatusResponse {
+                    uptime: self.state.started.elapsed().as_secs(),
+                    sockets: self.state.sockets.load(Ordering::Relaxed),
+                });
+
+                Ok(true)
+            }
+            // Every id the app's API does not know: watchword answers its
+            // own and returns `Ok(false)` for the rest, which musli-web
+            // reports to the client as an unknown request.
+            api::Request::Unknown(id) => self.conn.handle(id, incoming, outgoing).await,
+        }
+    }
 }

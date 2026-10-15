@@ -61,10 +61,11 @@
 //! ## Example app
 //!
 //! [`examples/app`] is an axum server and a Yew frontend wired up with all three
-//! sign-in methods, `MemoryStore` and a WebSocket held open for the session: a
-//! reference for apps taking the library, and a way to try the components by
-//! hand. It is its own cargo workspace, so it adds nothing to the library's
-//! builds or lockfile.
+//! sign-in methods, `MemoryStore` and a musli-web WebSocket held open for the
+//! session, which carries the components' account and admin requests and live
+//! updates beside the app's own API (`musliweb04`): a reference for apps taking
+//! the library, and a way to try the components by hand. It is its own cargo
+//! workspace, so it adds nothing to the library's builds or lockfile.
 //!
 //! Build the frontend with [trunk], then run the server, which serves it:
 //!
