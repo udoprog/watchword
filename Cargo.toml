@@ -71,7 +71,7 @@ axum08 = { package = "axum", version = "0.8.9", optional = true }
 musli-web04 = { package = "musli-web", version = "0.4.11", default-features = false, optional = true }
 
 # sqll014
-sqll014 ={ package = "sqll", version = "0.14.7", optional = true }
+sqll014 = { package = "sqll", version = "0.14.7", optional = true }
 
 # yew023
 watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.1.0", optional = true }
