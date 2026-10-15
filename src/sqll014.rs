@@ -1,5 +1,5 @@
-//! [`SqllStore`], a [`Store`] over SQLite through [sqll](https://docs.rs/sqll/0.14) 0.14 (the `sqll014`
-//! feature).
+//! [`SqllStore`], a [`Store`] over SQLite through
+//! [sqll](https://docs.rs/sqll/0.14) 0.14 (the `sqll014` feature).
 //!
 //! The store works over four tables with a fixed set of columns, created by
 //! [`SCHEMA`] in a new database:
