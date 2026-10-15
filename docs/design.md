@@ -2,170 +2,115 @@
 
 watchword carries the authentication of an axum + Yew application across every
 layer: the sign-in methods themselves (Cloudflare Access, Google OAuth, and
-simple email/login + password with invite links and a bootstrap admin), session
+simple login/email + password with invite links and a bootstrap admin), session
 and token handling, storage, the HTTP routes and extractors, WebSocket session
-auth, the wire types, and the Yew pages and components. Its first consumers are
-track and territory; army is next.
+auth, the wire types, and the Yew pages and components. An app supplies its
+storage, its styling and its own routes; it should not have to implement any
+part of signing in or managing users itself.
 
 This document records:
 
-1. a survey of how track and territory do auth today, and where they differ;
-2. the layered API and the cargo features that select each layer;
-3. the decisions that settle each difference;
-4. how track and territory each wire it up, and what each deletes;
-5. the open questions that need the user's decision;
-6. the implementation cards, with their dependencies.
+1. the layout of the crates and the cargo features that select each layer;
+2. the API of each layer;
+3. the decisions behind the API's shape, and their reasons.
 
-The survey was done read-only against track at `49dcf8c` and territory at
-`154ff85`.
+The crate docs (`src/lib.rs`, each module's docs and the items' own docs) are
+authoritative for the details; this document explains why the API is shaped as
+it is.
 
-## 1. Survey
+## 1. Layout and features
 
-### 1.1 What each app has
-
-| Concern | track | territory |
-|---|---|---|
-| Sign-in methods | Password (by login *or* email), Cloudflare Access | Password (by email), Google OAuth |
-| User identity | `login` (required, unique) + `email` (optional, unique) | `email` (required, unique) |
-| Roles | `admin`, `regular` | `admin`, `regular` |
-| Account state | none; a user exists or not | `access`: `pending` → `active` → `revoked` |
-| Sign-in method per user | password if `password_hash` is set; any user whose email Access vouches for | `auth_method`: `plain` or `google`, exclusive; Google is bound by `google_sub` |
-| Tokens | one kind, "login link": registration *and* reset; one live per user; 7 days; single use | `registration` or `reset` (by the user's access when issued); one live per user; 7 days; single use |
-| First admin | migration seeds `root` / `root` (bcrypt) | `BOOTSTRAP_EMAIL` creates a pending admin when there are no users and logs a `/register/{token}` link (`PUBLIC_URL` makes it absolute) |
-| Session | DB row, 30 days fixed, 16 random bytes base64url | same |
-| Cookie | `track_session` = `{id}.{b64url(HMAC-SHA256(key,id))}`, HttpOnly, SameSite=Strict, Path=/, Max-Age 30d, `Secure` when `X-Forwarded-Proto: https` | `territory_session`, same value format and attributes plus `Expires`, **never** `Secure` |
-| Cookie key | 32 random bytes in the `config` table under `session_key` | same |
-| Expired sessions | pruned on every session creation | pruned at startup and then hourly |
-| Throttling | in memory, per client address (30 per 15 min; IPv6 by /64) and per login (10 per 15 min); trusted proxies give `CF-Connecting-IP` / `X-Forwarded-For` | none |
-| Timing | an unknown user is verified against a dummy hash | an unknown user returns early |
-| Role change | takes effect on the next request (role re-read from the DB) | takes effect live (WS `AtomicBool` updated by the `UserInfoChanged` broadcast) |
-| "Revoke access" | `RevokeUserAccess` = sign out everywhere (delete sessions); the user can sign in again | `RevokeUserAccess` = `access=revoked`, clear password, invalidate tokens, delete sessions; a new link restores access |
-| Credential change | change password keeps this session, ends the others; redeeming a link ends all sessions | the same, plus switching to Google ends all sessions |
-| Impersonation | none | admin `POST /api/auth/impersonate/{hex}` replaces the admin's cookie with a session of the target (not revoked; pending users allowed) |
-| WS upgrade | `AuthUser` extractor (cookie), 401 before upgrade | `try_auth` (cookie), 401 before upgrade |
-| WS session end | in-memory `Revoke` broadcast (`User`, `Session`, `OtherSessions{keep}`), plus a re-check every 5 minutes, plus a re-check on broadcast lag | `SessionEnded` broadcast (`Session`, `UserExcept{keep}`) plus `UserAccessRevoked` on the app broadcast, a timer that fires at session expiry, plus a re-check on lag |
-| Other cookie-authenticated routes | image proxy (no auth) | map tiles: liveness cached for 10 s in an LRU of 1024 |
-| Who is signed in (frontend) | `GET /api/auth/me` at startup; when the socket is closed it polls `me` every 10 s and shows "Your session has ended" on 401 | `GET /api/auth/me` and `GET /api/config` (`{title, google_login}`) at startup; no detection of a session ending later |
-| Methods shown at sign-in | `GET /api/auth/cloudflare` → whether *this request* carries Access credentials that map to a user | `google_login` from `/api/config` |
-| User management transport | musli-web WebSocket requests, admin-checked per request | musli-web WebSocket requests, admin-checked per request; changes broadcast to admins and the affected user |
-| Admin UI | `/users` page: list, add (login, email, role; makes a link), role select, new link / revoke link (shown once, copy), sign out everywhere, delete | `/admin` page: filter + paging in the URL, list with status icon and groups, add (email, role), edit email, new link / revoke link, revoke access, impersonate, delete, role select; live-updated |
-| Account UI | `/account` page: role, edit login, edit email, change/set password, sign out | modal: edit email (not for Google users), change password or "set password" (switches to plain), "switch to Google" |
-| Cloudflare config | runtime, in the app's settings (`enabled`, `team_domain`, `audience`, `trust_email_header`, `verify_jwt`), editable on an admin Settings page | n/a |
-| Google config | n/a | CLI/env at startup: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URL` |
-| Storage | `sqll` 0.14 (SQLite), timestamps as INTEGER ms | `sqll` 0.14 (SQLite), timestamps as RFC 3339 TEXT |
-| Wire format | HTTP JSON for sign-in/registration; musli for WS; `api::User {id, login, email, role, has_password, created_at}` | HTTP JSON for sign-in/registration; musli for WS; `api::UserInfo {id, email, role, auth_method, access}`, `api::User` adds `pending_token`, `group_ids` |
-| `UserId` | `u64` newtype | `u64` newtype (shown as hex in URLs) |
-
-Both apps already share the core primitives that now live in this crate
-(track's `crates/auth`): bcrypt at the default cost, 16-byte base64url ids, the
-cookie value format, 30-day sessions and 7-day tokens. Hashes and cookies are
-therefore interchangeable, so neither app's users lose their passwords or
-sessions when they move.
-
-### 1.2 Differences that need a decision
-
-1. **Identity**: track signs in by login or email, and its users may have no
-   email. Territory has email only.
-2. **Account state**: territory has pending/active/revoked. Track has no state,
-   and lets a user without a password sign in through Cloudflare straight away.
-3. **What "revoke access" means**: sign out everywhere (track), or block the
-   user (territory).
-4. **Credentials per user**: track allows password plus Cloudflare on any user.
-   Territory makes password and Google exclusive.
-5. **Token kinds**: one kind (track), or registration vs reset (territory).
-6. **First admin**: seeded `root`/`root` (track), or a bootstrap link (territory).
-7. **Cookie `Secure` flag, pruning, throttling and dummy-hash timing**: territory
-   lacks each of them.
-8. **WS end-of-session detection**: a periodic re-check (track), or an expiry
-   timer (territory).
-9. **Role-change propagation**: re-read per request (track), or pushed live
-   (territory).
-10. **Transport for account and admin operations**: both apps use their own
-    musli-web WebSocket protocol, which the library cannot share as-is.
-11. **Frontend detection of an ended session**: track has it, territory has not.
-12. **Storage schema**: same engine, different columns and timestamp encodings.
-
-Section 3 settles each of these. Items 1, 4, 6, 10 and 12 are also listed as
-open questions in section 5, because they change user-visible behaviour or the
-shape of the library.
-
-## 2. Layered API
-
-### 2.1 Layout and features
+### 1.1 Crates
 
 The repository is a workspace of three crates, versioned and released in
 lockstep, each pinning the others with an exact `=` version (as musli-web pins
 musli-web-macros):
 
-- **watchword-core**: the types of 2.2 (`UserId`, `Role`, `Access`, `Method`,
-  the wire types, `AuthError`, `validate_password`, `normalize_email`). Safe
-  for wasm32. Its `musli01` feature adds musli's derives, and its `axum08`
-  feature `IntoResponse` for `AuthError` (Rust's orphan rule keeps that impl in
-  the crate defining `AuthError`).
+- **watchword-core**: the types of section 2.1 (`UserId`, `Role`, `Access`,
+  `Method`, the wire types, `AuthError`, `validate_password`,
+  `normalize_email`). Safe for wasm32. Its `musli01` feature adds musli's
+  derives, and its `axum08` feature `IntoResponse` for `AuthError` (Rust's
+  orphan rule keeps that impl in the crate defining `AuthError`).
 - **watchword-yew023**: everything for yew 0.23 (components, context,
-  `use_auth`, the HTTP client and browser helpers). It depends on yew under
-  the key `yew`, because yew's macros (`html!`, `#[function_component]`,
+  `use_auth`, the HTTP client and browser helpers). It depends on yew under the
+  key `yew`, because yew's macros (`html!`, `#[function_component]`,
   `#[derive(Properties)]`, `#[hook]`) expand to `::yew::` paths, and on
   watchword-core rather than watchword.
-- **watchword**: everything else, with features. It re-exports watchword-core
-  as `watchword::types` and at its root, so server code keeps its paths, and
-  watchword-yew023 as `watchword::yew023` behind the `yew023` feature, so a
-  frontend still needs only `watchword = { features = ["yew023"] }`.
+- **watchword**: everything else, behind features. It re-exports watchword-core
+  as `watchword::types` and at its root, and watchword-yew023 as
+  `watchword::yew023` behind the `yew023` feature, so a frontend needs only
+  `watchword = { features = ["yew023"] }`.
+
+A single crate with disjoint features was the first layout. It stopped working
+once yew was versioned (1.2): yew's macros hardcode `::yew::` paths, so yew code
+can only live in a crate whose own dependency key is `yew`. A later yew is
+another crate, `watchword-yew024`, beside the first. The cost is three
+manifests released in lockstep.
 
 The server-only dependencies (bcrypt, aws-lc-rs, tokio, axum, reqwest, sqll) and
-the browser-only ones (yew, gloo-net, web-sys) sit behind disjoint features.
-That keeps trunk's wasm build of a frontend crate free of server code. Both apps
-already compile their frontend crate on the host under
-`cargo clippy --workspace`, so a host build with both feature sets enabled at
-once must also compile; CI covers that with `--all-features`.
+the browser-only ones (yew, gloo-net, web-sys) sit behind disjoint features, so
+trunk's wasm build of a frontend crate is free of server code. Apps commonly
+compile their frontend crate on the host too, under `cargo clippy
+--workspace`, so a host build with both feature sets enabled at once must also
+compile; CI covers that with `--all-features`.
 
-**Versioned dependencies.** yew, axum, sqll and musli are not 1.0 and change a
-lot between releases. Everything tied to one version of such a crate that
-appears in watchword's public API goes under a feature named after its version
-(`yew023` for yew 0.23), with the dependency key and module named the same way,
-so watchword can support several versions side by side and an app upgrades
-when it chooses. A dependency used only internally stays unversioned, since it
-can be upgraded without breaking anyone. Version-specific items live only under
-their versioned module and are not re-exported at the root, so the root never
+### 1.2 Versioned dependencies
+
+yew, axum, sqll and musli are not 1.0 and change a lot between releases.
+Everything tied to one version of such a crate that appears in watchword's
+public API goes under a feature named after its version (`yew023` for yew
+0.23), with the dependency key and module named the same way, so watchword can
+support several versions side by side and an app upgrades when it chooses. A
+dependency used only internally stays unversioned, since it can be upgraded
+without breaking anyone. Version-specific items live only under their
+versioned module and are not re-exported at the root, so the root never
 changes meaning when the lead version moves. Doc examples for apps write
-`# extern crate axum08 as axum;` to keep the app's idiomatic `axum::` paths. A
-later yew is another crate, `watchword-yew024`, beside the first. Two follow
-from the rule: `Auth::guard` is in `core` and takes the user and session, not
-axum's `SignedIn`, so an `axum09` could use it too; and
-`cloudflare::HttpKeyFetcher::new(reqwest::Client)` is crate-private, keeping
-reqwest out of the API (`HttpKeyFetcher::default()` stays). jiff 0.2 is in the
-API through the types' `Timestamp` fields and is not versioned: that would mean
-restructuring the types.
+`# extern crate axum08 as axum;` to keep the app's idiomatic `axum::` paths.
+
+Two things follow from the rule:
+
+- `Auth::guard` is in `core` and takes the store's `User` and `Session`, not
+  axum's `SignedIn`, so a later `axum09` can use it too.
+- `cloudflare::HttpKeyFetcher::new(reqwest::Client)` is crate-private, keeping
+  reqwest out of the API; apps use `HttpKeyFetcher::default()`.
+
+jiff 0.2 is in the API through the types' `Timestamp` fields and is not
+versioned: that would mean restructuring the types.
+
+### 1.3 Features
+
+No feature is on by default.
 
 | Feature | Enables | Pulls in |
 |---|---|---|
-| *(none)* | `types` (watchword-core): `UserId`, `Role`, `Access`, `Method`, wire types, `validate_password`, `normalize_email`, `MIN_PASSWORD_LEN` | serde, jiff |
-| `musli01` | `Encode`/`Decode` on the wire types, so an app can embed them in its own WS messages | musli-core 0.1 |
-| `server` | `core` (hashing, ids, cookies, tokens), `Store`, `Auth`, throttle, events, bootstrap, WS session guard | bcrypt, hmac, sha2, rand, cookie, http, tokio (sync, time, macros) |
-| `cloudflare` | `server` + the Cloudflare Access provider | aws-lc-rs, reqwest |
-| `google` | `server` + the Google OAuth provider | reqwest, url, lru |
-| `axum08` | `server` + extractors, routes | axum 0.8 |
-| `sqll014` | `server` + `SqllStore`, a `Store` over SQLite with a fixed schema and its migration SQL (see open question 4) | sqll 0.14 |
+| *(none)* | `types` (watchword-core): `UserId`, `Role`, `Access`, `Method`, the wire types, `AuthError`, `validate_password`, `normalize_email`, `MIN_PASSWORD_LEN` | serde, jiff, thiserror |
+| `musli01` | `Encode`/`Decode` on the wire types, so an app can embed them in its own WebSocket messages | musli-core 0.1 |
+| `server` | `core` (hashing, ids, cookies, the `Auth` service, throttle, events, bootstrap, `SessionGuard`) and `store` (`Store`, `MemoryStore`) | base64, bcrypt, cookie, hmac, http, rand, sha2, tokio (rt, sync, time), tracing |
+| `cloudflare` | `server` + the Cloudflare Access provider | aws-lc-rs, reqwest, serde_json |
+| `google` | `server` + the Google OAuth provider (`GoogleConfig`) | reqwest, serde_json, url, lru |
+| `axum08` | `server` + extractors and `routes()` for axum 0.8 | axum 0.8 |
+| `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, and its `SCHEMA` | sqll 0.14 |
 | `yew023` | watchword-yew023: components, context, hook, HTTP client | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures |
-| `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum08` also `google::fake::FakeGoogle` (see 2.5) | nothing more |
+| `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum08` also `google::fake::FakeGoogle` (see 2.4) | nothing more |
 
-The modules are `watchword::{types, core, store, cloudflare, google, axum08, sqll014, yew023}`,
-and the most-used names that need no versioned feature are re-exported at the
-root. The existing `cloudflare.rs`, `cookie.rs`, `password.rs` and `session.rs`
-move under `core` and `cloudflare` largely unchanged.
+The modules are `watchword::{types, core, store, cloudflare, google, axum08,
+sqll014, yew023}`, and the most-used names that need no versioned feature are
+re-exported at the root.
 
-### 2.2 Types (always available)
+## 2. API
+
+### 2.1 Types (always available)
 
 ```rust
 pub struct UserId(pub u64);              // apps convert to and from their own u64 ids
-pub enum Role { Admin, Regular }         // serde lowercase, as both apps
+pub enum Role { Admin, Regular }         // serde lowercase
 pub enum Access { Pending, Active, Revoked }
-pub enum Method { Password, Google }     // the user's stored credential; see 3.4
+pub enum Method { Password, Google }     // the user's stored credential; see decision 4
 
 /// What the frontend and the admin pages see of a user.
 pub struct UserInfo {
     pub id: UserId,
-    pub login: Option<String>,           // see open question 1
+    pub login: Option<String>,
     pub email: Option<String>,
     pub role: Role,
     pub access: Access,
@@ -184,12 +129,15 @@ pub struct Impersonator { pub id: UserId, pub name: String }
 /// A user in the admin list.
 pub struct UserEntry { pub user: UserInfo, pub link_expires_at: Option<Timestamp> }
 
+/// A newly created user and their registration link, shown once.
+pub struct CreatedUser { pub entry: UserEntry, pub link: Link }
+
 /// What the sign-in page offers, from `GET /api/auth/config`.
 pub struct AuthConfig {
     pub password: bool,
     pub google: bool,
     pub cloudflare: bool,     // this request carries Access credentials that map to a user
-    pub logins: bool,         // the app uses login names (track) or only emails (territory)
+    pub logins: bool,         // the app uses login names, or only emails
 }
 
 pub struct LoginRequest { pub login: String, pub password: String }
@@ -200,55 +148,74 @@ pub struct NewUser { pub login: Option<String>, pub email: Option<String>, pub r
 pub struct UserChange { pub login: Option<Option<String>>, pub email: Option<Option<String>>, pub role: Option<Role> }
 pub struct PasswordChange { pub old_password: Option<String>, pub new_password: String }
 pub struct CloudflareConfig { pub enabled: bool, pub team_domain: String, pub audience: String,
-                              pub trust_email_header: bool, pub verify_jwt: bool }  // track's api::CloudflareAccess
+                              pub trust_email_header: bool, pub verify_jwt: bool }
 pub enum AuthError { Unauthorized, Forbidden, NotFound, Gone, TooManyRequests,
                      Conflict(Conflict), Invalid(String) }   // JSON body of 4xx responses
 pub enum Conflict { Login, Email }
 ```
 
-### 2.3 Server core (`server`)
+### 2.2 Server core (`server`)
 
-Most of these primitives already exist:
+The primitives:
 
-- `hash_password`, `verify_password` and `dummy_hash` hash and check passwords.
-- `new_session_id` and `new_token` make ids.
-- `session_cookie` and `verify_session_cookie` build and check the cookie, now
-  with a `CookieConfig`.
-- `SESSION_LIFETIME` and `TOKEN_LIFETIME` set the lifetimes.
+- `hash_password`, `verify_password` and `dummy_hash` hash and check passwords
+  (bcrypt at the default cost).
+- `new_session_id` and `new_token` make ids (16 random bytes, base64url).
+- `generate_session_key`, `session_cookie` and `verify_session_cookie` make the
+  key and build and check the cookie, whose value is
+  `{id}.{b64url(HMAC-SHA256(key, id))}`.
+- `SESSION_LIFETIME` (30 days, fixed) and `TOKEN_LIFETIME` (7 days) set the
+  lifetimes; `session_expiry`, `token_expiry` and `is_expired` apply them.
 
-The new piece is the service, `Auth`, which is `Clone` and is a single `Arc`
+On top of them is the service, `Auth`, which is `Clone` and is a single `Arc`
 inside:
 
 ```rust
-let auth = Auth::builder(store, session_key)
-    .cookie(CookieConfig { name: "track_session", secure: Secure::Auto })
-    .logins(true)                       // accept login names, not only emails
-    .trusted_proxies(&args.trusted_proxy)
-    .cloudflare(cloudflare_config)      // feature `cloudflare`; Option, changeable later
-    .google(google_config)              // feature `google`; Option
-    .impersonation(true)                // territory
+let key = load_or_create_key(&store).await?;    // the store's `session_key` setting
+let auth = Auth::builder(store, key)
+    .cookie(CookieConfig::new("app_session"))   // default name `session`, `Secure::Auto`
+    .logins(true)                               // accept login names, not only emails
+    .trusted_proxies(&trusted_proxies)
+    .cloudflare(cloudflare_config)              // feature `cloudflare`; Option, changeable later
+    .google(google_config)                      // feature `google`; Option
+    .impersonation(true)
     .build();
 
-auth.set_cloudflare(Option<CloudflareConfig>);   // track applies Settings changes
-auth.bootstrap_admin(&BootstrapAdmin { email, login, public_url }).await?;  // no-op when users exist
-auth.load_or_create_key(&store).await?;          // helper over Store::config_get/set
+auth.set_cloudflare(Option<CloudflareConfig>);  // when an admin changes the settings
+auth.bootstrap_admin(&BootstrapAdmin::new(name).public_url(public_url)).await?;  // the link; None when users exist
 auth.events() -> broadcast::Receiver<AuthEvent>;
+auth.prune().await?;                            // delete expired sessions, for apps with a timer
 ```
+
+`load_or_create_key` reads the key as standard base64 or unpadded base64url, so
+keys stored by an app's earlier implementation keep their sessions valid; a new
+key is stored as standard base64. `BootstrapAdmin::new` takes an email if the
+name contains `@`, otherwise a login, as for a `--bootstrap-admin` option;
+`BootstrapAdmin::email` and `::login` say which explicitly.
 
 The operations behind the routes are public methods too, so an app can call
 them from its own handlers or tests: `sign_in_password`, `sign_in_cloudflare`,
-`sign_out`, `register`, `issue_link`, `revoke_link`, `sign_out_everywhere`,
-`revoke_access`, `set_role`, `update_user`, `delete_user`, `change_password`,
-`impersonate` and `stop_impersonating`; `session_info(&user, &session)` gives
-the `UserInfo` of the request's own user, marked when impersonated. Each one enforces the rules in section 3: who may act on
-whom, never on oneself, token usability, and ending sessions.
+`sign_out`, `register_info`, `register`, `change_password`, `users`,
+`create_user`, `issue_link`, `revoke_link`, `sign_out_everywhere`,
+`revoke_access`, `set_role`, `update_user`, `delete_user`, `impersonate` and
+`stop_impersonating`. Each one enforces the rules of section 3: who may act on
+whom, never on oneself, token usability, and ending sessions. Around them,
+`session(id)` loads a live session and its user, `session_info(&user,
+&session)` gives the `UserInfo` of the request's own user, marked when
+impersonated, `cloudflare_available(&headers)` answers `AuthConfig::cloudflare`,
+and `session_id`, `set_cookie`, `clear_cookie` and `client_address` read and
+write the cookie and the client's address for a framework integration.
+
+Operations fail with `core::Error`: either an `AuthError` to answer the request
+with (`Error::auth_error`), or an internal failure (store, hashing, a blocking
+task).
 
 ```rust
 /// Sent whenever auth state changes, for open sockets and live admin views.
 pub enum AuthEvent {
-    SessionEnded(SessionId),
-    UserSessionsEnded { user: UserId, keep: Option<SessionId> },   // revoke, delete, credential change
-    UserChanged(UserInfo),                                         // role, email, login, access
+    SessionEnded(String),                                         // signed out
+    UserSessionsEnded { user: UserId, keep: Option<String> },     // sign out everywhere, revoke, delete, credential change
+    UserChanged(UserInfo),                                        // role, email, login, access, credential
     UserCreated(UserInfo),
     UserDeleted(UserId),
 }
@@ -258,63 +225,69 @@ An impersonated session also ends with its admin's standing (decision 12): a
 `UserChanged` of the admin that leaves them not an active admin, or their
 `UserDeleted`, ends the sessions they impersonate in, with no event of its own.
 
-The throttle is track's `LoginThrottle` as it stands: per address and per login,
-trusted proxies, and IPv6 grouped by /64. It applies to password sign-in.
+The sign-in throttle limits failed password sign-ins per client address (30
+per 15 minutes; IPv6 grouped by /64) and per login (10 per 15 minutes). The
+client address comes from `CF-Connecting-IP` or `X-Forwarded-For` only when the
+peer is a trusted proxy.
 
-### 2.4 Storage (`server`)
+### 2.3 Storage (`server`)
 
 There is one trait, because several operations must be atomic across users,
-sessions and tokens. It uses `async fn` in the trait with `Send` futures, and
-`Auth` erases it internally, so neither `Auth` nor the extractors carry a type
+sessions and tokens. Its methods return `impl Future + Send`, and `Auth` erases
+the store internally, so neither `Auth` nor the extractors carry a type
 parameter. Every method takes the time from the caller, which keeps tests
-deterministic.
+deterministic. Emails reach the store already normalized and are compared
+exactly. A store only keeps records and makes the documented multi-record
+changes atomic; `Auth` enforces every rule.
 
 ```rust
 pub trait Store: Send + Sync + 'static {
     // Users
-    async fn user(&self, id: UserId) -> Result<Option<User>>;
-    async fn user_by_email(&self, email: &str) -> Result<Option<User>>;    // normalized
-    async fn user_by_login(&self, login: &str) -> Result<Option<User>>;
-    async fn user_by_google_sub(&self, sub: &str) -> Result<Option<User>>;
-    async fn users(&self, now: Timestamp) -> Result<Vec<(User, Option<Timestamp>)>>;  // with live link expiry
-    async fn user_count(&self) -> Result<u64>;
-    async fn create_user(&self, new: &NewUser, now: Timestamp) -> Result<Result<User, Conflict>>;
-    async fn update_user(&self, id: UserId, change: &UserChange) -> Result<Result<Option<User>, Conflict>>;
-    async fn delete_user(&self, id: UserId) -> Result<bool>;               // sessions, tokens and the sessions they impersonate in go with it
-    /// Sets the credential (password hash, or Google subject and email),
-    /// marks the user active, and deletes the user's sessions except `keep`.
-    /// Refuses (false) a revoked user, so a concurrent revoke is not undone.
-    async fn set_credential(&self, id: UserId, cred: &Credential, keep: Option<&str>) -> Result<bool>;
+    fn user(&self, id: UserId) -> impl Future<Output = Result<Option<User>>> + Send;
+    fn user_by_email(&self, email: &str) -> ...;          // normalized
+    fn user_by_login(&self, login: &str) -> ...;
+    fn user_by_google_sub(&self, sub: &str) -> ...;
+    fn users(&self, now: Timestamp) -> ...Vec<(User, Option<Timestamp>)>;  // with live link expiry
+    fn user_count(&self) -> ...u64;
+    fn create_user(&self, new: &NewUser, now: Timestamp) -> ...Result<User, Conflict>;  // pending, no credential
+    fn update_user(&self, id: UserId, change: &UserChange) -> ...Result<Option<User>, Conflict>;
+    /// Deletes the user with their sessions and tokens, and the sessions in
+    /// which they impersonate someone.
+    fn delete_user(&self, id: UserId) -> ...bool;
+    /// Sets the credential (and the method to match), marks the user active,
+    /// and deletes the user's sessions except `keep`. Refuses (false) a
+    /// revoked user, so a concurrent revoke is not undone.
+    fn set_credential(&self, id: UserId, cred: &Credential, keep: Option<&str>) -> ...bool;
     /// Binds a Google subject only if the user has none or the same one.
-    async fn bind_google_sub(&self, id: UserId, sub: &str) -> Result<bool>;
-    async fn set_access(&self, id: UserId, access: Access) -> Result<bool>;
+    fn bind_google_sub(&self, id: UserId, sub: &str) -> ...bool;
+    fn set_access(&self, id: UserId, access: Access) -> ...bool;
     /// Pending -> active only, atomically; false when the user is not pending
     /// (such as one revoked since it was read). Every activation outside a
     /// link goes through this, never a read followed by `set_access`.
-    async fn activate(&self, id: UserId) -> Result<bool>;
+    fn activate(&self, id: UserId) -> ...bool;
     /// access=revoked, password cleared, unused tokens used up, sessions deleted.
-    async fn revoke(&self, id: UserId, now: Timestamp) -> Result<bool>;
+    fn revoke(&self, id: UserId, now: Timestamp) -> ...bool;
 
     // Sessions
-    async fn create_session(&self, s: &Session) -> Result<()>;            // may prune expired ones
-    async fn session(&self, id: &str) -> Result<Option<Session>>;
-    async fn delete_session(&self, id: &str) -> Result<()>;
-    async fn delete_sessions(&self, user: UserId, keep: Option<&str>) -> Result<()>;
-    async fn delete_expired_sessions(&self, now: Timestamp) -> Result<()>;
+    fn create_session(&self, s: &Session) -> ...;            // may prune expired ones
+    fn session(&self, id: &str) -> ...Option<Session>;       // expired or not
+    fn delete_session(&self, id: &str) -> ...;
+    fn delete_sessions(&self, user: UserId, keep: Option<&str>) -> ...;
+    fn delete_expired_sessions(&self, now: Timestamp) -> ...;
 
     // Tokens
     /// Inserts the token and uses up the user's other unused ones.
-    async fn create_token(&self, t: &Token) -> Result<()>;
-    async fn token(&self, id: &str) -> Result<Option<Token>>;
-    async fn use_up_tokens(&self, user: UserId, now: Timestamp) -> Result<()>;
+    fn create_token(&self, t: &Token, now: Timestamp) -> ...;
+    fn token(&self, id: &str) -> ...Option<Token>;           // used or not
+    fn use_up_tokens(&self, user: UserId, now: Timestamp) -> ...;
     /// In one transaction: marks the token used if it is still unused (else
-    /// returns false), sets the credential, activates the user, deletes all of
-    /// the user's sessions and creates `session`.
-    async fn redeem_token(&self, token: &str, cred: &Credential, session: &Session, now: Timestamp) -> Result<bool>;
+    /// returns false), sets the credential as `set_credential` does, deletes
+    /// all of the user's sessions and creates `session`.
+    fn redeem_token(&self, token: &str, cred: &Credential, session: &Session, now: Timestamp) -> ...bool;
 
     // Settings
-    async fn config_get(&self, key: &str) -> Result<Option<String>>;     // session_key
-    async fn config_set(&self, key: &str, value: &str) -> Result<()>;
+    fn config_get(&self, key: &str) -> ...Option<String>;    // session_key
+    fn config_set(&self, key: &str, value: &str) -> ...;
 }
 
 pub struct User { pub id: UserId, pub login: Option<String>, pub email: Option<String>, pub role: Role,
@@ -327,19 +300,18 @@ pub enum TokenKind { Registration, Reset }
 pub enum Credential { Password(String /* hash */), Google { sub: String, email: String } }
 ```
 
-The library ships `MemoryStore`, used by its own tests and examples, and,
-behind `sqll014`, `SqllStore`, which works over tables `users`, `sessions` and
-`auth_tokens` with a documented set of columns and the migration SQL. An app
-keeps its own columns and foreign keys on `users` (track's per-user data,
-territory's groups), and the store reads and writes only its own columns (see
-open question 4).
+Store failures are a `StoreError`, which boxes any error.
 
-`SqllStore` (card C) works on a sqll `Pool`. It exports its statement
-collections, `watchword::sqll014::Read` and `watchword::sqll014::Write`. An app nests these in
-its own pool with `#[sql(statements)]` and implements `AsMut` to reach them,
-so auth shares the app's single write connection; `SqllStore::new(pool)` then
-takes the app's `Arc<Pool<R, W>>`. A store over a pool of its own is
-`SqllStore<Read, Write>`. Its schema:
+The library ships `MemoryStore`, used by its own tests and the example app, and,
+behind `sqll014`, `SqllStore`. The crate's store test suite runs against both.
+
+`SqllStore` works on a sqll `Pool`. It exports its statement collections,
+`watchword::sqll014::Read` and `watchword::sqll014::Write`. An app nests these
+in its own pool's collections with `#[sql(statements)]` and implements `AsMut`
+to reach them, so auth shares the app's single write connection;
+`SqllStore::new(pool)` then takes the app's `Arc<Pool<R, W>>`. A store over a
+pool of its own is `SqllStore<Read, Write>`. The pool prepares its statements
+when it opens, so the schema must be in place first. The schema:
 
 | Table | Columns |
 |---|---|
@@ -348,41 +320,45 @@ takes the app's `Arc<Pool<R, W>>`. A store over a pool of its own is
 | `auth_tokens` | `id` TEXT PRIMARY KEY, `user_id` → users, `kind` TEXT (`registration`/`reset`), `expires_at` and `used_at` INTEGER ms |
 | `config` | `key` TEXT PRIMARY KEY, `value` TEXT |
 
-`watchword::sqll014::SCHEMA` creates the tables in a new database. The one-time
-migrations from each app's current tables are `docs/sqll/track.sql` and
-`docs/sqll/territory.sql`; the tests run both against copies of the apps'
-current auth tables. A database made with the schema from before sessions had
+`watchword::sqll014::SCHEMA` creates the tables in a new database. An app keeps
+its own columns on `users` (with defaults, since the store inserts only its
+own) and its own tables referencing `users (id)`; the store reads and writes
+only its own columns. The store deletes a user's sessions and links itself
+rather than relying on `ON DELETE CASCADE`, since an app's connections may not
+enable foreign keys. A database made with the schema from before sessions had
 `impersonator_id` takes it with `docs/sqll/impersonator.sql`, a single
-`ALTER TABLE`, since rerunning `SCHEMA` does not add columns. The store deletes a user's sessions and links itself
-rather than relying on `ON DELETE CASCADE`.
+`ALTER TABLE`, since rerunning `SCHEMA` does not add columns.
 
-### 2.5 Providers
+### 2.4 Sign-in methods
 
-- **Password** (`server`). The user is found by login or email. With
-  `logins(false)`, the user is found by email only. An unknown user and a user
-  without a password are verified against the dummy hash, in `spawn_blocking`.
-  The throttle applies. Only active users get a session.
-- **Cloudflare Access** (`cloudflare`). This is the existing `cloudflare::Access`
-  (JWT check against the team's keys, an optional email header, key caching,
-  rate-limited refetch), plus track's identity glue: runtime reconfiguration,
-  log-once warnings, and `presents_access`. The verified email finds the user,
-  and users are never created. Signing in mints an ordinary session, as track
-  does, through an explicit `POST`, so Access is consulted only when signing in.
-  A *pending* user who signs in through Access becomes active, because Access
-  has vouched for the email (this keeps track's behaviour). A revoked user is
+- **Password** (`server`). The user is found by login, then by normalized
+  email; with `logins(false)`, by email only. An unknown user and a user without
+  a password are verified against the dummy hash, in `spawn_blocking`, so every
+  failure takes as long as checking a password. The throttle applies. Only
+  active users get a session.
+- **Cloudflare Access** (`cloudflare`). `cloudflare::Access` checks the Access
+  JWT against the team's keys (with key caching and a rate-limited refetch), or
+  trusts the email header when configured to. `Auth` runs it with runtime
+  reconfiguration (`set_cloudflare`), logs changed settings with a warning when
+  they are unsafe, and logs credentials that sign no one in at most once a
+  minute. `presents_access` tells whether a request carries Access credentials
+  at all. The verified email finds the user, and users are never created.
+  Signing in mints an ordinary session through an explicit `POST`, so Access is
+  consulted only when signing in. A *pending* user who signs in through Access
+  becomes active, because Access has vouched for the email. A revoked user is
   refused.
-- **Google OAuth** (`google`). This is territory's flow, moved as-is:
-  - the authorization-code flow with an in-memory pending-state LRU (10 minutes,
-    10 000 entries);
-  - the `tokeninfo` check, which needs `email_verified`;
-  - sign-in by `google_sub`, with a one-time email match for Google users who
-    have no subject yet;
-  - registration through a link, and "switch to Google" from the account page;
-  - `ensure_unbound`, so one Google account binds only one user.
+- **Google OAuth** (`google`).
+  - The authorization-code flow, with an in-memory pending-state LRU (10
+    minutes, 10 000 entries).
+  - The `tokeninfo` check, which requires `email_verified`.
+  - Sign-in by `google_sub`, with a one-time email match for Google users who
+    have no subject yet.
+  - Registration through a link, and "switch to Google" from the account page.
+  - One Google account binds only one user.
 
   The provider takes a `GoogleConfig { client_id, client_secret, redirect_url }`.
-  The callback redirects to `/` on success, or to `/?error=auth-failed` or
-  `/?error=user-not-found` on failure.
+  It is reached only through the routes (2.5); the callback redirects to `/` on
+  success, or to `/?error=auth-failed` or `/?error=user-not-found` on failure.
 
   Google's endpoints are `google::Endpoints` (`auth`, `token`, `tokeninfo`),
   whose `Default` is Google's own; production always uses it. For an app to
@@ -391,53 +367,61 @@ rather than relying on `ON DELETE CASCADE`.
   `AuthBuilder::google_endpoints(Endpoints)`, and with `axum08` also
   `google::fake::FakeGoogle`: a local server on `127.0.0.1:0` serving the
   token and tokeninfo endpoints for one `GoogleConfig`. The test plays the
-  browser: `FakeGoogle::approve(auth_url, FakeAccount { sub, email,
-  email_verified })` checks the authorization URL the app redirected to and
-  returns the callback URL with a fresh code and the flow's state, `deny`
-  returns one with `error=access_denied`, and `code(account)` mints a bare
-  code. Like Google, the fake checks the client id, secret and redirect URL
-  of each exchange, and a code and its access token work once. The crate's
-  own Google route tests use it.
+  browser: `FakeGoogle::approve(auth_url, FakeAccount::new(sub, email))`
+  checks the authorization URL the app redirected to and returns the callback
+  URL with a fresh code and the flow's state, `deny` returns one with
+  `error=access_denied`, `code(account)` mints a bare code, and
+  `FakeAccount::unverified` clears `email_verified`. Like Google, the fake
+  checks the client id, secret and redirect URL of each exchange, and a code
+  and its access token work once. The crate's own Google route tests use it.
 
-### 2.6 axum integration (`axum08`)
+### 2.5 axum integration (`axum08`)
 
 ```rust
 // Extractors; each needs `Auth: FromRef<S>`.
 SignedIn { user: User, session: Session }   // 401 without a live session of an active (or impersonated pending) user; an impersonated one only while its admin is an active admin
 Admin(SignedIn)                             // 403 unless the user is an admin *now*
 MaybeSignedIn(Option<SignedIn>)
-LiveSession(SessionId)                      // liveness only, cached for 10 s (territory's tile cache), for hot asset routes
+LiveSession(String)                         // the session id; liveness only, cached for 10 s, for hot asset routes
 
 // Routes, merged into the app's router.
 pub fn routes<S>() -> Router<S> where Auth: FromRef<S>, S: Clone + Send + Sync + 'static;
 
 // WebSocket: resolves when the socket's session has ended, for the app's select! loop.
 // In `core` (feature `server`): it takes the user and session, not an axum type.
-let mut guard = auth.guard(&signed_in.user, &signed_in.session);
+let guard = auth.guard(&signed_in.user, &signed_in.session);
 tokio::select! {
-    end = guard.ended() => break,            // logout, revoke, credential change, delete, expiry; the impersonating admin revoked, demoted or deleted
-    change = guard.changed() => { /* UserInfo: role/email changed, e.g. reload groups, admin flag */ }
+    _ = guard.ended() => break,              // sign out, revoke, credential change, delete, expiry; the impersonating admin revoked, demoted or deleted
+    info = guard.changed() => { /* UserInfo: role/email changed, e.g. reload the app's per-user data */ }
     ...
 }
 ```
 
-The guard subscribes to `AuthEvent`s. It sleeps until the session expires, as
-territory does. On broadcast lag, and every 5 minutes as track does, it
-re-checks the session, so a session deleted by another process still ends the
+`SignedIn` and `Admin` read the user from the store on every request, so a role
+change or revocation applies to the next one. `LiveSession` believes a session
+confirmed live for 10 seconds, for up to 1024 sessions; signing out, revoking or
+deleting through `Auth` ends it there at once, so the 10 seconds only delay
+noticing a session ended in another process.
+
+The guard (`core::SessionGuard`) subscribes to `AuthEvent`s and sleeps until the
+session expires. On broadcast lag, and every 5 minutes, it re-checks the
+session in the store, so a session deleted by another process still ends the
 socket. A guard on an impersonated session also follows its admin's
 `UserChanged` and `UserDeleted`, so revoking, demoting or deleting the admin
 ends it at once.
 
 The routes are all JSON. Their errors are `AuthError` with the matching status:
-401, 403, 404, 409, 410, 429, or 400 with a message.
+401, 403, 404, 409, 410, 429, or 400 with a message, which a malformed JSON
+body also gets. `POST /api/auth/login` throttles by the client's address, so
+the app is served with `into_make_service_with_connect_info::<SocketAddr>()`.
 
 | Route | Who | What |
 |---|---|---|
-| `GET /api/auth/config` | anyone | `AuthConfig` (replaces track's `GET /api/auth/cloudflare` and the auth half of territory's `/api/config`) |
+| `GET /api/auth/config` | anyone | `AuthConfig` |
 | `GET /api/auth/me` | signed in | `UserInfo`, with `impersonated_by` when an admin is acting as the user |
 | `POST /api/auth/login` | anyone | `LoginRequest` → `UserInfo` + cookie; throttled |
-| `POST /api/auth/cloudflare` | anyone | → `UserInfo` + cookie |
-| `GET /api/auth/google`, `/google/register/{token}`, `/google/link` | anyone / anyone / signed in | redirect to Google |
+| `POST /api/auth/cloudflare` | anyone, feature `cloudflare` | → `UserInfo` + cookie; activates a pending user |
+| `GET /api/auth/google`, `/google/register/{token}`, `/google/link` | anyone / anyone / signed in | redirect to Google; 404 unless Google is configured |
 | `GET /api/auth/google/redirect` (`watchword::google::REDIRECT_PATH`; `redirect_url` must use this path, a different one is logged as a warning) | Google | callback; cookie + redirect to `/`, or `/?error=user-not-found` / `/?error=auth-failed` |
 | `POST /api/auth/logout` | anyone | 204, deletes the session, clears the cookie |
 | `GET /api/auth/register/{token}` | anyone | `RegisterInfo`; 404 unknown, 410 used or expired |
@@ -445,20 +429,19 @@ The routes are all JSON. Their errors are `AuthError` with the matching status:
 | `POST /api/auth/account/password` | signed in | `PasswordChange` → `UserInfo`; keeps this session, ends the others; switches a Google user to password |
 | `PATCH /api/auth/account` | signed in | `UserChange` (own login/email; not role; not email of a Google user) → `UserInfo` |
 | `GET /api/auth/users` | admin | `Vec<UserEntry>` |
-| `POST /api/auth/users` | admin | `NewUser` → `UserEntry` + `Link` |
+| `POST /api/auth/users` | admin | `NewUser` → `CreatedUser` |
 | `PATCH /api/auth/users/{id}` | admin | `UserChange` → `UserInfo` (not own role) |
-| `DELETE /api/auth/users/{id}` | admin | not self |
-| `POST`/`DELETE /api/auth/users/{id}/link` | admin | issue (`Link`) / use up the link |
-| `POST /api/auth/users/{id}/sign-out` | admin | sign out everywhere (track's behaviour) |
-| `POST /api/auth/users/{id}/revoke` | admin | revoke access (territory's behaviour); not self |
+| `DELETE /api/auth/users/{id}` | admin | 204; not self |
+| `POST`/`DELETE /api/auth/users/{id}/link` | admin | issue (`Link`) / use up the links (204) |
+| `POST /api/auth/users/{id}/sign-out` | admin | 204; sign out everywhere |
+| `POST /api/auth/users/{id}/revoke` | admin | `UserInfo`; revoke access; not self |
 | `POST /api/auth/users/{id}/impersonate` | admin, if enabled | `UserInfo` (with `impersonated_by`) + cookie for a session as that user that records the admin; not self, not revoked, not from an impersonated session |
 | `POST /api/auth/impersonate/stop` | signed in, impersonated | `UserInfo` + cookie for a new session as the admin, ending the impersonated one; 403 unless the session is impersonated (401 once its admin is no longer an active admin, which ends it; 403 if that happens while the request runs) |
 
-The frontend route `/register/{token}` that links point to is unchanged in both
-apps. Links already handed out therefore keep working, because only the API
-path moves (from `/api/register/{token}` to `/api/auth/register/{token}`).
+`{id}` is the decimal `UserId`. Registration and reset links point at the
+frontend route `/register/{token}`, which `<AuthProvider>` serves.
 
-### 2.7 Yew components (`yew023`)
+### 2.6 Yew components (`yew023`)
 
 The components render plain semantic HTML with stable `auth-*` class names and
 take a `class` prop. Each app styles them with its own CSS. They talk to the
@@ -471,61 +454,72 @@ cookies, so the library does not depend on the app's gloo version.
     unreachable.
   - It shows `<SignIn>` when signed out, and `<Register>` on `/register/{token}`.
     Otherwise it renders its children with an `AuthContext`.
-  - Props: `title`, and `signed_out_notice` for the "session has ended" text.
-  - It replaces track's `Root` gating and territory's `Root` auth state.
+  - Props: `title` (the app's name), and `signed_out_notice` for the "session
+    has ended" text (default `SESSION_ENDED`).
 - `use_auth() -> AuthContext` gives `user: Rc<UserInfo>`, `config`,
   `is_admin()`, `sign_out()`, `refresh()`, `set_user(UserInfo)` and
   `check_session()`.
   - `check_session()` is what the app calls when its socket closes. A 401 there
-    shows `<SignIn>` with "Your session has ended. Sign in again." This is
-    track's behaviour, and territory gains it.
-- `<SignIn>` offers the enabled methods: a login/email + password form, "Sign
-  in with Cloudflare" when `config.cloudflare` is set, and "Sign in with Google"
-  when `config.google` is set. It shows `?error=` messages and strips them from
-  the URL.
-- `<Register token>` shows the login and email read-only, then the password
-  and confirmation fields, then "Sign up with Google" when it is enabled.
+    shows `<SignIn>` with the signed-out notice, so a user whose session ended
+    elsewhere finds out instead of facing a dead page.
+- `<SignIn config on_sign_in notice title>` offers the enabled methods: a
+  login/email + password form, "Sign in with Cloudflare" when
+  `config.cloudflare` is set, and "Sign in with Google" when `config.google`
+  is set. It shows `?error=` messages and strips them from the URL.
+- `<Register token on_register title>` shows the login and email read-only,
+  then the password and confirmation fields, then "Sign up with Google" when it
+  is enabled.
 - `<AccountPanel>` covers the role, login (when `logins`), email, change or set
-  password, switching to or linking Google, and sign out. The app wraps it in a
-  page (track) or a modal (territory).
+  password, switching to Google, and sign out. The app wraps it in a page or a
+  modal.
 - `<UserMenu on_account on_admin on_stop_impersonating>` shows the user's name,
   Account, Users (for admins only) and Sign out. While an admin impersonates
   the user it also shows a banner, "Impersonating {user} as {admin}.", with a
   Stop impersonating button that calls `http::stop_impersonating`, sets the
   admin as the user and calls `on_stop_impersonating` (optional).
 - `<AdminUsers>` covers:
-  - the user list, with the filter and paging as props plus `on_query_change`,
-    so territory can keep them in its URL;
+  - the user list, filtered and paged by `query: UsersQuery` (`page_size`,
+    default `PAGE_SIZE`), with `on_query_change` so an app can keep the query
+    in its URL;
   - status icons and the link state;
   - add user, edit login/email, role select, new or revoked link (shown once,
-    with Copy), sign out everywhere, revoke access, impersonate (when enabled)
-    and delete.
+    with Copy), sign out everywhere, revoke access, impersonate (when
+    `on_impersonate` is set) and delete.
 
-  Its props are `me`, `on_impersonate`, `refresh: u64` (bump it to refetch when
-  the app forwards an `AuthEvent`), and `extra: Callback<UserInfo, Html>` for
-  app columns such as territory's groups.
-- `<CloudflareSettings value on_change>` is track's Settings page form: setup
-  instructions, the fields, and a warning when the header is trusted without
-  verifying the token. The app stores the value in its own settings and calls
-  `auth.set_cloudflare`.
+  Its other props are `me`, `refresh: u64` (bump it to refetch when the app
+  forwards an `AuthEvent`), and `extra: Callback<UserInfo, Html>` for the app's
+  own columns, such as group membership.
+- `<CloudflareSettings value on_change app_name disabled>` is a settings form
+  for Cloudflare Access: setup instructions, the fields, and a warning when the
+  header is trusted without verifying the token. The app stores the value in its
+  own settings and calls `auth.set_cloudflare`.
 
 ## 3. Decisions
 
-1. **Identity.** A user has an optional unique `login` and an optional unique
-   `email`, and needs at least one of them. Password sign-in tries the login,
-   then the normalized email. `logins(false)` (territory) hides login fields and
-   requires an email. Cloudflare and Google always match on email. This
-   preserves both apps without rewriting identities. *Open question 1.*
-2. **Account state.** Adopt territory's `Access`.
+1. **Identity: logins optional, emails optional, at least one required.** Some
+   apps sign in by login name and have users without an email (such as a
+   first admin named `root`); others are email-only. A user has an optional
+   unique `login` and an optional unique `email`, and needs at least one.
+   Password sign-in tries the login, then the normalized email.
+   `logins(false)` hides login fields and requires an email. Cloudflare and
+   Google always match on email. Requiring an email everywhere would drop
+   sign-in by login name and force an email on every user; requiring a login
+   everywhere would make email-only apps invent and show logins. Both
+   optional costs one column and a builder flag.
+2. **Account state: `Access` is pending, active or revoked.** A user created by
+   an admin is pending until they register with their link.
    - Pending users cannot sign in, except through Cloudflare Access, which
-     activates them (this preserves track).
+     activates them: Access has already vouched for the email, and an app
+     behind Access expects its users to get in without a registration step.
    - Revoked users cannot sign in by any path.
    - A new link restores a revoked user.
-   - Track migrates every existing user to `active`.
-3. **Revoke vs sign out.** Keep both, under distinct names: "Sign out
-   everywhere" (track's `RevokeUserAccess`) and "Revoke access" (territory's).
-   Neither app loses an action.
-4. **Credentials per user.** Adopt territory's exclusive `Method`.
+3. **Sign out everywhere and revoke access are distinct actions.** "Sign out
+   everywhere" ends the user's sessions and lets them sign in again, for a lost
+   device. "Revoke access" blocks the user: access becomes revoked, the
+   password is cleared, links are used up and sessions end. Both are offered,
+   under names that say which is which.
+4. **One stored credential per user, switchable.** `Method` is `Password` or
+   `Google`, exclusively.
    - A password user can switch to Google, which clears the password and binds
      the subject.
    - A Google user can set a password, which switches them back.
@@ -533,235 +527,72 @@ cookies, so the library does not depend on the app's gloo version.
      pending user by email, whatever their method.
    - Both of these changes end the user's other sessions.
 
-   *Open question 2.*
-5. **Tokens.** Adopt territory's two kinds, chosen when the link is issued
-   (`Reset` for active users, `Registration` otherwise), with its usability
-   rule. Issuing a link uses up the user's earlier links. Links are single use
-   and last 7 days. For track this changes nothing visible.
-6. **First admin.** `Auth::bootstrap_admin` creates a pending admin from an
-   email or login when there are no users, and logs the link. *Open
-   question 3.*
+   Linking Google alongside a password would be more flexible, but needs more
+   account UI and rules (such as never unlinking the last method); one method
+   is the smallest model that works.
+5. **Two token kinds, chosen when the link is issued.** `Reset` for active
+   users, `Registration` otherwise. A token is usable while unused and
+   unexpired, and, for an active user, only if it is a reset link, so a
+   registration link issued before the user registered stops working once they
+   have. Issuing a link uses up the user's earlier links. Links are single use
+   and last 7 days.
+6. **First admin: a bootstrap link, no default password.**
+   `Auth::bootstrap_admin` creates a pending admin from an email or login when
+   there are no users, and logs (and returns) their registration link, a full
+   URL when the app's public URL is known. It does nothing once users exist, so
+   the option can stay set across restarts. A seeded default password would be
+   a standing risk on every new install.
 7. **Cookie.** The cookie name is configurable. `Secure` is set automatically
-   from `X-Forwarded-Proto` (track), with `Secure::Always` and `Secure::Never`
-   also available. `Expires` is not set; `Max-Age` alone is kept. The value
-   format is unchanged, so existing sessions survive the move.
-8. **Expired sessions** are pruned on session creation (track) and by
-   `auth.prune()` for apps that want a timer. Reads always check the expiry.
-9. **Throttling and dummy-hash timing** apply to every password sign-in.
-   Territory gains both.
-10. **WS end-of-session**: an expiry timer, event matching, a re-check on lag and
-    a 5-minute re-check, which is the union of the two apps.
+   from `X-Forwarded-Proto` (`Secure::Auto`), with `Secure::Always` and
+   `Secure::Never` also available. The other attributes are fixed:
+   `HttpOnly`, `SameSite=Strict`, `Path=/`, and a 30-day `Max-Age` without
+   `Expires`. The value format is fixed and keyed by the store's
+   `session_key`, so sessions survive restarts and an app whose cookies already
+   use this format keeps them.
+8. **Expired sessions** are pruned on session creation (the store may) and by
+   `auth.prune()` for apps that want a timer. Reads always check the expiry, so
+   pruning only keeps the store small.
+9. **Throttling and dummy-hash timing apply to every password sign-in**, so
+   neither guessing passwords nor probing for user names gets cheaper.
+10. **WebSocket end-of-session: every signal.** The guard combines an expiry
+    timer, `AuthEvent` matching, a re-check on broadcast lag and a 5-minute
+    re-check. Events end a socket at once when the change goes through this
+    process's `Auth`; the re-checks catch changes made by another process on
+    the same store.
 11. **Role changes** apply per request (`Admin` re-reads the user) and are pushed
     as `AuthEvent::UserChanged`. Sockets see them through `guard.changed()`.
-12. **Impersonation** is territory's behaviour, behind `.impersonation(true)`,
-    plus a marker and a way back (decided on card ba5d618e). The session records
-    the admin (`Session::impersonator`, `sessions.impersonator_id`), the own
-    user's `UserInfo` carries `impersonated_by`, `UserMenu` shows a banner, and
-    `POST /api/auth/impersonate/stop` ends the impersonated session and signs
-    the admin in again. Impersonating from an impersonated session is
-    refused, so stopping always returns to the admin who started. The admin's
-    own session is left alone when impersonating (its cookie is replaced, and
-    it expires).
-    An impersonated session lives only while its admin is an active admin
-    (decided by the user on card e38a7847). Deleting the admin deletes the
-    sessions they impersonate in. Revoking or demoting them makes
-    `Auth::session` treat those sessions as ended, at the cost of one extra
-    user lookup for impersonated sessions only, and it deletes each such
-    session it finds, so promoting the admin again cannot revive it; a
-    session nobody touches in between survives a demote-then-promote, since
-    the store cannot find sessions by impersonator. Guards and the
-    `LiveSession` cache end them at once on the admin's `UserChanged` or
-    `UserDeleted`, with no new event. `stop` keeps its 403 for an admin who is
-    no longer an active admin, but an ended session is refused with 401
-    before it gets there.
-13. **Transport.** Account and admin operations move to the JSON routes above,
-    out of each app's WebSocket protocol. Live updates reach the admin page
-    through the app forwarding `AuthEvent`s. *Open question 4.*
-14. **Storage** goes through the `Store` trait. A `SqllStore` ships too. *Open
-    question 5.*
+12. **Impersonation**, behind `.impersonation(true)`, lets an admin act as a
+    user to see what they see, with a marker and a way back. The session
+    records the admin (`Session::impersonator`, `sessions.impersonator_id`), the
+    own user's `UserInfo` carries `impersonated_by`, `UserMenu` shows a banner,
+    and `POST /api/auth/impersonate/stop` ends the impersonated session and
+    signs the admin in again. Pending users can be impersonated, revoked ones
+    cannot. Impersonating from an impersonated session is refused, so stopping
+    always returns to the admin who started. The admin's own session is left
+    alone when impersonating (its cookie is replaced, and it expires).
+
+    An impersonated session lives only while its admin is an active admin.
+    Deleting the admin deletes the sessions they impersonate in. Revoking or
+    demoting them makes `Auth::session` treat those sessions as ended, at the
+    cost of one extra user lookup for impersonated sessions only, and it
+    deletes each such session it finds, so promoting the admin again cannot
+    revive it; a session nobody touches in between survives a
+    demote-then-promote, since the store cannot find sessions by impersonator.
+    Guards and the `LiveSession` cache end them at once on the admin's
+    `UserChanged` or `UserDeleted`, with no new event. `stop` keeps its 403 for
+    an admin who is no longer an active admin, but an ended session is refused
+    with 401 before it gets there.
+13. **Transport: the library's own JSON routes.** Account and admin operations
+    are HTTP JSON routes, not part of an app's WebSocket protocol, so the
+    components are self-contained and an app writes no user endpoints. Live
+    updates reach the admin page through the app forwarding `AuthEvent`s and
+    bumping `<AdminUsers refresh>`. Riding each app's own WebSocket protocol
+    would leave every app defining endpoints and the components needing an
+    app-supplied client trait.
+14. **Storage: the `Store` trait is the API, and `SqllStore` ships too.** An
+    app on another database implements `Store`; an app on sqll takes
+    `SqllStore` over the documented schema instead of writing the same few
+    hundred lines of queries again, migrating its auth tables to that schema
+    once.
 15. **Timestamps** in the library are `jiff::Timestamp`. `SqllStore` stores
-    them as INTEGER milliseconds, as track does (territory migrates its auth
-    columns; see open question 5).
-
-## 4. Wiring up each app
-
-### 4.1 track
-
-**Server** (`crates/track`):
-
-```toml
-auth = { package = "watchword", path = "../../../watchword", features = ["axum08", "cloudflare", "sqll014"] }
-```
-
-```rust
-let store = auth::sqll014::SqllStore::new(db.pool());          // or TrackStore(db) implementing Store
-let key = auth::load_or_create_key(&store).await?;
-let auth = Auth::builder(store, key)
-    .cookie(CookieConfig::new("track_session"))
-    .logins(true)
-    .trusted_proxies(trusted_proxies)
-    .cloudflare(config.cloudflare_access.enabled.then(|| config.cloudflare_access.clone().into()))
-    .build();
-// on Settings change: auth.set_cloudflare(...)
-// router: .merge(auth::axum08::routes())
-// ws_handler: `user: SignedIn`, `state.auth.guard(&user.user, &user.session)` in the select! loop,
-//   replacing the revocation receiver and session_check interval.
-// ws authorize: `requires_admin` keeps the app's own admin requests; is_admin uses auth.
-```
-
-The migration adds `access` (all existing users become `active`), `method`
-(`password`) and `google_sub` to `users`. It renames `login_tokens` to
-`auth_tokens` and adds `kind`. The `root`/`root` seed stays only for databases
-that already have it.
-
-The SQL is `docs/sqll/track.sql`. `users.login` becomes optional, which SQLite
-can only do by rebuilding `users`. Rebuilding with foreign keys on would
-cascade the drop into track's per-user tables, so the migration aborts unless
-foreign keys are off, as they are on track's migration connection. Outstanding
-login links become `reset` links, because their users are now active.
-
-**Deletes or shrinks:**
-
-| Server | Frontend |
-|---|---|
-| `identity.rs`: all but the app's `AuthUser` → `SignedIn` alias | `page/login.rs` |
-| `login_throttle.rs` | `page/register.rs` |
-| `http.rs`: the whole file | `page/account.rs` (its route renders `<AccountPanel>`) |
-| `db/users.rs`: sessions, tokens, users CRUD and `session_key` (about 550 of 659 lines; `default_owner` stays) | `page/users.rs` (its route renders `<AdminUsers>`) |
-| `ws/users.rs` | `root.rs` (becomes `<AuthProvider>`) |
-| the user arms of `ws.rs`'s dispatch, `Refused` variants, `session_valid` | auth functions in `http.rs` |
-| `api`: `User`, `UserRole`, `CloudflareAccess` (becomes `auth::CloudflareConfig`), the 10 user endpoints and their request/response types, `LoginLink` | Cloudflare page body in `page/settings.rs` (renders `<CloudflareSettings>`) |
-| | `is_admin(ctx)` (becomes `use_auth().is_admin()`) |
-
-### 4.2 territory
-
-**Server** (`crates/territory`):
-
-```toml
-auth = { package = "watchword", path = "../../../watchword", features = ["axum08", "google", "sqll014"] }
-```
-
-```rust
-let auth = Auth::builder(store, key)
-    .cookie(CookieConfig::new("territory_session"))
-    .logins(false)
-    .google(google_config)               // from the existing GOOGLE_* args
-    .impersonation(true)
-    .build();
-if let Some(email) = &args.bootstrap_email {
-    auth.bootstrap_admin(&BootstrapAdmin::email(email).public_url(args.public_url.clone())).await?;
-}
-// router: .merge(auth::axum08::routes()); /api/config keeps only `title`
-// tiles: `LiveSession` extractor replaces the cookie check and SessionCache
-// ws: `SignedIn` + guard; guard.changed() updates `admin` and reloads groups;
-//   forward AuthEvent::{UserCreated, UserChanged, UserDeleted} into the app broadcast
-//   so the admin page's `refresh` and the groups column stay live.
-```
-
-The migration renames `auth_method` `plain` → `password`, renames
-`registration_tokens` to `auth_tokens`, and converts the auth timestamps to
-INTEGER ms (`SqllStore`'s schema).
-
-The SQL is `docs/sqll/territory.sql`. It also renames the column `auth_method`
-to `method`, and adds an optional unique `login`. Timestamps are rounded to
-the nearest millisecond (clamped at 59.999 seconds, so never rolled over). It
-never rebuilds `users`, so it is safe with foreign keys on.
-
-**Deletes or shrinks:**
-
-| Server | Frontend |
-|---|---|
-| `auth.rs` and `auth/tests.rs` (the tests move to the library) | `login_page.rs` |
-| `session.rs` and its tests | `register_page.rs` |
-| `bootstrap.rs` and its tests | `account_modal.rs` (the modal wraps `<AccountPanel>`) |
-| `google_oauth.rs` | `admin_users.rs` (wraps `<AdminUsers extra=groups>`) |
-| `http.rs`: all but `config` | `user_info.rs` |
-| `proxy.rs`: `SessionCache` and the cookie check | auth functions in `http.rs`, auth state in `root.rs` |
-| `events.rs`: `SessionEnded` | |
-| `ws/users.rs`: all but group handling | |
-| `ws.rs`: the expiry timer and the `SessionEnded` / lag handling | |
-| `db`: user, session and token functions and their tests (they move to `SqllStore`) | |
-| `api`: `UserRole`, `AuthMethod`, `UserAccess`, `UserInfo`, the user endpoints, `QueryError`, `validate_password` | |
-
-**What territory gains:** throttling, constant-time unknown-user handling,
-`Secure` cookies behind HTTPS, "sign out everywhere", detection of an ended
-session in the frontend, and Cloudflare Access if it is ever put behind Access.
-
-### 4.3 army
-
-army has a placeholder `Session {}` in `web.rs`. It would take `SignedIn` on
-the upgrade and `<AuthProvider>` in the frontend, and implement nothing itself.
-This is a useful check on whether the API is small enough.
-
-## 5. Open questions
-
-The user approved the design on 2026-10-14 and chose the recommended option
-for every question below, marked **(chosen)**. The other options stay for the
-record.
-
-1. **User identity: login names, emails, or both?**
-   - **(chosen) Both optional, at least one required.** track keeps logins
-     (and `root` without an email). territory turns logins off and stays
-     email-only. This costs one optional column and a builder flag.
-   - Email required everywhere. This is simpler, but track's `root` and any
-     email-less users need an email, and signing in by login name goes away.
-   - Login required everywhere. territory would copy emails into logins and
-     show both.
-2. **Can one user have both a password and Google?**
-   - **(chosen) No: one method, switchable (territory's model).** It is
-     already tested in territory and is the smallest model. Cloudflare Access
-     still works for any user by email.
-   - Yes: link and unlink Google alongside a password. This is more flexible,
-     but adds account UI and rules (for example, never unlink the last method).
-3. **track's first admin on a fresh install.**
-   - **(chosen) A bootstrap link** (`--bootstrap-admin <email|login>`,
-     logged at startup), as territory does. No default password.
-   - Keep seeding `root` / `root` for new track databases.
-4. **Transport for account and admin operations.**
-   - **(chosen) The library's own JSON routes.** The components are then
-     self-contained, and both apps delete their WS user endpoints. Live admin
-     updates come from the app forwarding `AuthEvent`s.
-   - Keep them on each app's musli-web WebSocket. The library would provide
-     handler functions and musli wire types, and each app keeps its own
-     endpoint definitions and components wiring. This is more code per app,
-     and the components would need an app-supplied client trait.
-5. **Storage: ship a SQLite store, or traits only?**
-   - **(chosen) Both.** The `Store` trait is the API, and a `sqll`
-     feature ships `SqllStore` over a documented schema with migration SQL,
-     because both apps use sqll 0.14 and would otherwise write nearly the same
-     ~500 lines. Each app migrates its auth columns to that schema once
-     (territory converts timestamps to INTEGER ms).
-   - Traits only. Each app implements `Store` over its existing schema and
-     keeps its timestamp encoding, with no schema migration but duplicated
-     code.
-6. **Crate layout.**
-   - One crate with disjoint features. This was the first choice, until
-     versioning yew (2.1) met yew's macros, which hardcode `::yew::` paths, so
-     yew code can only live in a crate whose own dependency key is `yew`.
-   - **(chosen, card cc509288) A workspace of three crates**: `watchword-core`
-     (types), `watchword-yew023` (all yew 0.23 code, dependency key `yew`) and
-     `watchword` (the rest, re-exporting the shim as `watchword::yew023`).
-     A later yew is another shim crate and feature beside it. The cost is
-     three manifests released in lockstep.
-
-## 6. Implementation cards
-
-The board's two original cards, 00170ba3 (server side) and ec24345c (Yew
-components), were too large and are replaced by the breakdown below, which
-lets workers run in parallel.
-
-| # | Card | Depends on | Notes |
-|---|---|---|---|
-| A | **Types and feature layout**: the feature table; `types` module (`UserId`, `Role`, `Access`, `Method`, wire types, `AuthError`, validation); `musli` feature; move existing modules under `core`/`cloudflare`; CI over `--no-default-features`, each feature, `--all-features`, and `--target wasm32-unknown-unknown --features yew` | design | small; unblocks everything |
-| B | **`Store` trait, `MemoryStore`, and the `Auth` service**: builder, cookie config, key helper, throttle (from track), `AuthEvent`, bootstrap, and all operations with the rules of section 3; port territory's `auth/tests.rs` and `bootstrap/tests.rs` and track's throttle tests against `MemoryStore` | A | the core of the server side |
-| C | **`SqllStore`**: schema, migration SQL, implementation; run B's store tests against it | B | kept: open question 5 chose it |
-| D | **Cloudflare provider**: track's identity glue (runtime config, log-once warnings, pending → active) on top of the existing `cloudflare` module | B | can run alongside E and F |
-| E | **Google provider**: port territory's `google_oauth.rs` and its state tests | B | can run alongside D and F |
-| F | **axum integration**: extractors, `routes()`, `guard()` for sockets, `LiveSession` cache; route-level tests with `MemoryStore` and `tower::ServiceExt` | B (routes for D and E are wired when those land, behind their features) | |
-| G | **Yew foundation**: `http` client, `AuthProvider`, `AuthContext` / `use_auth`, `SignIn`, `Register` | A (and F's route shapes, fixed by this document) | can start after A |
-| H | **Yew account and admin**: `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings` | G | |
-| I | **Example app** in `examples/`: axum + Yew with `MemoryStore`, all three methods, for manual checks and as the consumers' reference | F, H | |
-
-After these cards, moving track and territory onto watchword belongs on their
-own boards (section 4 is their checklist). This board does not change either
-repository.
+    them as INTEGER milliseconds since the Unix epoch.
