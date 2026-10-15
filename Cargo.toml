@@ -26,6 +26,9 @@ cloudflare = ["server", "dep:aws-lc-rs", "dep:reqwest", "dep:serde_json"]
 google = ["server", "dep:reqwest", "dep:serde_json", "dep:url", "dep:lru"]
 axum = ["server", "dep:axum", "tokio/macros"]
 sqll = ["server", "dep:sqll"]
+# Lets an app's tests point the Google client at a local server; with `axum`
+# it also provides `google::fake::FakeGoogle`, a fake Google to point it at.
+test-util = ["google"]
 yew = ["dep:yew", "dep:gloo-net", "dep:web-sys", "dep:wasm-bindgen-futures", "jiff/js"]
 
 [dependencies]

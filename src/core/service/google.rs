@@ -22,9 +22,12 @@ impl AuthBuilder {
         self
     }
 
-    /// Points the Google client at other endpoints, for tests.
-    #[cfg(test)]
-    pub(crate) fn google_endpoints(mut self, endpoints: crate::google::Endpoints) -> Self {
+    /// Points the Google client at other endpoints, such as a
+    /// [`FakeGoogle`](crate::google::fake::FakeGoogle), so an app can test
+    /// signing in with Google offline (feature `test-util`). The default is
+    /// Google's own, [`Endpoints::default`](crate::google::Endpoints).
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn google_endpoints(mut self, endpoints: crate::google::Endpoints) -> Self {
         self.google_endpoints = endpoints;
         self
     }

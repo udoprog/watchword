@@ -35,6 +35,9 @@ pub use url::Url;
 
 use crate::types::UserId;
 
+#[cfg(all(feature = "axum", any(test, feature = "test-util")))]
+pub mod fake;
+
 /// The path the callback is served at by the `axum` routes, which the
 /// [`redirect_url`](GoogleConfig::redirect_url) must have.
 pub const REDIRECT_PATH: &str = "/api/auth/google/redirect";
@@ -72,12 +75,19 @@ impl fmt::Debug for GoogleConfig {
     }
 }
 
-/// Google's OAuth endpoints; tests point them at a local server.
-#[derive(Clone)]
-pub(crate) struct Endpoints {
-    pub(crate) auth: Url,
-    pub(crate) token: Url,
-    pub(crate) tokeninfo: Url,
+/// Google's OAuth endpoints. [`Endpoints::default`] is Google's own, which
+/// is all an app uses in production; with the `test-util` feature,
+/// [`AuthBuilder::google_endpoints`](crate::AuthBuilder::google_endpoints)
+/// points the client elsewhere, such as at a [`fake::FakeGoogle`] (which
+/// also needs `axum`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Endpoints {
+    /// Where the browser is sent to sign in.
+    pub auth: Url,
+    /// Where the authorization code is exchanged for an access token.
+    pub token: Url,
+    /// Where the access token is checked for the account it grants.
+    pub tokeninfo: Url,
 }
 
 impl Default for Endpoints {

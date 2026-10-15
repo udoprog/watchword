@@ -1,101 +1,52 @@
-//! Route-level tests of the Google OAuth flow, against a local server
-//! standing in for Google's token and tokeninfo endpoints.
-//!
-//! The fake hands out the authorization code as the access token, and
-//! tokeninfo reads the account from it: a code is `sub|email|verified`.
+//! Route-level tests of the Google OAuth flow, against the fake Google of
+//! [`crate::google::fake`].
 
 use std::collections::HashMap;
 
-use axum::extract::Query;
-use axum::response::IntoResponse;
-use axum::routing::post;
-
 use super::*;
-use crate::google::{Endpoints, GoogleConfig, REDIRECT_PATH, Url};
-
-/// Serves a fake Google, returning its endpoints.
-async fn fake_google() -> Endpoints {
-    let app = Router::new()
-        .route(
-            "/token",
-            post(|body: String| async move {
-                let form: HashMap<String, String> = url::form_urlencoded::parse(body.as_bytes())
-                    .into_owned()
-                    .collect();
-
-                assert_eq!(form["client_id"], "client");
-                assert_eq!(form["client_secret"], "secret");
-                assert_eq!(form["grant_type"], "authorization_code");
-                assert_eq!(form["redirect_uri"], redirect_url().as_str());
-
-                if form["code"] == "bad" {
-                    return StatusCode::BAD_REQUEST.into_response();
-                }
-
-                axum::Json(json!({ "access_token": form["code"] })).into_response()
-            }),
-        )
-        .route(
-            "/tokeninfo",
-            get(|Query(query): Query<HashMap<String, String>>| async move {
-                let mut parts = query["access_token"].splitn(3, '|');
-                let (sub, email, verified) = (
-                    parts.next().unwrap().to_owned(),
-                    parts.next().unwrap().to_owned(),
-                    parts.next().unwrap().to_owned(),
-                );
-                axum::Json(json!({ "sub": sub, "email": email, "email_verified": verified }))
-            }),
-        );
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-
-    Endpoints {
-        auth: Url::parse("https://accounts.example/auth").unwrap(),
-        token: Url::parse(&format!("http://{address}/token")).unwrap(),
-        tokeninfo: Url::parse(&format!("http://{address}/tokeninfo")).unwrap(),
-    }
-}
+use crate::google::fake::{FakeAccount, FakeGoogle};
+use crate::google::{GoogleConfig, REDIRECT_PATH, Url};
 
 fn redirect_url() -> Url {
     Url::parse(&format!("https://app.example{REDIRECT_PATH}")).unwrap()
 }
 
-async fn google_auth() -> Auth {
+async fn google_auth() -> (Auth, FakeGoogle) {
     let config = GoogleConfig {
         client_id: "client".to_owned(),
         client_secret: "secret".to_owned(),
         redirect_url: redirect_url(),
     };
 
-    Auth::builder(MemoryStore::new(), generate_session_key())
+    let google = FakeGoogle::start(&config).await.unwrap();
+
+    let auth = Auth::builder(MemoryStore::new(), generate_session_key())
         .google(Some(config))
-        .google_endpoints(fake_google().await)
-        .build()
+        .google_endpoints(google.endpoints())
+        .build();
+
+    (auth, google)
 }
 
-/// A verified account's authorization code.
-fn code(sub: &str, email: &str) -> String {
-    format!("{sub}|{email}|true")
+/// A verified Google account.
+fn account(sub: &str, email: &str) -> FakeAccount {
+    FakeAccount::new(sub, email)
 }
 
 fn location(answer: &Answer) -> &str {
     answer.headers[header::LOCATION].to_str().unwrap()
 }
 
-/// Starts a flow at `uri`, returning its state.
-async fn start(app: &Router, uri: &str, cookie: Option<&str>) -> String {
+/// Starts a flow at `uri`, returning the URL the browser is sent to.
+async fn start(app: &Router, uri: &str, cookie: Option<&str>) -> Url {
     let answer = call(app, Method::GET, uri, cookie, None).await;
     assert_eq!(answer.status, StatusCode::SEE_OTHER, "{}", answer.body);
+    Url::parse(location(&answer)).unwrap()
+}
 
-    let url = Url::parse(location(&answer)).unwrap();
-    assert!(url.as_str().starts_with("https://accounts.example/auth?"));
-
-    let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
-    assert_eq!(query["client_id"], "client");
-    assert_eq!(query["redirect_uri"], redirect_url().as_str());
+/// The state of the flow started at `auth_url`.
+fn state_of(auth_url: &Url) -> String {
+    let query: HashMap<_, _> = auth_url.query_pairs().into_owned().collect();
     query["state"].clone()
 }
 
@@ -114,22 +65,50 @@ async fn callback(app: &Router, query: &[(&str, &str)]) -> Answer {
     .await
 }
 
-/// Returns from Google with `code` for `state`, expecting to be signed in;
+/// Follows the callback URL the fake Google returned.
+async fn follow(app: &Router, url: &Url) -> Answer {
+    assert!(url.as_str().starts_with(redirect_url().as_str()));
+    let uri = format!("{}?{}", url.path(), url.query().unwrap_or_default());
+    call(app, Method::GET, &uri, None, None).await
+}
+
+/// Approves the flow at `auth_url` as `account`, expecting to be signed in;
 /// returns the new cookie.
-async fn signed_in_with(app: &Router, state: &str, code: &str) -> String {
-    let answer = callback(app, &[("code", code), ("state", state)]).await;
+async fn signed_in_as(
+    app: &Router,
+    google: &FakeGoogle,
+    auth_url: &Url,
+    account: FakeAccount,
+) -> String {
+    let answer = follow(app, &google.approve(auth_url, account)).await;
     assert_eq!(answer.status, StatusCode::SEE_OTHER);
     assert_eq!(location(&answer), "/");
     answer.cookie()
 }
 
-/// Returns from Google with `code` for `state`, expecting the redirect to
-/// carry `error` and no cookie.
-async fn fails_with(app: &Router, query: &[(&str, &str)], error: &str) {
-    let answer = callback(app, query).await;
+/// Expects `answer` to redirect with `error` and no cookie.
+fn failed_with(answer: Answer, error: &str) {
     assert_eq!(answer.status, StatusCode::SEE_OTHER);
     assert_eq!(location(&answer), format!("/?error={error}"));
     assert!(!answer.headers.contains_key(header::SET_COOKIE));
+}
+
+/// Returns from Google with `query`, expecting the redirect to carry `error`
+/// and no cookie.
+async fn fails_with(app: &Router, query: &[(&str, &str)], error: &str) {
+    failed_with(callback(app, query).await, error);
+}
+
+/// Approves the flow at `auth_url` as `account`, expecting the redirect to
+/// carry `error` and no cookie.
+async fn approved_fails_with(
+    app: &Router,
+    google: &FakeGoogle,
+    auth_url: &Url,
+    account: FakeAccount,
+    error: &str,
+) {
+    failed_with(follow(app, &google.approve(auth_url, account)).await, error);
 }
 
 async fn me(app: &Router, cookie: &str) -> Answer {
@@ -161,7 +140,7 @@ async fn google_is_offered_only_when_configured() {
         assert_eq!(answer.status, StatusCode::NOT_FOUND, "{uri}");
     }
 
-    let auth = google_auth().await;
+    let (auth, _google) = google_auth().await;
     let app = router(&auth);
 
     let config = call(&app, Method::GET, "/api/auth/config", None, None).await;
@@ -199,13 +178,13 @@ async fn google_is_offered_only_when_configured() {
 
 #[tokio::test]
 async fn registering_and_signing_in_with_google() {
-    let auth = google_auth().await;
+    let (auth, google) = google_auth().await;
     let app = router(&auth);
     let admin = admin(&auth, &app).await;
     let token = invite(&app, &admin, "new@example.com").await;
 
-    let state = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
-    let cookie = signed_in_with(&app, &state, &code("sub:new", "New@example.com")).await;
+    let url = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
+    let cookie = signed_in_as(&app, &google, &url, account("sub:new", "New@example.com")).await;
 
     let info = me(&app, &cookie).await;
     assert_eq!(info.status, StatusCode::OK);
@@ -225,74 +204,110 @@ async fn registering_and_signing_in_with_google() {
     assert_eq!(used.status, StatusCode::GONE);
 
     // The account signs in by its subject.
-    let state = start(&app, "/api/auth/google", None).await;
-    let again = signed_in_with(&app, &state, &code("sub:new", "new@example.com")).await;
+    let url = start(&app, "/api/auth/google", None).await;
+    let again = signed_in_as(&app, &google, &url, account("sub:new", "new@example.com")).await;
     assert_eq!(me(&app, &again).await.status, StatusCode::OK);
 
     // An account no user has is not found, even with a user's email.
-    let state = start(&app, "/api/auth/google", None).await;
-    let query = code("sub:other", "new@example.com");
-    fails_with(
-        &app,
-        &[("code", &query), ("state", &state)],
-        "user-not-found",
-    )
-    .await;
+    let url = start(&app, "/api/auth/google", None).await;
+    let other = account("sub:other", "new@example.com");
+    approved_fails_with(&app, &google, &url, other, "user-not-found").await;
 }
 
 #[tokio::test]
 async fn failed_callbacks_redirect_with_auth_failed() {
-    let auth = google_auth().await;
+    let (auth, google) = google_auth().await;
     let app = router(&auth);
     let admin = admin(&auth, &app).await;
     let token = invite(&app, &admin, "new@example.com").await;
-    let good = code("sub:new", "new@example.com");
+    let good = || account("sub:new", "new@example.com");
 
     // Google refused, or returned without a code.
-    let state = start(&app, "/api/auth/google", None).await;
-    fails_with(
-        &app,
-        &[("error", "access_denied"), ("state", &state)],
-        "auth-failed",
-    )
-    .await;
-    fails_with(&app, &[("state", &state)], "auth-failed").await;
+    let url = start(&app, "/api/auth/google", None).await;
+    failed_with(follow(&app, &google.deny(&url)).await, "auth-failed");
+    let url = start(&app, "/api/auth/google", None).await;
+    fails_with(&app, &[("state", &state_of(&url))], "auth-failed").await;
     fails_with(&app, &[], "auth-failed").await;
 
     // A state that was never handed out.
-    fails_with(&app, &[("code", &good), ("state", "forged")], "auth-failed").await;
+    let code = google.code(good());
+    fails_with(&app, &[("code", &code), ("state", "forged")], "auth-failed").await;
 
-    // The token exchange fails.
-    let state = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
+    // The token exchange fails: Google does not know the code.
+    let url = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
+    let state = state_of(&url);
     fails_with(&app, &[("code", "bad"), ("state", &state)], "auth-failed").await;
 
     // The state was used up by the failed attempt.
-    fails_with(&app, &[("code", &good), ("state", &state)], "auth-failed").await;
+    let code = google.code(good());
+    fails_with(&app, &[("code", &code), ("state", &state)], "auth-failed").await;
 
     // An unverified email.
-    let state = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
+    let url = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
+    approved_fails_with(&app, &google, &url, good().unverified(), "auth-failed").await;
+
+    // A state is good once.
+    let url = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
+    signed_in_as(&app, &google, &url, good()).await;
+    let code = google.code(good());
     fails_with(
         &app,
-        &[("code", "sub:new|new@example.com|false"), ("state", &state)],
+        &[("code", &code), ("state", &state_of(&url))],
         "auth-failed",
     )
     .await;
 
-    // A state is good once.
-    let state = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
-    signed_in_with(&app, &state, &good).await;
-    fails_with(&app, &[("code", &good), ("state", &state)], "auth-failed").await;
+    // A code is good for one exchange.
+    let url = start(&app, "/api/auth/google", None).await;
+    let answer = callback(&app, &[("code", &code), ("state", &state_of(&url))]).await;
+    assert_eq!(location(&answer), "/");
+    let url = start(&app, "/api/auth/google", None).await;
+    fails_with(
+        &app,
+        &[("code", &code), ("state", &state_of(&url))],
+        "auth-failed",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_misconfigured_client_fails_the_token_exchange() {
+    let (_, google) = google_auth().await;
+
+    let wrong = GoogleConfig {
+        client_id: "client".to_owned(),
+        client_secret: "wrong".to_owned(),
+        redirect_url: redirect_url(),
+    };
+
+    let auth = Auth::builder(MemoryStore::new(), generate_session_key())
+        .google(Some(wrong))
+        .google_endpoints(google.endpoints())
+        .build();
+    let app = router(&auth);
+    let admin = admin(&auth, &app).await;
+    let token = invite(&app, &admin, "new@example.com").await;
+
+    let url = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
+    let new = account("sub:new", "new@example.com");
+    approved_fails_with(&app, &google, &url, new, "auth-failed").await;
 }
 
 #[tokio::test]
 async fn switching_to_google_ends_the_other_sessions() {
-    let auth = google_auth().await;
+    let (auth, google) = google_auth().await;
     let app = router(&auth);
     let admin = admin(&auth, &app).await;
     let (_, alice) = regular(&app, &admin, "alice").await;
 
-    let state = start(&app, "/api/auth/google/link", Some(&alice)).await;
-    let cookie = signed_in_with(&app, &state, &code("sub:alice", "alice@example.com")).await;
+    let url = start(&app, "/api/auth/google/link", Some(&alice)).await;
+    let cookie = signed_in_as(
+        &app,
+        &google,
+        &url,
+        account("sub:alice", "alice@example.com"),
+    )
+    .await;
 
     // The session that started switching ended with the password.
     assert_eq!(me(&app, &alice).await.status, StatusCode::UNAUTHORIZED);
@@ -313,24 +328,36 @@ async fn switching_to_google_ends_the_other_sessions() {
     .await;
     assert_eq!(login.status, StatusCode::UNAUTHORIZED);
 
-    let state = start(&app, "/api/auth/google", None).await;
-    signed_in_with(&app, &state, &code("sub:alice", "alice@example.com")).await;
+    let url = start(&app, "/api/auth/google", None).await;
+    signed_in_as(
+        &app,
+        &google,
+        &url,
+        account("sub:alice", "alice@example.com"),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn a_bound_google_account_cannot_be_linked_again() {
-    let auth = google_auth().await;
+    let (auth, google) = google_auth().await;
     let app = router(&auth);
     let admin = admin(&auth, &app).await;
     let token = invite(&app, &admin, "taken@example.com").await;
 
-    let state = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
-    signed_in_with(&app, &state, &code("sub:taken", "taken@example.com")).await;
+    let url = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
+    signed_in_as(
+        &app,
+        &google,
+        &url,
+        account("sub:taken", "taken@example.com"),
+    )
+    .await;
 
     let (_, bob) = regular(&app, &admin, "bob").await;
-    let state = start(&app, "/api/auth/google/link", Some(&bob)).await;
-    let taken = code("sub:taken", "bob@example.com");
-    fails_with(&app, &[("code", &taken), ("state", &state)], "auth-failed").await;
+    let url = start(&app, "/api/auth/google/link", Some(&bob)).await;
+    let taken = account("sub:taken", "bob@example.com");
+    approved_fails_with(&app, &google, &url, taken, "auth-failed").await;
 
     // Nothing changed for bob.
     let me = me(&app, &bob).await;

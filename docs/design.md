@@ -112,6 +112,7 @@ questions list the split into a workspace as the alternative.
 | `axum` | `server` + extractors, routes, WS session guard | axum 0.8 |
 | `sqll` | `server` + `SqllStore`, a `Store` over SQLite with a fixed schema and its migration SQL (see open question 4) | sqll 0.14 |
 | `yew` | components, context, hook, HTTP client | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures |
+| `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum` also `google::fake::FakeGoogle` (see 2.5) | nothing more |
 
 The modules are `auth::{types, core, store, cloudflare, google, axum, sqll, yew}`,
 and the most-used names are re-exported at the root. The existing
@@ -333,6 +334,21 @@ rather than relying on `ON DELETE CASCADE`.
   The provider takes a `GoogleConfig { client_id, client_secret, redirect_url }`.
   The callback redirects to `/` on success, or to `/?error=auth-failed` or
   `/?error=user-not-found` on failure.
+
+  Google's endpoints are `google::Endpoints` (`auth`, `token`, `tokeninfo`),
+  whose `Default` is Google's own; production always uses it. For an app to
+  test a Google sign-in, registration through a link, or switching to Google
+  without the network, the `test-util` feature adds
+  `AuthBuilder::google_endpoints(Endpoints)`, and with `axum` also
+  `google::fake::FakeGoogle`: a local server on `127.0.0.1:0` serving the
+  token and tokeninfo endpoints for one `GoogleConfig`. The test plays the
+  browser: `FakeGoogle::approve(auth_url, FakeAccount { sub, email,
+  email_verified })` checks the authorization URL the app redirected to and
+  returns the callback URL with a fresh code and the flow's state, `deny`
+  returns one with `error=access_denied`, and `code(account)` mints a bare
+  code. Like Google, the fake checks the client id, secret and redirect URL
+  of each exchange, and a code and its access token work once. The crate's
+  own Google route tests use it.
 
 ### 2.6 axum integration (`axum`)
 

@@ -11,6 +11,7 @@
 //! | `axum` | `axum`: extractors, routes, WebSocket session guard (implies `server`) |
 //! | `sqll` | `sqll`: a SQLite store (implies `server`) |
 //! | `yew` | `yew`: components, context, hook, HTTP client |
+//! | `test-util` | `AuthBuilder::google_endpoints`, to test Google sign-in offline; with `axum`, the fake Google `google::fake` (implies `google`) |
 //!
 //! Server-only and browser-only dependencies never share a feature, so a
 //! wasm frontend takes `yew` without pulling in server code. The design is

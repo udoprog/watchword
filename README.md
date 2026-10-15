@@ -23,6 +23,7 @@ default.
 | `google` | `auth::google` | Google OAuth: `GoogleConfig` for `AuthBuilder::google`; with `axum`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
 | `axum` | `auth::axum` | the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors, `routes()` for the `/api/auth` JSON routes, and `Auth::guard` for WebSocket sessions, plus the Cloudflare and Google routes when those features are on (implies `server`) |
 | `sqll` | `auth::sqll` | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA`, and the one-time migrations for track and territory in `docs/sqll/` (implies `server`) |
+| `test-util` | `auth::google::fake` | for an app's tests: `AuthBuilder::google_endpoints`, and with `axum` `FakeGoogle`, a local fake Google to sign in through offline (implies `google`) |
 | `yew` | `auth::yew` | `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings` and the `http` client |
 
 The most-used names are re-exported at the crate root.
@@ -97,6 +98,7 @@ cargo clippy --all-targets --no-default-features --features google -- -D warning
 cargo clippy --all-targets --no-default-features --features axum -- -D warnings
 cargo clippy --all-targets --no-default-features --features sqll -- -D warnings
 cargo clippy --all-targets --no-default-features --features yew -- -D warnings
+cargo clippy --all-targets --no-default-features --features test-util -- -D warnings
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --no-default-features
 cargo test --all-features
