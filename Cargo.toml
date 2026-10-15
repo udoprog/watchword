@@ -10,17 +10,12 @@ repository = "https://github.com/udoprog/watchword"
 license = "MIT OR Apache-2.0"
 keywords = ["authentication", "axum", "oauth", "session", "yew"]
 categories = ["authentication", "wasm", "web-programming"]
-# The sqll tests include docs/sqll/impersonator.sql, which the sqll014 module
-# docs also point to; the rest of docs/, examples/app, CI config and build
-# output stay out of the package.
+# The sqll tests include docs/sqll/impersonator.sql.
 include = ["/src/**", "/docs/sqll/**", "/README.md", "/LICENSE-*", "/Cargo.toml"]
 
 [lib]
 name = "watchword"
 
-# watchword-core holds the types and watchword-yew023 the yew 0.23 UI, whose
-# macros need a dependency key of `yew`; all three are released in lockstep.
-# examples/app is its own workspace.
 [workspace]
 members = ["crates/watchword-core", "crates/watchword-yew023"]
 exclude = ["examples/app"]
@@ -32,15 +27,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(watchword_docsrs)'] }
 all-features = true
 rustdoc-args = ["--cfg", "watchword_docsrs"]
 
-# The features are disjoint: server-only dependencies (bcrypt, aws-lc-rs,
-# tokio, axum, reqwest, sqll) and browser-only ones (yew, gloo-net, web-sys)
-# never share a feature, so a wasm frontend takes `yew023` without server
-# code. With no features only the wasm-safe `types` (watchword-core) are built.
-#
-# A dependency that appears in the public API and is not yet 1.0 is named
-# after its version (feature, dependency key and module), so a later version
-# can be added beside it without breaking apps: `axum08`, `sqll014`,
-# `musli01` (in watchword-core) and `yew023` (the watchword-yew023 crate).
 [features]
 default = []
 musli01 = ["watchword-core/musli01"]
@@ -49,13 +35,11 @@ cloudflare = ["server", "dep:aws-lc-rs", "dep:reqwest", "dep:serde_json"]
 google = ["server", "dep:reqwest", "dep:serde_json", "dep:url", "dep:lru"]
 axum08 = ["server", "dep:axum08", "watchword-core/axum08"]
 sqll014 = ["server", "dep:sqll014"]
-# Lets an app's tests point the Google client at a local server; with `axum08`
-# it also provides `google::fake::FakeGoogle`, a fake Google to point it at.
 test-util = ["google"]
 yew023 = ["dep:watchword-yew023"]
 
 [dependencies]
-# types (always), versioned in lockstep with this crate.
+# types
 watchword-core = { path = "crates/watchword-core", version = "=0.1.0" }
 jiff = { version = "0.2.37", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -85,12 +69,11 @@ axum08 = { package = "axum", version = "0.8.9", optional = true }
 # sqll014
 sqll014 = { package = "sqll", version = "0.14.7", optional = true }
 
-# yew023, versioned in lockstep with this crate.
+# yew023
 watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.1.0", optional = true }
 
 [dev-dependencies]
 serde_json = "1.0.151"
-# A bundled SQLite for the `sqll014` tests; apps pick their own linking.
 sqll014 = { package = "sqll", version = "0.14.7", features = ["bundled"] }
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }

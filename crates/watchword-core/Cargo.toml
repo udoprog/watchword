@@ -22,7 +22,6 @@ rustdoc-args = ["--cfg", "watchword_docsrs"]
 [features]
 default = []
 musli01 = ["dep:musli-core01"]
-# `IntoResponse` for `AuthError`; watchword's `axum08` feature turns it on.
 axum08 = ["dep:axum08"]
 
 [dependencies]

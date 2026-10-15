@@ -17,9 +17,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(watchword_docsrs)'] }
 [package.metadata.docs.rs]
 rustdoc-args = ["--cfg", "watchword_docsrs"]
 
-# yew's macros (`html!`, `#[function_component]`, `#[derive(Properties)]`,
-# `#[hook]`) expand to `::yew::` paths, so this crate keeps the dependency key
-# `yew`; a later yew is another crate beside it (see docs/design.md).
+# yew's macros expand to `::yew::` paths, so the dependency key must stay `yew`.
 [dependencies]
 watchword-core = { path = "../watchword-core", version = "=0.1.0" }
 yew = "0.23.0"
