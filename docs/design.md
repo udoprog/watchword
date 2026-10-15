@@ -92,6 +92,7 @@ No feature is on by default.
 | `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, and its `SCHEMA` | sqll 0.14 |
 | `yew023` | watchword-yew023: components, context, hook, HTTP client | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures |
 | `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum08` also `google::fake::FakeGoogle` (see 2.4) | nothing more |
+| `musliweb04` *(proposed, 2.7)* | `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler; with `yew023` the components' socket transport | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
 
 The modules are `watchword::{types, core, store, cloudflare, google, axum08,
 sqll014, yew023}`, and the most-used names that need no versioned feature are
@@ -509,6 +510,191 @@ cookies, so the library does not depend on the app's gloo version.
   header is trusted without verifying the token. The app stores the value in its
   own settings and calls `auth.set_cloudflare`.
 
+### 2.7 musli-web integration (`musliweb04`) — proposed
+
+*Status: design only; nothing in this section is built yet. Decisions 13 and
+16–19 record why it is shaped this way.*
+
+An app whose frontend already talks to its server over a musli-web WebSocket
+can carry watchword's account and user-management operations, and its live
+updates, on that same connection. The HTTP routes of 2.5 stay; this is a
+second transport for the operations that can use it, not a replacement.
+
+#### What musli-web 0.4 gives and constrains
+
+- `musli_web::define! { ... }` turns each `pub type X;` with an `impl
+  Endpoint for X` or `impl Broadcast for X` into a type with a `const ID:
+  MessageId` (a `NonZeroU16`). Without `#[musli(id = N)]`, ids are assigned
+  from 1 in declaration order, separately in each `define!` call, and
+  endpoints and broadcasts share one id space. Two crates' implicit ids
+  therefore always clash. Explicit ids must be in 1..=32766; musli-web reserves
+  the rest.
+- Each call also generates `Request` and `Event` enums implementing
+  `api::Id`, with an `Unknown(MessageId)` arm. There is no syntax for merging
+  two lists.
+- The macro expands to absolute `::musli_web::` paths, so the crate calling it
+  must see musli-web under that name.
+- On the server, a connection has one `ws::Handler` with one `type Id`;
+  `Incoming::read::<T>()` decodes the request body and `Outgoing::write`
+  answers it. `Server::broadcast` takes any `api::Event`, from any `define!`.
+- On the client, `web03::Handle` is not typed by any API: one handle carries
+  requests and broadcasts of any number of `define!` lists, as long as the ids
+  differ. It reconnects by itself, with backoff.
+
+#### Types: `watchword::musliweb04` (feature `musliweb04`)
+
+The definitions live in watchword-core, which is wasm-safe and is what an
+app's shared `api` crate already depends on (through `watchword` with
+`musli01`). watchword-core depends on musli-web under the versioned key
+`musli-web04` (`default-features = false, features = ["api"]`) and makes the
+macro's paths resolve with `extern crate musli_web04 as musli_web;` at its
+root, under the feature. The module is re-exported as `watchword::musliweb04`.
+
+```rust
+musli_web::define! {
+    #[musli(id = 32000)] pub type Me;            // () -> Result<UserInfo, AuthError>, with impersonated_by
+    #[musli(id = 32001)] pub type UpdateAccount; // UserChange -> Result<UserInfo, AuthError>; own login/email
+    #[musli(id = 32002)] pub type ChangePassword;// PasswordChange -> Result<UserInfo, AuthError>
+    #[musli(id = 32003)] pub type Users;         // () -> Result<Vec<UserEntry>, AuthError>; admin
+    #[musli(id = 32004)] pub type CreateUser;    // NewUser -> Result<CreatedUser, AuthError>; admin
+    #[musli(id = 32005)] pub type UpdateUser;    // UserUpdate { id, change } -> Result<UserInfo, AuthError>; admin
+    #[musli(id = 32006)] pub type DeleteUser;    // UserId -> Result<(), AuthError>; admin
+    #[musli(id = 32007)] pub type IssueLink;     // UserId -> Result<Link, AuthError>; admin
+    #[musli(id = 32008)] pub type RevokeLink;    // UserId -> Result<(), AuthError>; admin
+    #[musli(id = 32009)] pub type SignOutUser;   // UserId -> Result<(), AuthError>; admin, sign out everywhere
+    #[musli(id = 32010)] pub type RevokeAccess;  // UserId -> Result<UserInfo, AuthError>; admin
+    #[musli(id = 32100)] pub type AuthBroadcast; // event AuthUpdate
+}
+
+pub enum AuthUpdate {
+    Me(UserInfo),           // the connection's own user changed (role, login, email, credential)
+    UserCreated(UserInfo),  // admins only
+    UserChanged(UserInfo),  // admins only
+    UserDeleted(UserId),    // admins only
+}
+```
+
+The request bodies are small structs in the module (`MeRequest`,
+`UsersRequest`, `UserUpdate { id, change }`, `UserTarget { id }`, ...) or the
+existing wire types (`UserChange`, `PasswordChange`, `NewUser`). Every
+response is `Result<T, AuthError>`, which musli encodes, so the frontend gets
+the same structured `AuthError` it gets over HTTP. An internal failure
+(store, hashing) is an `Err` from the handler, which musli-web sends as a
+request error, the analogue of HTTP 500.
+
+**Ids.** watchword owns the band 32000–32255 and pins every id in it
+explicitly. An app keeps its own implicit ids, which start at 1 and never
+reach the band, or pins its own ids below it. A released id never changes
+meaning; a new endpoint takes the next free id in the band, and a removed one
+leaves its id unused. Pinning keeps watchword's ids stable whatever order its
+definitions are in, and the band makes a clash a matter of an app defining
+over 31 999 types.
+
+The app's `api` crate does not list watchword's types in its own `define!`
+(musli-web has no syntax for that): they are a second list on the same
+connection. The app takes `watchword` with `musliweb04` in its `api` crate
+and may re-export the module.
+
+#### Server: `watchword::musliweb04::Connection` (`musliweb04` + `axum08`)
+
+musli-web's server side (`ws::Handler`, `Incoming`, `Outgoing`) needs its
+`ws` feature, which builds on axum 0.8, so the handler exists when both
+`musliweb04` and `axum08` are on (`musli-web04?/ws` is enabled by `axum08`).
+
+```rust
+// At upgrade, from the `SignedIn` the app's /ws route already extracts:
+let conn = watchword::musliweb04::Connection::new(auth.clone(), &signed_in);
+
+// In the app's Handler::handle, in the arm for ids its own API does not know:
+api::Request::Unknown(id) => conn.handle(id, incoming, outgoing).await,   // -> Result<bool, core::Error>
+
+// In the app's connection loop, next to guard.ended():
+event = events.recv() => if let Some(update) = conn.update(&event?).await? {
+    server.broadcast(update)?;
+}
+```
+
+- `Connection` holds the `Auth` and the connection's session id. It is
+  `Clone` and cheap, so it sits inside the app's own handler.
+- `handle` returns `Ok(false)` for an id outside watchword's band, which the
+  app treats as it treats its own unknown ids. For watchword's ids it decodes
+  the body, re-reads the session and its user through `Auth::session` (as
+  `SignedIn` does on every HTTP request), answers `Unauthorized` when the
+  session has ended, and calls the same `Auth` operation the HTTP route calls,
+  with the fresh user as the actor. Admin rights, never-on-oneself, the
+  impersonation rules and the rest of section 3 are enforced inside those
+  operations, so an app cannot route a request around them and a role change
+  applies to the next request on an open socket.
+- `update` maps an `AuthEvent` to the `AuthUpdate` this connection may see:
+  `Me` for its own user's `UserChanged` (as `session_info`, so an impersonated
+  session keeps its marker), and the user-list events only while the
+  connection's user is an active admin, re-read when such an event arrives.
+  Session-ending events are not forwarded: the app's `guard.ended()` closes the
+  socket, as today.
+
+An app that hand-writes a combined `api::Id` instead of delegating its
+`Unknown` arm can do so; `Connection::handles(id)` says whether an id is
+watchword's.
+
+#### Frontend: the components' socket transport (`musliweb04` + `yew023`)
+
+The `/ws` upgrade needs a session, so an app opens its socket inside
+`<AuthProvider>`, after sign-in. It hands the handle to watchword once:
+
+```rust
+let auth = use_auth();                      // or ctx.link().context::<AuthContext>()
+auth.set_socket(Some(service.handle().clone()));   // a musli_web::web03::Handle
+```
+
+From then on `AuthContext` sends the operations of the band through the
+socket while its state is open, and over HTTP otherwise, so a request made
+while the socket reconnects still works. `refresh()` uses `Me`.
+`<AccountPanel>` and `<AdminUsers>` take their client from the context, so an
+app passes no new props whether it hands its own components the handle as a
+prop or through a `ContextProvider`. With a socket, `<AuthProvider>` listens
+for `AuthBroadcast`: `Me` replaces the context's user, and `<AdminUsers>`
+applies `UserCreated`/`UserChanged`/`UserDeleted` to its list in place, so its
+`refresh` prop is no longer needed (it stays for HTTP-only apps). `http::Error`
+gains a variant for a socket request error.
+
+watchword-yew023 takes musli-web under `musli-web04` with `web03`; it calls
+no musli-web macros, so it needs no alias.
+
+#### What stays HTTP, and why
+
+| Operation | Why it cannot use the socket |
+|---|---|
+| `GET /api/auth/config`, the first `GET /api/auth/me` | `<AuthProvider>` needs them to decide between the sign-in page and the app, before any socket exists; the upgrade requires a session |
+| `check_session()` (`GET /api/auth/me`) | it runs because the socket closed |
+| `POST /api/auth/login`, `/logout`, `/cloudflare` | they set or clear the `HttpOnly` session cookie, which only an HTTP response can do; there is no socket before sign-in |
+| Cloudflare Access | the credentials are the Access JWT and headers on an HTTP request, checked when signing in (and by `config` for `AuthConfig::cloudflare`) |
+| `GET`/`POST /api/auth/register/{token}` | the user is signed out; registering sets the cookie |
+| `/api/auth/google*` | browser navigations: redirects to Google and its callback, which sets the cookie |
+| `POST /api/auth/users/{id}/impersonate`, `/impersonate/stop` | each replaces the session cookie with a new session, which also invalidates the socket the request would come from |
+
+All other account and admin operations are in the band. The HTTP routes for
+them remain, for apps without musli-web and as the fallback while a socket is
+down. watchword has no per-session list or revoke operation; when one is
+added it goes into both transports.
+
+#### Adopting it before a release
+
+An app moves onto unreleased watchword changes with a patch in its workspace
+`Cargo.toml`, keeping its `version = "0.1"` requirements as they are:
+
+```toml
+[patch.crates-io]
+watchword = { path = "../watchword" }
+watchword-core = { path = "../watchword/crates/watchword-core" }
+watchword-yew023 = { path = "../watchword/crates/watchword-yew023" }
+```
+
+All three are patched together, because they pin each other exactly. A patch
+applies only while the local version satisfies the app's requirement: once
+watchword's version is bumped past it (0.1 to 0.2), cargo ignores the patch with
+a warning until the app's requirement is raised to match. The patch is removed
+once the release is on crates.io.
+
 ## 3. Decisions
 
 1. **Identity: logins optional, emails optional, at least one required.** Some
@@ -597,13 +783,15 @@ cookies, so the library does not depend on the app's gloo version.
     `UserChanged` or `UserDeleted`, with no new event. `stop` keeps its 403 for
     an admin who is no longer an active admin, but an ended session is refused
     with 401 before it gets there.
-13. **Transport: the library's own JSON routes.** Account and admin operations
-    are HTTP JSON routes, not part of an app's WebSocket protocol, so the
-    components are self-contained and an app writes no user endpoints. Live
-    updates reach the admin page through the app forwarding `AuthEvent`s and
-    bumping `<AdminUsers refresh>`. Riding each app's own WebSocket protocol
-    would leave every app defining endpoints and the components needing an
-    app-supplied client trait.
+13. **Transport: the library's own JSON routes, and optionally the app's
+    socket.** Account and admin operations are HTTP JSON routes, so the
+    components are self-contained, an app writes no user endpoints, and an app
+    without a WebSocket needs nothing more. An app with a musli-web socket can
+    also carry them, and the live updates, on it (2.7, proposed): watchword
+    defines the endpoints and the handler, so the app still writes no user
+    endpoints, and the components need no app-supplied client trait because
+    musli-web's handle is untyped. The HTTP routes stay, both for apps without
+    musli-web and as the fallback while a socket reconnects.
 14. **Storage: the `Store` trait is the API, and `SqllStore` ships too.** An
     app on another database implements `Store`; an app on sqll takes
     `SqllStore` over the documented schema instead of writing the same few
@@ -611,3 +799,43 @@ cookies, so the library does not depend on the app's gloo version.
     once.
 15. **Timestamps** in the library are `jiff::Timestamp`. `SqllStore` stores
     them as INTEGER milliseconds since the Unix epoch.
+16. **The socket layer is additive, and is built broadcasts first.** Keeping
+    HTTP for everything costs the apps nothing today, since the components
+    already make every request themselves. What it leaves to each app is
+    pushing auth changes to open pages: each app forwards `AuthEvent`s in its
+    own shape (marker broadcasts that make the page refetch over HTTP, the
+    wire types embedded in the app's own event enum, or nothing), and an admin
+    page without that never sees another admin's changes. A shared
+    `AuthBroadcast` with a per-connection filter (`Connection::update`)
+    replaces those with one thing the components consume themselves, and is
+    most of the gain. Moving the requests too gives one connection, one place
+    where liveness and admin rights are checked, and one error path, for a
+    modest cost: the request types, one delegating match arm in the app, and
+    a second transport in the components. Removing the HTTP routes would break
+    every app without musli-web, and the sign-in operations cannot move at all
+    (2.7), so it is not proposed.
+17. **Ids: a pinned band, not a merged list.** musli-web numbers each
+    `define!` list from 1 and cannot merge lists, so watchword pins all of its
+    ids explicitly in 32000–32255 and the app delegates the ids its own
+    `Request` does not know (`Unknown(id)`) to `Connection::handle`. Making
+    apps pin their own ids instead would renumber their existing protocols;
+    a hand-written combined `Id` type works too but asks every app for more
+    code than one match arm. The band is part of the wire format: a released
+    id never changes meaning.
+18. **Admin checks stay in `Auth`, and the session is re-read per request.**
+    A socket lives for hours while roles and sessions change. `Connection`
+    loads the session and user through `Auth::session` for every request, as
+    the HTTP extractors do, and the operations check admin rights and the
+    other rules themselves, so the socket path cannot drift from the HTTP
+    path and an app cannot skip a check by routing a request differently. The
+    cost is one store read per request, the same as over HTTP.
+19. **musli-web is a versioned dependency, aliased for its macro.** musli-web
+    0.4 is not 1.0 and appears in the API (`Handle`, `Incoming`, the
+    generated types), so the feature, dependency key and module are
+    `musliweb04`/`musli-web04`/`musliweb04` (1.2). `define!` expands to
+    `::musli_web::` paths, which `extern crate musli_web04 as musli_web;` in
+    watchword-core satisfies without giving up the versioned key. That alias
+    is crate-wide, so a later `musliweb05` cannot sit beside it in the same
+    crate; when that comes, one of the two moves into a crate of its own
+    (`watchword-musliweb05`), as yew did in 1.1, without changing the
+    `watchword::musliweb0N` paths apps use.
