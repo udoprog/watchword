@@ -527,7 +527,7 @@ second transport for the operations that can use it, not a replacement.
   MessageId` (a `NonZeroU16`). Without `#[musli(id = N)]`, ids are assigned
   from 1 in declaration order, separately in each `define!` call, and
   endpoints and broadcasts share one id space. Two crates' implicit ids
-  therefore always clash. Explicit ids must be in 1..=32766; musli-web reserves
+  therefore always clash. Explicit ids must be in 1..=32767; musli-web reserves
   the rest.
 - Each call also generates `Request` and `Event` enums implementing
   `api::Id`, with an `Unknown(MessageId)` arm. There is no syntax for merging
