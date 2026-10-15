@@ -47,9 +47,10 @@ pub struct AuthProviderProps {
 ///
 /// With the `musliweb04` feature and a socket handed over with
 /// [`AuthContext::set_socket`], it also follows the server's
-/// [`AuthUpdate::Me`](watchword_core::musliweb04::AuthUpdate::Me), so a
-/// change to the user made elsewhere, such as an admin changing their role,
-/// shows at once.
+/// [`AuthUpdate::Me`](watchword_core::musliweb04::AuthUpdate::Me) (and the
+/// user [`Resync`](watchword_core::musliweb04::AuthUpdate::Resync) carries),
+/// so a change to the user made elsewhere, such as an admin changing their
+/// role, shows at once.
 pub struct AuthProvider {
     state: State,
     config: Option<AuthConfig>,
@@ -249,8 +250,11 @@ impl Component for AuthProvider {
             #[cfg(feature = "musliweb04")]
             Msg::Update(update) => {
                 // The user-list updates are for `AdminUsers`, which listens
-                // itself.
-                let (AuthUpdate::Me(user), State::SignedIn(..)) = (update, &self.state) else {
+                // itself. `Resync`, after the server missed updates, carries
+                // the user as `Me` does.
+                let (AuthUpdate::Me(user) | AuthUpdate::Resync(user), State::SignedIn(..)) =
+                    (update, &self.state)
+                else {
                     return false;
                 };
 

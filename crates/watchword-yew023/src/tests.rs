@@ -360,4 +360,12 @@ fn broadcasts_apply_to_the_users_list() {
     assert!(!apply_update(&mut users, &mut links, deleted));
     assert_eq!(users.len(), 2);
     assert!(links.is_empty());
+
+    // Missed updates fetch the list again, leaving it as it is meanwhile.
+    links.insert(UserId(2), link("v"));
+    let resync = AuthUpdate::Resync(with_id(1, "renamed", Access::Active));
+    assert!(apply_update(&mut users, &mut links, resync));
+    assert_eq!(users.len(), 2);
+    assert_eq!(users[0].user.login.as_deref(), Some("root"));
+    assert!(links.contains_key(&UserId(2)));
 }

@@ -1151,7 +1151,8 @@ impl Action {
 /// returning whether the list must be fetched again for what the broadcast
 /// does not carry: the link state of a user created elsewhere, of a user
 /// whose account state or sign-in method changed (registering and revoking
-/// access use up the links), and any change to a user not in the list.
+/// access use up the links), any change to a user not in the list, and
+/// updates the server missed (`Resync`).
 #[cfg(feature = "musliweb04")]
 pub(super) fn apply_update(
     users: &mut Vec<UserEntry>,
@@ -1195,6 +1196,9 @@ pub(super) fn apply_update(
             links.remove(&id);
             false
         }
+        // Updates were missed, so the whole list is fetched again; the
+        // links it no longer shows go when it answers.
+        AuthUpdate::Resync(..) => true,
     }
 }
 

@@ -514,10 +514,10 @@ cookies, so the library does not depend on the app's gloo version.
 ### 2.7 musli-web integration (`musliweb04`)
 
 *Status: built are the types (`watchword::musliweb04`), the server's
-`Connection` (`new`, `update`, `handle` and `handles`), and the components
+`Connection` (`new`, `update`, `lagged`, `handle` and `handles`), and the components
 following the broadcasts and sending their requests over the socket
 (`AuthContext::set_socket`). `examples/app` is wired this way and is the
-reference for an app. Decisions 13 and 16–19 record why it is shaped this
+reference for an app. Decisions 13 and 16–20 record why it is shaped this
 way.*
 
 An app whose frontend already talks to its server over a musli-web WebSocket
@@ -576,6 +576,7 @@ pub enum AuthUpdate {
     UserCreated(UserInfo),  // admins only
     UserChanged(UserInfo),  // admins only
     UserDeleted(UserId),    // admins only
+    Resync(UserInfo),       // admins only: updates were missed; carries Me, refetch the list
 }
 ```
 
@@ -620,8 +621,16 @@ let conn = watchword::musliweb04::Connection::new(auth.clone(), &signed_in);
 api::Request::Unknown(id) => conn.handle(id, incoming, outgoing).await,   // -> Result<bool, core::Error>
 
 // In the app's connection loop, next to guard.ended():
-event = events.recv() => if let Some(update) = conn.update(&event?).await? {
-    server.broadcast(update)?;
+event = events.recv() => {
+    let update = match event {
+        Ok(event) => conn.update(&event).await?,
+        Err(RecvError::Lagged(..)) => conn.lagged().await?,
+        Err(RecvError::Closed) => break,
+    };
+
+    if let Some(update) = update {
+        server.broadcast(update)?;
+    }
 }
 ```
 
@@ -642,6 +651,13 @@ event = events.recv() => if let Some(update) = conn.update(&event?).await? {
   connection's user is an active admin, re-read when such an event arrives.
   Session-ending events are not forwarded: the app's `guard.ended()` closes the
   socket, as today.
+- `lagged` stands in for the events the app's receiver dropped when
+  `recv()` answers `RecvError::Lagged`: `Resync` with the connection's own
+  user (as `session_info` gives it) while that user is an active admin, `Me`
+  for anyone else, and nothing once the session has ended. A regular user
+  sees nothing of the missed events but their own user, so a `Me` covers
+  them; an admin's page may also show the user list, which it fetches again
+  on `Resync`. The guard re-checks the session itself on lag.
 
 An app that hand-writes a combined `api::Id` instead of delegating its
 `Unknown` arm can do so; `Connection::handles(id)` (or `is_watchword_id`, from
@@ -677,7 +693,9 @@ app passes no new props whether it hands its own components the handle as a
 prop or through a `ContextProvider`. With a socket, `<AuthProvider>` listens
 for `AuthBroadcast`: `Me` replaces the context's user, and `<AdminUsers>`
 applies `UserCreated`/`UserChanged`/`UserDeleted` to its list in place, so its
-`refresh` prop is no longer needed (it stays for HTTP-only apps). `http::Error`
+`refresh` prop is no longer needed (it stays for HTTP-only apps). On
+`Resync` the provider replaces the user as for `Me` and `<AdminUsers>`
+fetches its list again. `http::Error`
 gains a variant for a socket request error.
 
 As built: watchword-yew023 has a `musliweb04` feature, which watchword's
@@ -728,8 +746,9 @@ the same socket. The server's `/ws` route extracts `SignedIn`, makes the
 `Connection` from it, and its `ws::Handler` answers the app's ids and
 delegates `Unknown(id)` to `conn.handle`. Its connection loop selects over
 `server.run()`, `guard.ended()` (which drops the server, closing the
-socket) and `auth.events()`, broadcasting what `conn.update` returns and
-skipping a lag, which the guard handles. The frontend builds the web03
+socket) and `auth.events()`, broadcasting what `conn.update` returns, and
+what `conn.lagged` returns on a lag (the guard re-checks the session
+itself). The frontend builds the web03
 `Service` once inside `<AuthProvider>`, hands its handle over with
 `set_socket`, and calls `check_session()` whenever the socket closes;
 musli-web reconnects by itself while the session lives.
@@ -916,3 +935,14 @@ once the release is on crates.io.
     crate; when that comes, one of the two moves into a crate of its own
     (`watchword-musliweb05`), as yew did in 1.1, without changing the
     `watchword::musliweb0N` paths apps use.
+20. **A lagged event stream resyncs the page with one update.** `Auth::events`
+    is a bounded broadcast channel, so a slow socket loop can miss events and
+    nothing replays them. Rather than replay or a per-socket queue,
+    `Connection::lagged` sends one `AuthUpdate::Resync` carrying the user, as
+    `Me` does, and the page fetches its user list again; a non-admin, who
+    sees nothing else, gets a plain `Me`. `Resync` is a new variant at the end
+    of `AuthUpdate`, so the encoding of the existing ones is unchanged and a
+    client that does not know it drops the broadcast, as it drops any that
+    does not decode. Carrying the user saves the page a `Me` round trip; a
+    separate users-changed signal next to a `Me` would need two broadcasts
+    for one lag.

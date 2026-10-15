@@ -22,6 +22,7 @@ use crate::types::{
 ///
 /// ```no_run
 /// # async fn ws(auth: watchword::Auth, signed_in: watchword::axum08::SignedIn) -> watchword::core::Result<()> {
+/// use tokio::sync::broadcast::error::RecvError;
 /// use watchword::musliweb04::{AuthUpdate, Connection};
 ///
 /// let conn = Connection::new(auth.clone(), &signed_in);
@@ -32,12 +33,15 @@ use crate::types::{
 ///     tokio::select! {
 ///         _ = guard.ended() => break,
 ///         event = events.recv() => {
-///             let Ok(event) = event else {
-///                 // Lagged: the guard re-checks the session itself.
-///                 continue;
+///             let update = match event {
+///                 Ok(event) => conn.update(&event).await?,
+///                 // Events were missed: the page fetches again what it
+///                 // shows, and the guard re-checks the session itself.
+///                 Err(RecvError::Lagged(..)) => conn.lagged().await?,
+///                 Err(RecvError::Closed) => break,
 ///             };
 ///
-///             if let Some(update) = conn.update(&event).await? {
+///             if let Some(update) = update {
 ///                 // server.broadcast(update)?;
 ///                 # let _: AuthUpdate = update;
 ///             }
@@ -135,6 +139,32 @@ impl Connection {
         }
 
         Ok(Some(update))
+    }
+
+    /// The [`AuthUpdate`] to send in place of the events this connection
+    /// missed, when the app's receiver of [`Auth::events`] lagged:
+    ///
+    /// - [`AuthUpdate::Resync`] while the connection's user is an active
+    ///   admin, which tells the page to fetch the user list again.
+    /// - [`AuthUpdate::Me`] for any other user, who sees nothing else.
+    /// - Nothing once the connection's session has ended: [`Auth::guard`]
+    ///   ends the socket.
+    ///
+    /// Both carry the connection's own user as it is now, as
+    /// [`Auth::session_info`] gives it, since a missed event may have
+    /// changed it. Errors only when the store fails.
+    pub async fn lagged(&self) -> Result<Option<AuthUpdate>> {
+        let Some((user, session)) = self.auth.session(&self.session).await? else {
+            return Ok(None);
+        };
+
+        let info = self.auth.session_info(&user, &session).await?;
+
+        if user.access == Access::Active && user.is_admin() {
+            Ok(Some(AuthUpdate::Resync(info)))
+        } else {
+            Ok(Some(AuthUpdate::Me(info)))
+        }
     }
 
     /// Whether `id` is one of watchword's endpoints, which

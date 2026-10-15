@@ -283,3 +283,71 @@ async fn an_ended_session_sees_nothing() {
         assert_eq!(conn.update(&event).await.unwrap(), None, "{event:?}");
     }
 }
+
+/// After a lag an admin is told to fetch the user list again, with their own
+/// user as it is now; anyone else gets only their own user.
+#[tokio::test]
+async fn a_lag_resyncs_an_admin_and_refreshes_anyone_else() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let ada = user(&auth, &root, "ada", Role::Admin).await;
+    let erin = user(&auth, &root, "erin", Role::Regular).await;
+
+    let conn = Connection::new(auth.clone(), &root);
+    assert_eq!(
+        conn.lagged().await.unwrap(),
+        Some(AuthUpdate::Resync(root.user.info()))
+    );
+
+    let conn = Connection::new(auth.clone(), &erin);
+    assert_eq!(
+        conn.lagged().await.unwrap(),
+        Some(AuthUpdate::Me(erin.user.info()))
+    );
+
+    // The missed change itself shows in the user carried.
+    let conn = Connection::new(auth.clone(), &ada);
+    let demoted = auth
+        .set_role(&root.user, ada.user.id, Role::Regular)
+        .await
+        .unwrap();
+    assert_eq!(
+        conn.lagged().await.unwrap(),
+        Some(AuthUpdate::Me(demoted.info()))
+    );
+
+    // An impersonated session keeps its marker and not the admin's rights.
+    let (erin, session) = auth
+        .impersonate(&root.user, &root.session, erin.user.id)
+        .await
+        .unwrap();
+    let mut expected = erin.info();
+    expected.impersonated_by = Some(Impersonator {
+        id: root.user.id,
+        name: "root".to_owned(),
+    });
+    let conn = Connection::new(
+        auth.clone(),
+        &SignedIn {
+            user: erin,
+            session,
+        },
+    );
+    assert_eq!(conn.lagged().await.unwrap(), Some(AuthUpdate::Me(expected)));
+}
+
+/// An ended session gets nothing after a lag; the guard ends the socket.
+#[tokio::test]
+async fn a_lag_on_an_ended_session_sends_nothing() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let ada = user(&auth, &root, "ada", Role::Admin).await;
+
+    let conn = Connection::new(auth.clone(), &ada);
+    auth.revoke_access(&root.user, ada.user.id).await.unwrap();
+    assert_eq!(conn.lagged().await.unwrap(), None);
+
+    let conn = Connection::new(auth.clone(), &root);
+    auth.sign_out(&root.session.id).await.unwrap();
+    assert_eq!(conn.lagged().await.unwrap(), None);
+}

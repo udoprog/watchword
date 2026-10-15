@@ -181,6 +181,11 @@ pub enum AuthUpdate {
     UserChanged(UserInfo),
     /// A user was deleted. Sent to admins only.
     UserDeleted(UserId),
+    /// Updates were missed, so what the page shows of the user list may be
+    /// stale and should be fetched again. Carries the connection's own user
+    /// as [`Me`](AuthUpdate::Me) does. Sent to admins only; a regular user's
+    /// connection gets a `Me` instead.
+    Resync(UserInfo),
 }
 
 /// The request of [`Me`].

@@ -415,5 +415,6 @@ mod musliweb04 {
         round_trip(AuthUpdate::UserCreated(user()));
         round_trip(AuthUpdate::UserChanged(user()));
         round_trip(AuthUpdate::UserDeleted(UserId(3)));
+        round_trip(AuthUpdate::Resync(user()));
     }
 }

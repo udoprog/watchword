@@ -339,14 +339,15 @@ async fn session_socket(state: AppState, user: SignedIn, conn: Connection, socke
             // Dropping the server closes the socket.
             _ = guard.ended() => break,
             event = events.recv() => {
-                let event = match event {
-                    Ok(event) => event,
-                    // The guard re-checks the session itself on lag.
-                    Err(RecvError::Lagged(..)) => continue,
+                let update = match event {
+                    Ok(event) => conn.update(&event).await,
+                    // Events were missed: the page fetches again what it
+                    // shows, and the guard re-checks the session itself.
+                    Err(RecvError::Lagged(..)) => conn.lagged().await,
                     Err(RecvError::Closed) => break,
                 };
 
-                let update = match conn.update(&event).await {
+                let update = match update {
                     Ok(update) => update,
                     Err(error) => {
                         tracing::warn!("Filtering an auth event failed: {error}");
