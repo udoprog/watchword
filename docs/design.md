@@ -83,10 +83,7 @@ phrasebook 0.1 is in watchword-yew023's API through `L10N`, a
 dependency key is `phrasebook01`. It is not optional (every component's text
 goes through it), so there is no feature, and `L10N` sits at the crate root
 rather than in a `phrasebook01` module: a later phrasebook would come with a
-yew of its own, hence with a new `watchword-yew0NN` crate anyway. Until
-phrasebook is on crates.io it is a path dependency on `../phrasebook` (next to
-the watchword checkout) with `version = "0.1.0"`, switched to the registry
-version once published.
+yew of its own, hence with a new `watchword-yew0NN` crate anyway.
 
 ### 1.3 Features
 

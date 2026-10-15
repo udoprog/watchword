@@ -1527,6 +1527,8 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "phrasebook"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87a30c8d925ac827b500985400f40a977dbf072a93a811161e10ae11c0a440c2"
 dependencies = [
  "fluent-bundle",
  "fluent-syntax",
