@@ -11,8 +11,8 @@ use jiff::{SignedDuration, Timestamp};
 use super::{Credential, Session, Store, Token, TokenKind, User};
 use crate::core::{Auth, AuthEvent, BootstrapAdmin, Error, generate_session_key, new_token};
 use crate::types::{
-    Access, AuthError, Conflict, LoginRequest, Method, NewUser, PasswordChange, RegisterRequest,
-    Role, UserChange, UserId,
+    Access, AuthError, Conflict, Invalid, LoginRequest, Method, NewUser, PasswordChange,
+    RegisterRequest, Role, UserChange, UserId,
 };
 
 pub(crate) type TestResult = Result<(), Box<dyn StdError>>;
@@ -744,7 +744,7 @@ where
         .build();
     assert!(matches!(
         refused(auth.bootstrap_admin(&BootstrapAdmin::new("root")).await),
-        AuthError::Invalid(_)
+        AuthError::Invalid(Invalid::LoginsDisabled)
     ));
     assert_eq!(store.user_count().await?, 0);
 
@@ -930,7 +930,7 @@ where
     };
     assert!(matches!(
         refused(env.auth.register(&reset, &request).await),
-        AuthError::Invalid(_)
+        AuthError::Invalid(Invalid::PasswordTooShort { .. })
     ));
     assert!(env.usable(&reset).await);
     Ok(())
@@ -1011,7 +1011,7 @@ where
     };
     assert!(matches!(
         refused(env.auth.change_password(&user, &current, &wrong).await),
-        AuthError::Invalid(_)
+        AuthError::Invalid(Invalid::PasswordIncorrect)
     ));
 
     let missing = PasswordChange {
@@ -1020,7 +1020,7 @@ where
     };
     assert!(matches!(
         refused(env.auth.change_password(&user, &current, &missing).await),
-        AuthError::Invalid(_)
+        AuthError::Invalid(Invalid::PasswordIncorrect)
     ));
 
     let weak = PasswordChange {
@@ -1029,7 +1029,7 @@ where
     };
     assert!(matches!(
         refused(env.auth.change_password(&user, &current, &weak).await),
-        AuthError::Invalid(_)
+        AuthError::Invalid(Invalid::PasswordTooShort { .. })
     ));
     assert!(env.live(&other).await?);
 
@@ -1259,7 +1259,7 @@ where
     };
     assert!(matches!(
         refused(env.auth.update_user(&google, google.id, &change).await),
-        AuthError::Invalid(_)
+        AuthError::Invalid(Invalid::EmailManagedByGoogle)
     ));
 
     // An admin may change it, and it is then the user's.
@@ -1279,7 +1279,7 @@ where
     };
     assert!(matches!(
         refused(env.auth.update_user(&user, user.id, &clear_login).await),
-        AuthError::Invalid(_)
+        AuthError::Invalid(Invalid::LoginOrEmailRequired)
     ));
     let blank_login = UserChange {
         login: Some(Some(" ".to_owned())),
@@ -1287,7 +1287,7 @@ where
     };
     assert!(matches!(
         refused(env.auth.update_user(&user, user.id, &blank_login).await),
-        AuthError::Invalid(_)
+        AuthError::Invalid(Invalid::LoginEmpty)
     ));
     Ok(())
 }
@@ -1305,7 +1305,7 @@ where
     };
     assert!(matches!(
         refused(env.auth.create_user(&env.admin, &nameless).await),
-        AuthError::Invalid(_)
+        AuthError::Invalid(Invalid::LoginOrEmailRequired)
     ));
 
     let login_only = NewUser {
@@ -1335,7 +1335,7 @@ where
         .build();
     assert!(matches!(
         refused(auth.create_user(&env.admin, &login_only).await),
-        AuthError::Invalid(_)
+        AuthError::Invalid(Invalid::LoginsDisabled)
     ));
     let both = NewUser {
         login: Some("carol".to_owned()),
@@ -1344,7 +1344,7 @@ where
     };
     assert!(matches!(
         refused(auth.create_user(&env.admin, &both).await),
-        AuthError::Invalid(_)
+        AuthError::Invalid(Invalid::LoginsDisabled)
     ));
 
     let (entry, _) = auth
@@ -1363,7 +1363,7 @@ where
     };
     assert!(matches!(
         refused(auth.update_user(&env.admin, user.id, &clear).await),
-        AuthError::Invalid(_)
+        AuthError::Invalid(Invalid::EmailRequired)
     ));
     Ok(())
 }

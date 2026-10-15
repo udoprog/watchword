@@ -25,7 +25,7 @@
 //!
 //! | Feature | Module | What it provides |
 //! |---|---|---|
-//! | *(none)* | [`types`] | `UserId`, `Role`, `Access`, `Method`, the wire types (`UserInfo`, `AuthConfig`, `LoginRequest`, `CreatedUser`, ...), `AuthError`, `validate_password`, `normalize_email`, from the [watchword-core] crate |
+//! | *(none)* | [`types`] | `UserId`, `Role`, `Access`, `Method`, the wire types (`UserInfo`, `AuthConfig`, `LoginRequest`, `CreatedUser`, ...), `AuthError` and its `Invalid` reasons, `validate_password`, `normalize_email`, from the [watchword-core] crate |
 //! | `musli01` | | musli 0.1 `Encode`/`Decode` on the wire types |
 //! | `server` | [`core`], [`store`] | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin) and `Auth::guard` for WebSocket sessions; the `Store` trait and `MemoryStore` |
 //! | `cloudflare` | [`cloudflare`] | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
@@ -134,9 +134,10 @@ pub mod sqll014;
 pub use watchword_yew023 as yew023;
 
 pub use self::types::{
-    Access, AuthConfig, AuthError, CloudflareConfig, Conflict, CreatedUser, Impersonator, Link,
-    LoginRequest, MIN_PASSWORD_LEN, Method, NewUser, PasswordChange, RegisterInfo, RegisterRequest,
-    Role, UserChange, UserEntry, UserId, UserInfo, normalize_email, validate_password,
+    Access, AuthConfig, AuthError, CloudflareConfig, Conflict, CreatedUser, Impersonator, Invalid,
+    Link, LoginRequest, MIN_PASSWORD_LEN, Method, NewUser, PasswordChange, RegisterInfo,
+    RegisterRequest, Role, UserChange, UserEntry, UserId, UserInfo, normalize_email,
+    validate_password,
 };
 
 #[cfg(feature = "server")]

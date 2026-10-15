@@ -81,8 +81,8 @@ pub fn Register(props: &RegisterProps) -> Html {
                 return;
             }
 
-            if let Some(message) = validate_password(&password) {
-                error.set(Some(AttrValue::Static(message)));
+            if let Some(invalid) = validate_password(&password) {
+                error.set(Some(AttrValue::from(invalid.to_string())));
                 return;
             }
 
@@ -110,8 +110,8 @@ pub fn Register(props: &RegisterProps) -> Html {
                         link.set(Link::Invalid(link_error(&e)));
                         busy.set(false);
                     }
-                    Err(Error::Auth(AuthError::Invalid(message))) => {
-                        error.set(Some(AttrValue::from(message)));
+                    Err(Error::Auth(AuthError::Invalid(invalid))) => {
+                        error.set(Some(AttrValue::from(invalid.to_string())));
                         busy.set(false);
                     }
                     Err(Error::Network(..)) => {

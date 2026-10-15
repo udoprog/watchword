@@ -222,7 +222,7 @@ fn login_error(error: &Error, logins: bool) -> AttrValue {
             AttrValue::from("Too many failed sign-ins. Try again in a few minutes.")
         }
         Error::Auth(AuthError::Forbidden) => AttrValue::from("This account may not sign in."),
-        Error::Auth(AuthError::Invalid(message)) => AttrValue::from(message.clone()),
+        Error::Auth(AuthError::Invalid(invalid)) => AttrValue::from(invalid.to_string()),
         Error::Network(..) => AttrValue::from("Could not reach the server."),
         error => AttrValue::from(format!("Signing in failed: {error}.")),
     }

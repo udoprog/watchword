@@ -14,8 +14,8 @@ use crate::Auth;
 use crate::core::Error;
 use crate::store::{Session, User};
 use crate::types::{
-    AuthConfig, AuthError, CreatedUser, Link, LoginRequest, NewUser, PasswordChange, RegisterInfo,
-    RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
+    AuthConfig, AuthError, CreatedUser, Invalid, Link, LoginRequest, NewUser, PasswordChange,
+    RegisterInfo, RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
 };
 
 /// The library's `/api/auth` JSON routes, to merge into the app's router.
@@ -94,8 +94,9 @@ where
     router
 }
 
-/// A JSON body whose rejection is [`AuthError::Invalid`], so a malformed
-/// request gets the same error body as every other refusal.
+/// A JSON body whose rejection is [`Invalid::MalformedRequest`], so a
+/// malformed request gets the same error body as every other refusal. Why it
+/// was rejected goes to the log, not to the client.
 struct Body<T>(T);
 
 impl<T, S> FromRequest<S> for Body<T>
@@ -114,7 +115,8 @@ where
 }
 
 fn invalid_body(rejection: JsonRejection) -> AuthError {
-    AuthError::Invalid(format!("Invalid request: {}", rejection.body_text()))
+    tracing::debug!("auth: malformed request: {}", rejection.body_text());
+    AuthError::Invalid(Invalid::MalformedRequest)
 }
 
 /// The `{id}` of a user route; anything but a decimal id is
@@ -279,7 +281,7 @@ async fn update_account(
     Body(change): Body<UserChange>,
 ) -> Result<Json<UserInfo>, Error> {
     if change.role.is_some() {
-        return Err(AuthError::Invalid("The role cannot be changed here.".to_owned()).into());
+        return Err(AuthError::Invalid(Invalid::RoleNotChangeable).into());
     }
 
     let user = auth.update_user(&user, user.id, &change).await?;

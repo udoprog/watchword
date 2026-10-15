@@ -16,7 +16,7 @@ pub(super) fn error_message(error: &Error, failed: &str) -> AttrValue {
         Error::Auth(AuthError::Conflict(Conflict::Email)) => {
             AttrValue::from("That email is already taken.")
         }
-        Error::Auth(AuthError::Invalid(message)) => AttrValue::from(message.clone()),
+        Error::Auth(AuthError::Invalid(invalid)) => AttrValue::from(invalid.to_string()),
         Error::Auth(AuthError::Unauthorized) => {
             AttrValue::from("Your session has ended. Sign in again.")
         }

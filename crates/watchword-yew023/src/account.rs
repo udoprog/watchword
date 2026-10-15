@@ -256,8 +256,8 @@ fn PasswordForm(props: &PasswordFormProps) -> Html {
                 return;
             }
 
-            if let Some(error) = validate_password(&new_password) {
-                message.set(Some(Message::Error(AttrValue::Static(error))));
+            if let Some(invalid) = validate_password(&new_password) {
+                message.set(Some(Message::Error(AttrValue::from(invalid.to_string()))));
                 return;
             }
 

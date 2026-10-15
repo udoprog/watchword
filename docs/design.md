@@ -150,9 +150,23 @@ pub struct PasswordChange { pub old_password: Option<String>, pub new_password: 
 pub struct CloudflareConfig { pub enabled: bool, pub team_domain: String, pub audience: String,
                               pub trust_email_header: bool, pub verify_jwt: bool }
 pub enum AuthError { Unauthorized, Forbidden, NotFound, Gone, TooManyRequests,
-                     Conflict(Conflict), Invalid(String) }   // JSON body of 4xx responses
+                     Conflict(Conflict), Invalid(Invalid) }   // JSON body of 4xx responses
 pub enum Conflict { Login, Email }
+#[non_exhaustive]
+pub enum Invalid { PasswordTooShort { min: usize }, PasswordIncorrect, EmailRequired,
+                   LoginOrEmailRequired, LoginEmpty, LoginsDisabled, EmailManagedByGoogle,
+                   GoogleAccountTaken, RoleNotChangeable, MalformedRequest }
 ```
+
+An error is sent as `{"error":"<code>"}`, with a `detail` for the two that
+carry one: `{"error":"conflict","detail":"email"}` and, for an invalid
+request, its reason as a stable code with its parameters, such as
+`{"error":"invalid","detail":{"reason":"password_too_short","min":8}}`. No
+English goes on the wire: `Display` on `AuthError` and `Invalid` gives an
+English message, and a frontend may phrase the code in its own language
+instead. `Invalid` is `#[non_exhaustive]`, so a reason can be added without a
+breaking release. `validate_password` returns the `Invalid` reason, so the
+frontend checks a password the same way the server does.
 
 ### 2.2 Server core (`server`)
 
@@ -411,8 +425,9 @@ socket. A guard on an impersonated session also follows its admin's
 ends it at once.
 
 The routes are all JSON. Their errors are `AuthError` with the matching status:
-401, 403, 404, 409, 410, 429, or 400 with a message, which a malformed JSON
-body also gets. `POST /api/auth/login` throttles by the client's address, so
+401, 403, 404, 409, 410, 429, or 400 with an `Invalid` reason. A malformed
+JSON body is `Invalid::MalformedRequest`; why it was rejected is logged at
+debug level, not sent. `POST /api/auth/login` throttles by the client's address, so
 the app is served with `into_make_service_with_connect_info::<SocketAddr>()`.
 
 | Route | Who | What |

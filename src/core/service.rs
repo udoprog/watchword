@@ -18,9 +18,9 @@ use super::{
 };
 use crate::store::{Credential, DynStore, Session, Store, StoreError, Token, TokenKind, User};
 use crate::types::{
-    Access, AuthError, Conflict, Impersonator, Link, LoginRequest, Method, NewUser, PasswordChange,
-    RegisterInfo, RegisterRequest, Role, UserChange, UserEntry, UserId, UserInfo, normalize_email,
-    validate_password,
+    Access, AuthError, Conflict, Impersonator, Invalid, Link, LoginRequest, Method, NewUser,
+    PasswordChange, RegisterInfo, RegisterRequest, Role, UserChange, UserEntry, UserId, UserInfo,
+    normalize_email, validate_password,
 };
 
 /// The setting [`load_or_create_key`] keeps the cookie key under.
@@ -601,8 +601,8 @@ impl Auth {
         token: &str,
         request: &RegisterRequest,
     ) -> Result<(User, Session)> {
-        if let Some(message) = validate_password(&request.password) {
-            return Err(AuthError::Invalid(message.to_owned()).into());
+        if let Some(invalid) = validate_password(&request.password) {
+            return Err(AuthError::Invalid(invalid).into());
         }
 
         self.usable_token(token, Timestamp::now()).await?;
@@ -669,10 +669,7 @@ impl Auth {
         if let Some(bound) = self.store().user_by_google_sub(sub).await?
             && bound.id != id
         {
-            return Err(AuthError::Invalid(
-                "This Google account is already linked to another user.".to_owned(),
-            )
-            .into());
+            return Err(AuthError::Invalid(Invalid::GoogleAccountTaken).into());
         }
 
         if let Some(other) = self.store().user_by_email(email).await?
@@ -800,14 +797,12 @@ impl Auth {
             let old = change.old_password.clone().unwrap_or_default();
 
             if !tokio::task::spawn_blocking(move || verify_password(&old, &hash)).await? {
-                return Err(
-                    AuthError::Invalid("The current password is incorrect.".to_owned()).into(),
-                );
+                return Err(AuthError::Invalid(Invalid::PasswordIncorrect).into());
             }
         }
 
-        if let Some(message) = validate_password(&change.new_password) {
-            return Err(AuthError::Invalid(message.to_owned()).into());
+        if let Some(invalid) = validate_password(&change.new_password) {
+            return Err(AuthError::Invalid(invalid).into());
         }
 
         let hash = hash_blocking(&change.new_password).await?;
@@ -997,10 +992,7 @@ impl Auth {
                 .as_ref()
                 .is_some_and(|email| *email != user.email)
         {
-            return Err(AuthError::Invalid(
-                "Your email is managed by your Google account.".to_owned(),
-            )
-            .into());
+            return Err(AuthError::Invalid(Invalid::EmailManagedByGoogle).into());
         }
 
         let login = change.login.as_ref().unwrap_or(&user.login);
@@ -1109,13 +1101,13 @@ impl Auth {
         };
 
         if !self.inner.logins {
-            return Err(AuthError::Invalid("Login names are not used.".to_owned()));
+            return Err(AuthError::Invalid(Invalid::LoginsDisabled));
         }
 
         let login = login.trim();
 
         if login.is_empty() {
-            return Err(AuthError::Invalid("The login cannot be empty.".to_owned()));
+            return Err(AuthError::Invalid(Invalid::LoginEmpty));
         }
 
         Ok(Some(login.to_owned()))
@@ -1125,13 +1117,11 @@ impl Auth {
     /// used.
     fn check_identity(&self, login: Option<&str>, email: Option<&str>) -> Result<(), AuthError> {
         if email.is_none() && !self.inner.logins {
-            return Err(AuthError::Invalid("An email is required.".to_owned()));
+            return Err(AuthError::Invalid(Invalid::EmailRequired));
         }
 
         if login.is_none() && email.is_none() {
-            return Err(AuthError::Invalid(
-                "A login or an email is required.".to_owned(),
-            ));
+            return Err(AuthError::Invalid(Invalid::LoginOrEmailRequired));
         }
 
         Ok(())

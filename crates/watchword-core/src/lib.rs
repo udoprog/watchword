@@ -44,10 +44,12 @@ mod tests;
 /// The shortest password [`validate_password`] accepts, in bytes.
 pub const MIN_PASSWORD_LEN: usize = 8;
 
-/// Returns a message for the user when the password is not acceptable.
-pub fn validate_password(password: &str) -> Option<&'static str> {
+/// Returns why the password is not acceptable, if it is not.
+pub fn validate_password(password: &str) -> Option<Invalid> {
     if password.len() < MIN_PASSWORD_LEN {
-        return Some("Must be at least 8 characters.");
+        return Some(Invalid::PasswordTooShort {
+            min: MIN_PASSWORD_LEN,
+        });
     }
 
     None
@@ -374,7 +376,8 @@ pub struct CloudflareConfig {
 }
 
 /// The error of an `/api/auth` route, sent as the JSON body of its 4xx
-/// response, such as `{"error":"conflict","detail":"email"}`.
+/// response, such as `{"error":"conflict","detail":"email"}` or
+/// `{"error":"invalid","detail":{"reason":"password_too_short","min":8}}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]
 #[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
@@ -398,9 +401,9 @@ pub enum AuthError {
     /// The login or email is taken (409).
     #[error("{0} is already taken")]
     Conflict(Conflict),
-    /// The request is invalid, with a message for the user (400).
+    /// The request is invalid, and why (400).
     #[error("{0}")]
-    Invalid(String),
+    Invalid(Invalid),
 }
 
 impl AuthError {
@@ -416,6 +419,58 @@ impl AuthError {
             AuthError::Invalid(_) => 400,
         }
     }
+}
+
+/// Why a request is invalid, the detail of [`AuthError::Invalid`].
+///
+/// On the wire a reason is a stable code with its parameters, such as
+/// `{"reason":"password_too_short","min":8}`, so a frontend can phrase it in
+/// its own language. [`Display`](fmt::Display) gives an English message for
+/// the user.
+///
+/// New reasons may be added without a breaking release.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error)]
+#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[serde(tag = "reason", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Invalid {
+    /// The password is shorter than `min` bytes; see [`validate_password`].
+    #[error("Must be at least {min} characters.")]
+    PasswordTooShort {
+        /// The shortest password accepted, [`MIN_PASSWORD_LEN`].
+        min: usize,
+    },
+    /// The current password, given to change it, is wrong.
+    #[error("The current password is incorrect.")]
+    PasswordIncorrect,
+    /// The app uses only emails, and the user would have none.
+    #[error("An email is required.")]
+    EmailRequired,
+    /// The user would have neither a login nor an email.
+    #[error("A login or an email is required.")]
+    LoginOrEmailRequired,
+    /// The login name is blank.
+    #[error("The login cannot be empty.")]
+    LoginEmpty,
+    /// A login name was given, but the app uses only emails.
+    #[error("Login names are not used.")]
+    LoginsDisabled,
+    /// A Google user tried to change their own email, which their Google
+    /// account manages.
+    #[error("Your email is managed by your Google account.")]
+    EmailManagedByGoogle,
+    /// The Google account is already linked to another user.
+    #[error("This Google account is already linked to another user.")]
+    GoogleAccountTaken,
+    /// The role cannot be changed through this route, such as on the user's
+    /// own account.
+    #[error("The role cannot be changed here.")]
+    RoleNotChangeable,
+    /// The request body could not be read, such as malformed JSON or a
+    /// missing field.
+    #[error("The request is malformed.")]
+    MalformedRequest,
 }
 
 /// Which unique field a change conflicts on.

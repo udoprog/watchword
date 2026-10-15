@@ -55,8 +55,88 @@ fn email_normalization() {
 
 #[test]
 fn password_validation() {
-    assert!(validate_password("1234567").is_some());
-    assert!(validate_password("12345678").is_none());
+    assert_eq!(
+        validate_password("1234567"),
+        Some(Invalid::PasswordTooShort { min: 8 })
+    );
+    assert_eq!(validate_password("12345678"), None);
+}
+
+/// Every reason, with its wire form and English message.
+fn invalid_cases() -> Vec<(Invalid, Value, &'static str)> {
+    vec![
+        (
+            Invalid::PasswordTooShort { min: 8 },
+            json!({"reason": "password_too_short", "min": 8}),
+            "Must be at least 8 characters.",
+        ),
+        (
+            Invalid::PasswordIncorrect,
+            json!({"reason": "password_incorrect"}),
+            "The current password is incorrect.",
+        ),
+        (
+            Invalid::EmailRequired,
+            json!({"reason": "email_required"}),
+            "An email is required.",
+        ),
+        (
+            Invalid::LoginOrEmailRequired,
+            json!({"reason": "login_or_email_required"}),
+            "A login or an email is required.",
+        ),
+        (
+            Invalid::LoginEmpty,
+            json!({"reason": "login_empty"}),
+            "The login cannot be empty.",
+        ),
+        (
+            Invalid::LoginsDisabled,
+            json!({"reason": "logins_disabled"}),
+            "Login names are not used.",
+        ),
+        (
+            Invalid::EmailManagedByGoogle,
+            json!({"reason": "email_managed_by_google"}),
+            "Your email is managed by your Google account.",
+        ),
+        (
+            Invalid::GoogleAccountTaken,
+            json!({"reason": "google_account_taken"}),
+            "This Google account is already linked to another user.",
+        ),
+        (
+            Invalid::RoleNotChangeable,
+            json!({"reason": "role_not_changeable"}),
+            "The role cannot be changed here.",
+        ),
+        (
+            Invalid::MalformedRequest,
+            json!({"reason": "malformed_request"}),
+            "The request is malformed.",
+        ),
+    ]
+}
+
+/// A reason is a stable code with parameters on the wire, and English only
+/// in its message.
+#[test]
+fn invalid_json() {
+    for (invalid, value, message) in invalid_cases() {
+        assert_eq!(serde_json::to_value(&invalid).unwrap(), value);
+        assert_eq!(
+            serde_json::from_value::<Invalid>(value.clone()).unwrap(),
+            invalid
+        );
+        assert_eq!(invalid.to_string(), message);
+
+        let error = AuthError::Invalid(invalid);
+        let wire = json!({"error": "invalid", "detail": value});
+        assert_eq!(serde_json::to_value(&error).unwrap(), wire);
+        assert_eq!(serde_json::from_value::<AuthError>(wire).unwrap(), error);
+        assert_eq!(error.status(), 400);
+        assert_eq!(error.to_string(), message);
+    }
 }
 
 #[test]
@@ -153,8 +233,8 @@ fn auth_error_json() {
             409,
         ),
         (
-            AuthError::Invalid("Must be at least 8 characters.".into()),
-            json!({"error": "invalid", "detail": "Must be at least 8 characters."}),
+            AuthError::Invalid(Invalid::PasswordTooShort { min: 8 }),
+            json!({"error": "invalid", "detail": {"reason": "password_too_short", "min": 8}}),
             400,
         ),
     ];
@@ -247,5 +327,9 @@ fn musli_round_trip() {
         role: Some(Role::Admin),
     });
     round_trip(AuthError::Conflict(Conflict::Login));
-    round_trip(AuthError::Invalid("no".into()));
+
+    for (invalid, _, _) in invalid_cases() {
+        round_trip(invalid.clone());
+        round_trip(AuthError::Invalid(invalid));
+    }
 }

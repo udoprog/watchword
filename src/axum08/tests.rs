@@ -185,6 +185,10 @@ async fn config_me_and_registration() {
     .await;
     assert_eq!(short.status, StatusCode::BAD_REQUEST);
     assert_eq!(short.error(), "invalid");
+    assert_eq!(
+        short.body["detail"],
+        json!({ "reason": "password_too_short", "min": 8 })
+    );
 
     let registered = call(
         &app,
@@ -246,6 +250,11 @@ async fn login_and_logout() {
     .await;
     assert_eq!(malformed.status, StatusCode::BAD_REQUEST);
     assert_eq!(malformed.error(), "invalid");
+    // Why it was malformed is logged, not sent.
+    assert_eq!(
+        malformed.body["detail"],
+        json!({ "reason": "malformed_request" })
+    );
 
     let login = json!({ "login": "root", "password": PASSWORD });
     let signed_in = call(
@@ -521,6 +530,10 @@ async fn account_routes() {
     )
     .await;
     assert_eq!(role.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        role.body["detail"],
+        json!({ "reason": "role_not_changeable" })
+    );
 
     let wrong = call(
         &app,
@@ -532,6 +545,10 @@ async fn account_routes() {
     .await;
     assert_eq!(wrong.status, StatusCode::BAD_REQUEST);
     assert_eq!(wrong.error(), "invalid");
+    assert_eq!(
+        wrong.body["detail"],
+        json!({ "reason": "password_incorrect" })
+    );
 
     let changed = call(
         &app,
