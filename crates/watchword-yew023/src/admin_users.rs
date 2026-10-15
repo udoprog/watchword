@@ -3,16 +3,16 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use jiff::Timestamp;
-#[cfg(feature = "musliweb04")]
+use phrasebook01::{Phrases, args};
 use yew::context::ContextHandle;
 use yew::prelude::*;
 
-use super::account::role_name;
 use super::browser;
 use super::client::Client;
 use super::context::AuthContext;
-use super::form::{error_message, identity_change, optional};
+use super::form::{identity_change, optional};
 use super::http::{self, CreatedUser, Error};
+use super::l10n::{self, error_message, placed, role_name};
 #[cfg(feature = "musliweb04")]
 use super::socket::Socket;
 #[cfg(feature = "musliweb04")]
@@ -98,8 +98,14 @@ pub struct AdminUsersProps {
 /// elsewhere, and when a user's account state or sign-in method changes,
 /// which uses up their links. Its requests, except Impersonate, go over the
 /// socket while it is open.
+///
+/// Its text comes from the [`Phrases`](phrasebook01::Phrases) the app
+/// provides, falling back to watchword's English (see [`L10N`](super::L10N)).
 pub struct AdminUsers {
     users: Users,
+    phrases: Phrases,
+    /// Keeps this subscribed to the app's phrases.
+    _phrases: Option<ContextHandle<Phrases>>,
     /// Bumped on each load, so an older answer is dropped.
     generation: u64,
     /// The generation of the last load answered; a load is in flight while
@@ -175,6 +181,7 @@ pub enum Msg {
     EditInput(Field, String),
     SubmitEdit,
     SetRole(UserId, Role),
+    /// With the id of the notice shown on success.
     Updated(Result<UserInfo, Error>, &'static str),
     IssueLink(UserId),
     Issued(UserId, Result<Link, Error>),
@@ -188,6 +195,7 @@ pub enum Msg {
     Context(AuthContext),
     #[cfg(feature = "musliweb04")]
     Update(AuthUpdate),
+    Phrases(Phrases),
 }
 
 impl Component for AdminUsers {
@@ -196,6 +204,11 @@ impl Component for AdminUsers {
 
     fn create(ctx: &Context<Self>) -> Self {
         ctx.link().send_message(Msg::Load);
+
+        let phrases_context = ctx
+            .link()
+            .context::<Phrases>(ctx.link().callback(Msg::Phrases));
+        let phrases = l10n::phrases(phrases_context.as_ref().map(|(p, _)| p.clone()));
 
         #[cfg(feature = "musliweb04")]
         let (_context, socket) = {
@@ -214,6 +227,8 @@ impl Component for AdminUsers {
 
         Self {
             users: Users::Loading,
+            phrases,
+            _phrases: phrases_context.map(|(_, handle)| handle),
             generation: 0,
             loaded: 0,
             query: ctx.props().query.clone(),
@@ -270,7 +285,8 @@ impl Component for AdminUsers {
                         self.users = Users::Loaded(users);
                     }
                     Err(error) => {
-                        let message = error_message(&error, "Loading the users");
+                        let message =
+                            error_message(&self.phrases, &error, "watchword-failed-loading-users");
 
                         // Keep a list already shown, and say why it is stale.
                         if matches!(self.users, Users::Loaded(..)) {
@@ -327,7 +343,10 @@ impl Component for AdminUsers {
                 if let Err(error) =
                     identity_change((None, None), login.clone(), email.clone(), logins)
                 {
-                    self.message = Some(Message::Error(AttrValue::Static(error)));
+                    self.message = Some(Message::Error(AttrValue::from(l10n::invalid(
+                        &self.phrases,
+                        &error,
+                    ))));
                     return true;
                 }
 
@@ -361,15 +380,19 @@ impl Component for AdminUsers {
 
                         self.links.insert(id, link);
                         self.adding = None;
-                        self.message = Some(Message::Notice(AttrValue::from(
-                            "User added. Send them their link below.",
+                        self.message = Some(Message::Notice(l10n::text(
+                            &self.phrases,
+                            "watchword-user-added",
                         )));
                         // Show the new user, wherever they sort.
                         self.set_query(ctx, UsersQuery { filter, page: 0 });
                     }
                     Err(error) => {
-                        self.message =
-                            Some(Message::Error(error_message(&error, "Adding the user")));
+                        self.message = Some(Message::Error(error_message(
+                            &self.phrases,
+                            &error,
+                            "watchword-failed-adding-user",
+                        )));
                         check_unauthorized(ctx, &error);
                     }
                 }
@@ -429,7 +452,10 @@ impl Component for AdminUsers {
                 ) {
                     Ok(change) => change,
                     Err(error) => {
-                        self.message = Some(Message::Error(AttrValue::Static(error)));
+                        self.message = Some(Message::Error(AttrValue::from(l10n::invalid(
+                            &self.phrases,
+                            &error,
+                        ))));
                         return true;
                     }
                 };
@@ -439,7 +465,7 @@ impl Component for AdminUsers {
                     return true;
                 }
 
-                self.update_user(ctx, *id, change, "Saved.");
+                self.update_user(ctx, *id, change, "watchword-saved");
             }
             Msg::SetRole(id, role) => {
                 if self.busy {
@@ -451,7 +477,7 @@ impl Component for AdminUsers {
                     ..UserChange::default()
                 };
 
-                self.update_user(ctx, id, change, "Role changed.");
+                self.update_user(ctx, id, change, "watchword-role-changed");
             }
             Msg::Updated(result, notice) => {
                 self.busy = false;
@@ -473,10 +499,14 @@ impl Component for AdminUsers {
                             entry.user = user;
                         }
 
-                        self.message = Some(Message::Notice(AttrValue::Static(notice)));
+                        self.message = Some(Message::Notice(l10n::text(&self.phrases, notice)));
                     }
                     Err(error) => {
-                        self.message = Some(Message::Error(error_message(&error, "Saving")));
+                        self.message = Some(Message::Error(error_message(
+                            &self.phrases,
+                            &error,
+                            "watchword-failed-saving",
+                        )));
                         check_unauthorized(ctx, &error);
                     }
                 }
@@ -512,8 +542,11 @@ impl Component for AdminUsers {
                         ctx.link().send_message(Msg::Load);
                     }
                     Err(error) => {
-                        self.message =
-                            Some(Message::Error(error_message(&error, "Issuing a link")));
+                        self.message = Some(Message::Error(error_message(
+                            &self.phrases,
+                            &error,
+                            "watchword-failed-issuing-link",
+                        )));
                         check_unauthorized(ctx, &error);
                     }
                 }
@@ -560,12 +593,16 @@ impl Component for AdminUsers {
                 self.busy = false;
 
                 if let Err(error) = result {
-                    self.message = Some(Message::Error(error_message(&error, action.failed())));
+                    self.message = Some(Message::Error(error_message(
+                        &self.phrases,
+                        &error,
+                        action.failed(),
+                    )));
                     check_unauthorized(ctx, &error);
                     return true;
                 }
 
-                self.message = Some(Message::Notice(AttrValue::Static(action.done())));
+                self.message = Some(Message::Notice(l10n::text(&self.phrases, action.done())));
 
                 match action {
                     Action::RevokeLink => {
@@ -605,11 +642,9 @@ impl Component for AdminUsers {
             }
             Msg::Copied(ok) => {
                 self.message = Some(if ok {
-                    Message::Notice(AttrValue::Static("Link copied."))
+                    Message::Notice(l10n::text(&self.phrases, "watchword-link-copied"))
                 } else {
-                    Message::Error(AttrValue::Static(
-                        "The browser did not allow copying. Select the link and copy it instead.",
-                    ))
+                    Message::Error(l10n::text(&self.phrases, "watchword-copy-refused"))
                 });
             }
             #[cfg(feature = "musliweb04")]
@@ -635,6 +670,9 @@ impl Component for AdminUsers {
                     ctx.link().send_message(Msg::Load);
                 }
             }
+            Msg::Phrases(phrases) => {
+                self.phrases = l10n::phrases(Some(phrases));
+            }
         }
 
         true
@@ -644,6 +682,7 @@ impl Component for AdminUsers {
         let props = ctx.props();
         let link = ctx.link();
         let query = self.query(ctx);
+        let phrases = &self.phrases;
 
         let message = html! {
             <div class="auth-message" role="alert">
@@ -657,12 +696,12 @@ impl Component for AdminUsers {
 
         let body = match &self.users {
             Users::Loading => html! {
-                <p class="auth-status" role="status">{"Loading users…"}</p>
+                <p class="auth-status" role="status">{phrases.text("watchword-users-loading")}</p>
             },
             Users::Failed(error) => html! {
                 <div class="auth-message" role="alert">
                     <p class="auth-error">{error.clone()}</p>
-                    <button type="button" class="auth-retry" onclick={link.callback(|_| Msg::Load)}>{"Retry"}</button>
+                    <button type="button" class="auth-retry" onclick={link.callback(|_| Msg::Load)}>{phrases.text("watchword-retry")}</button>
                 </div>
             },
             Users::Loaded(users) => self.view_users(ctx, users, query),
@@ -671,11 +710,11 @@ impl Component for AdminUsers {
         html! {
             <section class={classes!("auth-admin-users", props.class.clone())}>
                 <div class="auth-toolbar">
-                    <h2 class="auth-heading">{"Users"}</h2>
+                    <h2 class="auth-heading">{phrases.text("watchword-users")}</h2>
 
                     if self.adding.is_none() {
                         <button type="button" class="auth-add" onclick={link.callback(|_| Msg::StartAdd)}>
-                            {"Add user"}
+                            {phrases.text("watchword-add-user")}
                         </button>
                     }
                 </div>
@@ -687,15 +726,15 @@ impl Component for AdminUsers {
                     <input
                         class="auth-input"
                         type="search"
-                        placeholder="Filter"
-                        aria-label="Filter users"
+                        placeholder={phrases.text("watchword-filter")}
+                        aria-label={phrases.text("watchword-filter-users")}
                         value={query.filter.clone()}
                         oninput={link.callback(|e: InputEvent| Msg::Filter(browser::input_value(&e)))}
                     />
 
                     if !query.filter.is_empty() {
                         <button type="button" class="auth-clear" onclick={link.callback(|_| Msg::Filter(String::new()))}>
-                            {"Clear filter"}
+                            {phrases.text("watchword-clear-filter")}
                         </button>
                     }
                 </div>
@@ -754,6 +793,7 @@ impl AdminUsers {
         change: UserChange,
         notice: &'static str,
     ) {
+        // `notice` is a message id.
         self.busy = true;
         self.message = None;
         let client = self.client();
@@ -769,6 +809,7 @@ impl AdminUsers {
 
         let link = ctx.link();
         let logins = logins(ctx);
+        let phrases = &self.phrases;
 
         let onsubmit = link.callback(|e: SubmitEvent| {
             e.prevent_default();
@@ -777,11 +818,11 @@ impl AdminUsers {
 
         html! {
             <form class="auth-form auth-add-user" {onsubmit}>
-                <h3 class="auth-subheading">{"Add user"}</h3>
+                <h3 class="auth-subheading">{phrases.text("watchword-add-user")}</h3>
 
                 if logins {
                     <div class="auth-field">
-                        <label for="auth-new-login">{"Login"}</label>
+                        <label for="auth-new-login">{phrases.text("watchword-login")}</label>
                         <input
                             id="auth-new-login"
                             class="auth-input"
@@ -796,7 +837,7 @@ impl AdminUsers {
                 }
 
                 <div class="auth-field">
-                    <label for="auth-new-email">{"Email"}</label>
+                    <label for="auth-new-email">{phrases.text("watchword-email")}</label>
                     <input
                         id="auth-new-email"
                         class="auth-input"
@@ -808,20 +849,20 @@ impl AdminUsers {
                     />
 
                     if logins {
-                        <span class="auth-hint">{"Optional. Lets them sign in with it, or through Cloudflare Access."}</span>
+                        <span class="auth-hint">{phrases.text("watchword-new-email-hint")}</span>
                     }
                 </div>
 
                 <div class="auth-field">
-                    <label for="auth-new-role">{"Role"}</label>
-                    {role_select("auth-new-role", form.role, self.busy, link.callback(Msg::AddRole))}
+                    <label for="auth-new-role">{phrases.text("watchword-role")}</label>
+                    {role_select(phrases, "auth-new-role", form.role, self.busy, link.callback(Msg::AddRole))}
                 </div>
 
-                <p class="auth-hint">{"They get a link to choose a password with."}</p>
+                <p class="auth-hint">{phrases.text("watchword-new-user-hint")}</p>
 
                 <div class="auth-actions">
-                    <button type="button" onclick={link.callback(|_| Msg::CancelAdd)} disabled={self.busy}>{"Cancel"}</button>
-                    <button type="submit" class="auth-submit" disabled={self.busy}>{"Add user"}</button>
+                    <button type="button" onclick={link.callback(|_| Msg::CancelAdd)} disabled={self.busy}>{phrases.text("watchword-cancel")}</button>
+                    <button type="submit" class="auth-submit" disabled={self.busy}>{phrases.text("watchword-add-user")}</button>
                 </div>
             </form>
         }
@@ -830,6 +871,7 @@ impl AdminUsers {
     fn view_users(&self, ctx: &Context<Self>, users: &[UserEntry], query: &UsersQuery) -> Html {
         let link = ctx.link();
         let logins = logins(ctx);
+        let phrases = &self.phrases;
 
         let mut shown = users
             .iter()
@@ -849,12 +891,12 @@ impl AdminUsers {
 
         if shown.is_empty() {
             let text = if users.is_empty() {
-                "There are no users."
+                "watchword-users-none"
             } else {
-                "No user matches the filter."
+                "watchword-users-no-match"
             };
 
-            return html! { <p class="auth-status">{text}</p> };
+            return html! { <p class="auth-status">{phrases.text(text)}</p> };
         }
 
         html! {
@@ -863,13 +905,13 @@ impl AdminUsers {
                     <thead>
                         <tr>
                             if logins {
-                                <th scope="col">{"Login"}</th>
+                                <th scope="col">{phrases.text("watchword-login")}</th>
                             }
-                            <th scope="col">{"Email"}</th>
-                            <th scope="col">{"Role"}</th>
-                            <th scope="col">{"Status"}</th>
-                            <th scope="col">{"Link"}</th>
-                            <th scope="col"><span class="auth-hidden">{"Actions"}</span></th>
+                            <th scope="col">{phrases.text("watchword-email")}</th>
+                            <th scope="col">{phrases.text("watchword-role")}</th>
+                            <th scope="col">{phrases.text("watchword-status")}</th>
+                            <th scope="col">{phrases.text("watchword-link")}</th>
+                            <th scope="col"><span class="auth-hidden">{phrases.text("watchword-actions")}</span></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -878,23 +920,23 @@ impl AdminUsers {
                 </table>
 
                 if pages > 1 {
-                    <nav class="auth-pages" aria-label="Pages">
+                    <nav class="auth-pages" aria-label={phrases.text("watchword-pages")}>
                         <button
                             type="button"
                             class="auth-previous"
                             disabled={page == 0}
                             onclick={link.callback(move |_| Msg::Page(page.saturating_sub(1)))}
                         >
-                            {"Previous page"}
+                            {phrases.text("watchword-previous-page")}
                         </button>
-                        <span class="auth-page-number">{format!("{} / {pages}", page + 1)}</span>
+                        <span class="auth-page-number">{phrases.msg("watchword-page-number", &args!(page = page + 1, pages = pages))}</span>
                         <button
                             type="button"
                             class="auth-next"
                             disabled={page + 1 >= pages}
                             onclick={link.callback(move |_| Msg::Page(page + 1))}
                         >
-                            {"Next page"}
+                            {phrases.text("watchword-next-page")}
                         </button>
                     </nav>
                 }
@@ -911,6 +953,7 @@ impl AdminUsers {
         let me = user.id == props.me.id;
         let name = user.name().to_owned();
         let busy = self.busy;
+        let phrases = &self.phrases;
 
         let editing = self
             .editing
@@ -924,7 +967,7 @@ impl AdminUsers {
                     <input
                         class="auth-input"
                         type="text"
-                        aria-label="Login"
+                        aria-label={phrases.text("watchword-login")}
                         autocapitalize="none"
                         spellcheck="false"
                         value={form.login.clone()}
@@ -936,7 +979,7 @@ impl AdminUsers {
                     <input
                         class="auth-input"
                         type="email"
-                        aria-label="Email"
+                        aria-label={phrases.text("watchword-email")}
                         value={form.email.clone()}
                         oninput={link.callback(|e: InputEvent| Msg::EditInput(Field::Email, browser::input_value(&e)))}
                         disabled={busy}
@@ -949,12 +992,15 @@ impl AdminUsers {
                 },
                 match &user.email {
                     Some(email) => html! { <span class="auth-value">{email.clone()}</span> },
-                    None => html! { <span class="auth-muted">{"No email"}</span> },
+                    None => {
+                        html! { <span class="auth-muted">{phrases.text("watchword-no-email")}</span> }
+                    }
                 },
             ),
         };
 
-        let badge = me.then(|| html! { <span class="auth-badge">{"you"}</span> });
+        let badge =
+            me.then(|| html! { <span class="auth-badge">{phrases.text("watchword-you")}</span> });
         let extra = props.extra.as_ref().map(|extra| {
             html! { <div class="auth-user-extra">{extra.emit(user.clone())}</div> }
         });
@@ -973,9 +1019,10 @@ impl AdminUsers {
         };
 
         let role = if me {
-            html! { <span class="auth-value">{role_name(user.role)}</span> }
+            html! { <span class="auth-value">{role_name(phrases, user.role)}</span> }
         } else {
             role_select(
+                phrases,
                 &format!("auth-role-{id}"),
                 user.role,
                 busy,
@@ -983,7 +1030,7 @@ impl AdminUsers {
             )
         };
 
-        let (access_class, access_label, access_title) = access(user);
+        let (access_class, access_label, access_title) = access(phrases, user);
 
         html! {
             <tr class={classes!("auth-user", me.then_some("auth-me"))}>
@@ -1002,6 +1049,7 @@ impl AdminUsers {
     fn view_link(&self, ctx: &Context<Self>, entry: &UserEntry, now: Timestamp) -> Html {
         let link = ctx.link();
         let name = entry.user.name();
+        let phrases = &self.phrases;
 
         if let Some(issued) = self.links.get(&entry.user.id) {
             let url = link_url(&browser::origin(), &issued.token);
@@ -1009,17 +1057,17 @@ impl AdminUsers {
 
             return html! {
                 <div class="auth-link">
-                    <input class="auth-input auth-link-url" type="text" readonly=true value={url} title={format!("Link for {name}")} />
+                    <input class="auth-input auth-link-url" type="text" readonly=true value={url} title={phrases.msg("watchword-link-for", &args!(name = name))} />
                     <button
                         type="button"
                         class="auth-copy"
-                        title={format!("Copy the link for {name}")}
+                        title={phrases.msg("watchword-copy-link-for", &args!(name = name))}
                         onclick={link.callback(move |_| Msg::Copy(copy.clone()))}
                     >
-                        {"Copy"}
+                        {phrases.text("watchword-copy")}
                     </button>
                     <span class="auth-hint">
-                        {format!("Send this to {name}. It works once and expires {}. It is not shown again.", relative_time(now, issued.expires_at))}
+                        {phrases.msg("watchword-link-send", &args!(name = name, expires = relative_time(phrases, now, issued.expires_at)))}
                     </span>
                 </div>
             };
@@ -1027,9 +1075,11 @@ impl AdminUsers {
 
         match entry.link_expires_at {
             Some(at) => html! {
-                <span class="auth-link-state" title={at.to_string()}>{format!("Link expires {}", relative_time(now, at))}</span>
+                <span class="auth-link-state" title={at.to_string()}>{phrases.msg("watchword-link-expires", &args!(expires = relative_time(phrases, now, at)))}</span>
             },
-            None => html! { <span class="auth-link-state auth-muted">{"No link"}</span> },
+            None => {
+                html! { <span class="auth-link-state auth-muted">{phrases.text("watchword-no-link")}</span> }
+            }
         }
     }
 
@@ -1046,27 +1096,32 @@ impl AdminUsers {
         let user = &entry.user;
         let id = user.id;
         let busy = self.busy;
+        let phrases = &self.phrases;
+        let named = |id: &str| phrases.msg(id, &args!(name = name));
 
         if editing {
             return html! {
                 <div class="auth-actions">
-                    <button type="button" onclick={link.callback(|_| Msg::CancelEdit)} disabled={busy}>{"Discard changes"}</button>
-                    <button type="button" class="auth-submit" onclick={link.callback(|_| Msg::SubmitEdit)} disabled={busy}>{"Save"}</button>
+                    <button type="button" onclick={link.callback(|_| Msg::CancelEdit)} disabled={busy}>{phrases.text("watchword-discard-changes")}</button>
+                    <button type="button" class="auth-submit" onclick={link.callback(|_| Msg::SubmitEdit)} disabled={busy}>{phrases.text("watchword-save")}</button>
                 </div>
             };
         }
 
         if let Some((_, action)) = self.confirm.filter(|(confirm, _)| *confirm == id) {
             let prompt = match action {
-                Action::Delete => "Delete",
-                _ => "Revoke access for",
+                Action::Delete => "watchword-confirm-delete",
+                _ => "watchword-confirm-revoke-access",
             };
+            let prompt = placed(phrases, prompt, "name", name, |name| {
+                html! { <strong>{name}</strong> }
+            });
 
             return html! {
                 <div class="auth-confirm" role="group">
-                    <span>{prompt}{" "}<strong>{name.to_owned()}</strong>{"?"}</span>
-                    <button type="button" class="auth-confirm-no" onclick={link.callback(|_| Msg::CancelConfirm)}>{"No"}</button>
-                    <button type="button" class="auth-confirm-yes auth-danger" onclick={link.callback(move |_| Msg::Act(id, action))} disabled={busy}>{"Yes"}</button>
+                    <span>{prompt}</span>
+                    <button type="button" class="auth-confirm-no" onclick={link.callback(|_| Msg::CancelConfirm)}>{phrases.text("watchword-no")}</button>
+                    <button type="button" class="auth-confirm-yes auth-danger" onclick={link.callback(move |_| Msg::Act(id, action))} disabled={busy}>{phrases.text("watchword-yes")}</button>
                 </div>
             };
         }
@@ -1076,39 +1131,39 @@ impl AdminUsers {
 
         html! {
             <div class="auth-actions">
-                <button type="button" title={format!("Edit {name}")} onclick={link.callback(move |_| Msg::StartEdit(id))} disabled={busy}>
-                    {"Edit"}
+                <button type="button" title={named("watchword-edit-user")} onclick={link.callback(move |_| Msg::StartEdit(id))} disabled={busy}>
+                    {phrases.text("watchword-edit")}
                 </button>
 
-                <button type="button" title={format!("New link for {name}")} onclick={link.callback(move |_| Msg::IssueLink(id))} disabled={busy}>
-                    {if live_link { "New link" } else { "Link" }}
+                <button type="button" title={named("watchword-new-link-for")} onclick={link.callback(move |_| Msg::IssueLink(id))} disabled={busy}>
+                    {phrases.text(if live_link { "watchword-new-link" } else { "watchword-link" })}
                 </button>
 
                 if live_link {
-                    <button type="button" title={format!("Revoke the link for {name}")} onclick={link.callback(move |_| Msg::Act(id, Action::RevokeLink))} disabled={busy}>
-                        {"Revoke link"}
+                    <button type="button" title={named("watchword-revoke-link-for")} onclick={link.callback(move |_| Msg::Act(id, Action::RevokeLink))} disabled={busy}>
+                        {phrases.text("watchword-revoke-link")}
                     </button>
                 }
 
                 if !me {
-                    <button type="button" title={format!("Sign {name} out everywhere")} onclick={link.callback(move |_| Msg::Act(id, Action::SignOut))} disabled={busy}>
-                        {"Sign out everywhere"}
+                    <button type="button" title={named("watchword-sign-out-everywhere-user")} onclick={link.callback(move |_| Msg::Act(id, Action::SignOut))} disabled={busy}>
+                        {phrases.text("watchword-sign-out-everywhere")}
                     </button>
 
                     if !revoked {
-                        <button type="button" class="auth-danger" title={format!("Revoke access for {name}")} onclick={link.callback(move |_| Msg::Confirm(id, Action::RevokeAccess))} disabled={busy}>
-                            {"Revoke access"}
+                        <button type="button" class="auth-danger" title={named("watchword-revoke-access-for")} onclick={link.callback(move |_| Msg::Confirm(id, Action::RevokeAccess))} disabled={busy}>
+                            {phrases.text("watchword-revoke-access")}
                         </button>
                     }
 
                     if props.on_impersonate.is_some() && !revoked {
-                        <button type="button" title={format!("Impersonate {name}")} onclick={link.callback(move |_| Msg::Act(id, Action::Impersonate))} disabled={busy}>
-                            {"Impersonate"}
+                        <button type="button" title={named("watchword-impersonate-user")} onclick={link.callback(move |_| Msg::Act(id, Action::Impersonate))} disabled={busy}>
+                            {phrases.text("watchword-impersonate")}
                         </button>
                     }
 
-                    <button type="button" class="auth-danger" title={format!("Delete {name}")} onclick={link.callback(move |_| Msg::Confirm(id, Action::Delete))} disabled={busy}>
-                        {"Delete"}
+                    <button type="button" class="auth-danger" title={named("watchword-delete-user")} onclick={link.callback(move |_| Msg::Confirm(id, Action::Delete))} disabled={busy}>
+                        {phrases.text("watchword-delete")}
                     </button>
                 }
             </div>
@@ -1126,23 +1181,25 @@ impl UserForm {
 }
 
 impl Action {
+    /// The id of the message for its unexpected failure.
     fn failed(self) -> &'static str {
         match self {
-            Action::RevokeLink => "Revoking the link",
-            Action::SignOut => "Signing out",
-            Action::RevokeAccess => "Revoking access",
-            Action::Impersonate => "Impersonating",
-            Action::Delete => "Deleting",
+            Action::RevokeLink => "watchword-failed-revoking-link",
+            Action::SignOut => "watchword-failed-signing-out",
+            Action::RevokeAccess => "watchword-failed-revoking-access",
+            Action::Impersonate => "watchword-failed-impersonating",
+            Action::Delete => "watchword-failed-deleting",
         }
     }
 
+    /// The id of the notice once it is done.
     fn done(self) -> &'static str {
         match self {
-            Action::RevokeLink => "Link revoked.",
-            Action::SignOut => "Signed out everywhere.",
-            Action::RevokeAccess => "Access revoked.",
-            Action::Impersonate => "Signed in as the user.",
-            Action::Delete => "User deleted.",
+            Action::RevokeLink => "watchword-link-revoked",
+            Action::SignOut => "watchword-signed-out-everywhere",
+            Action::RevokeAccess => "watchword-access-revoked",
+            Action::Impersonate => "watchword-signed-in-as-user",
+            Action::Delete => "watchword-user-deleted",
         }
     }
 }
@@ -1218,7 +1275,13 @@ fn check_unauthorized(ctx: &Context<AdminUsers>, error: &Error) {
     }
 }
 
-fn role_select(id: &str, role: Role, disabled: bool, onchange: Callback<Role>) -> Html {
+fn role_select(
+    phrases: &Phrases,
+    id: &str,
+    role: Role,
+    disabled: bool,
+    onchange: Callback<Role>,
+) -> Html {
     let onchange = Callback::from(move |e: Event| {
         if let Ok(role) = browser::select_value(&e).parse::<Role>() {
             onchange.emit(role);
@@ -1226,38 +1289,44 @@ fn role_select(id: &str, role: Role, disabled: bool, onchange: Callback<Role>) -
     });
 
     html! {
-        <select id={id.to_owned()} class="auth-select" aria-label="Role" {onchange} {disabled}>
+        <select id={id.to_owned()} class="auth-select" aria-label={phrases.text("watchword-role")} {onchange} {disabled}>
             {for [Role::Regular, Role::Admin].into_iter().map(|option| html! {
-                <option value={option.as_str()} selected={option == role}>{role_name(option)}</option>
+                <option value={option.as_str()} selected={option == role}>{role_name(phrases, option)}</option>
             })}
         </select>
     }
 }
 
 /// The class, label and title of a user's account state.
-fn access(user: &UserInfo) -> (&'static str, &'static str, String) {
+fn access(phrases: &Phrases, user: &UserInfo) -> (&'static str, Rc<str>, String) {
     let method = match user.method {
         Method::Password => "password",
-        Method::Google => "Google",
+        Method::Google => "google",
     };
 
-    match user.access {
+    let (class, label, title) = match user.access {
         Access::Pending => (
             "auth-pending",
-            "Pending",
-            format!("Pending registration ({method} sign-in)"),
+            "watchword-access-pending",
+            "watchword-access-pending-title",
         ),
         Access::Active => (
             "auth-active",
-            "Active",
-            format!("Active ({method} sign-in)"),
+            "watchword-access-active",
+            "watchword-access-active-title",
         ),
         Access::Revoked => (
             "auth-revoked",
-            "Revoked",
-            format!("Access revoked ({method} sign-in)"),
+            "watchword-access-revoked-label",
+            "watchword-access-revoked-title",
         ),
-    }
+    };
+
+    (
+        class,
+        phrases.text(label),
+        phrases.msg(title, &args!(method = method)),
+    )
 }
 
 /// Whether a user's login or email contains the filter, ignoring case.
@@ -1293,20 +1362,16 @@ pub(super) fn link_url(origin: &str, token: &str) -> String {
 }
 
 /// When `at` is, from `now`, such as "in 7 days".
-pub(super) fn relative_time(now: Timestamp, at: Timestamp) -> String {
+pub(super) fn relative_time(phrases: &Phrases, now: Timestamp, at: Timestamp) -> String {
     let seconds = at.as_second() - now.as_second();
 
-    if seconds <= 0 {
-        return "now".to_owned();
-    }
-
-    let (n, unit) = match seconds {
-        1..60 => return "in less than a minute".to_owned(),
-        60..3_600 => (seconds / 60, "minute"),
-        3_600..86_400 => (seconds / 3_600, "hour"),
-        _ => (seconds / 86_400, "day"),
+    let (count, id) = match seconds {
+        ..=0 => return phrases.text("watchword-time-now").to_string(),
+        1..60 => return phrases.text("watchword-time-soon").to_string(),
+        60..3_600 => (seconds / 60, "watchword-time-minutes"),
+        3_600..86_400 => (seconds / 3_600, "watchword-time-hours"),
+        _ => (seconds / 86_400, "watchword-time-days"),
     };
 
-    let s = if n == 1 { "" } else { "s" };
-    format!("in {n} {unit}{s}")
+    phrases.msg(id, &args!(count = count))
 }

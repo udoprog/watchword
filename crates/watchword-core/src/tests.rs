@@ -115,7 +115,70 @@ fn invalid_cases() -> Vec<(Invalid, Value, &'static str)> {
             json!({"reason": "malformed_request"}),
             "The request is malformed.",
         ),
+        (
+            Invalid::Unknown,
+            json!({"reason": "unknown"}),
+            "The request is invalid.",
+        ),
     ]
+}
+
+/// A reason from a newer server decodes as `Unknown`, parameters and all.
+#[test]
+fn invalid_unknown_json() {
+    let wire = json!({"error": "invalid", "detail": {"reason": "password_too_long", "max": 72}});
+    assert_eq!(
+        serde_json::from_value::<AuthError>(wire).unwrap(),
+        AuthError::Invalid(Invalid::Unknown)
+    );
+    assert_eq!(
+        serde_json::from_value::<Invalid>(json!({"reason": "new"})).unwrap(),
+        Invalid::Unknown
+    );
+}
+
+/// A reason from a newer server decodes as `Unknown` over musli's
+/// upgrade-safe formats too (musli-web's default is `wire`), and the value
+/// after it still decodes. `storage` and `packed` cannot skip an unknown
+/// value, so they need the same model on both ends.
+#[cfg(feature = "musli01")]
+#[test]
+fn invalid_unknown_musli() {
+    /// `Invalid` as a newer version might have it.
+    #[derive(musli::Encode)]
+    #[allow(dead_code)]
+    enum Newer {
+        PasswordTooShort { min: usize },
+        PasswordIncorrect,
+        EmailRequired,
+        LoginOrEmailRequired,
+        LoginEmpty,
+        LoginsDisabled,
+        EmailManagedByGoogle,
+        GoogleAccountTaken,
+        RoleNotChangeable,
+        MalformedRequest,
+        Unknown,
+        PasswordTooLong { max: usize, hint: String },
+    }
+
+    let newer = vec![
+        Newer::PasswordTooLong {
+            max: 72,
+            hint: "shorter".into(),
+        },
+        Newer::PasswordTooShort { min: 8 },
+    ];
+
+    let expected = [Invalid::Unknown, Invalid::PasswordTooShort { min: 8 }];
+
+    let bytes = musli::wire::to_vec(&newer).unwrap();
+    let decoded: Vec<Invalid> = musli::wire::from_slice(&bytes).unwrap();
+    assert_eq!(decoded, expected);
+
+    let bytes = musli::descriptive::to_vec(&newer).unwrap();
+    let decoded: Vec<Invalid> = musli::descriptive::from_slice(&bytes).unwrap();
+    assert_eq!(decoded, expected);
 }
 
 /// A reason is a stable code with parameters on the wire, and English only

@@ -1,4 +1,5 @@
 use jiff::Timestamp;
+use phrasebook01::{Catalog, Lang, Phrasebook, Phrases, Source, check};
 
 use super::account::account_change;
 use super::admin_users::{link_url, matches_filter, page_bounds, relative_time};
@@ -6,13 +7,19 @@ use super::browser::{register_token_from_path, strip_query_param};
 use super::cloudflare_settings::header_unverified;
 use super::form::identity_change;
 use super::http::{CreatedUser, Error};
+use super::l10n::{self, L10N, error_message, split_around};
 use super::provider::replace_user;
 use super::sign_in::query_error_message;
 use super::user_menu::{impersonation_banner, stop_error_message};
 use watchword_core::{
-    Access, AuthError, CloudflareConfig, Impersonator, Link, Method, Role, UserChange, UserEntry,
-    UserId, UserInfo,
+    Access, AuthError, CloudflareConfig, Conflict, Impersonator, Invalid, Link, Method, Role,
+    UserChange, UserEntry, UserId, UserInfo,
 };
+
+/// watchword's own English, as rendered without a provider.
+fn en() -> Phrases {
+    Phrases::from_catalog(&L10N)
+}
 
 fn user(login: Option<&str>, email: Option<&str>, method: Method) -> UserInfo {
     UserInfo {
@@ -61,9 +68,16 @@ fn strip_error_param() {
 
 #[test]
 fn query_error_messages() {
-    assert_eq!(query_error_message("auth-failed"), "Authentication failed.");
-    assert_eq!(query_error_message("user-not-found"), "User not found.");
-    assert_eq!(query_error_message("<script>"), "Signing in failed.");
+    let en = en();
+    assert_eq!(
+        &*query_error_message(&en, "auth-failed"),
+        "Authentication failed."
+    );
+    assert_eq!(
+        &*query_error_message(&en, "user-not-found"),
+        "User not found."
+    );
+    assert_eq!(&*query_error_message(&en, "<script>"), "Signing in failed.");
 }
 
 #[test]
@@ -91,11 +105,11 @@ fn identity_changes() {
     );
     assert_eq!(
         identity_change((Some("a"), None), None, None, true),
-        Err("A login or an email is required.")
+        Err(Invalid::LoginOrEmailRequired)
     );
     assert_eq!(
         identity_change((None, Some("a@x")), None, None, false),
-        Err("An email is required.")
+        Err(Invalid::EmailRequired)
     );
 }
 
@@ -113,7 +127,7 @@ fn account_changes() {
     );
     assert_eq!(
         account_change(&password, "", "", true),
-        Err("A login or an email is required.")
+        Err(Invalid::LoginOrEmailRequired)
     );
 
     // Without logins the login input is ignored, and an email is required.
@@ -124,7 +138,7 @@ fn account_changes() {
     );
     assert_eq!(
         account_change(&email_only, "", "", false),
-        Err("An email is required.")
+        Err(Invalid::EmailRequired)
     );
 
     // A Google user's email is their Google account's.
@@ -159,11 +173,16 @@ fn pages() {
 fn relative_times() {
     let now = Timestamp::from_second(1_000_000).unwrap();
     let at = |s: i64| Timestamp::from_second(1_000_000 + s).unwrap();
-    assert_eq!(relative_time(now, at(-5)), "now");
-    assert_eq!(relative_time(now, at(30)), "in less than a minute");
-    assert_eq!(relative_time(now, at(60)), "in 1 minute");
-    assert_eq!(relative_time(now, at(7_199)), "in 1 hour");
-    assert_eq!(relative_time(now, at(7 * 86_400)), "in 7 days");
+    let en = en();
+    assert_eq!(relative_time(&en, now, at(-5)), "now");
+    assert_eq!(relative_time(&en, now, at(0)), "now");
+    assert_eq!(relative_time(&en, now, at(30)), "in less than a minute");
+    assert_eq!(relative_time(&en, now, at(60)), "in 1 minute");
+    assert_eq!(relative_time(&en, now, at(150)), "in 2 minutes");
+    assert_eq!(relative_time(&en, now, at(7_199)), "in 1 hour");
+    assert_eq!(relative_time(&en, now, at(7_200)), "in 2 hours");
+    assert_eq!(relative_time(&en, now, at(86_400)), "in 1 day");
+    assert_eq!(relative_time(&en, now, at(7 * 86_400)), "in 7 days");
 }
 
 #[test]
@@ -233,30 +252,192 @@ fn impersonated(by: &str) -> UserInfo {
 
 #[test]
 fn impersonation_banners() {
+    let en = en();
     assert_eq!(
-        impersonation_banner(&user(Some("pat"), None, Method::Password)),
+        impersonation_banner(&en, &user(Some("pat"), None, Method::Password)),
         None
     );
     assert_eq!(
-        impersonation_banner(&impersonated("root")).as_deref(),
+        impersonation_banner(&en, &impersonated("root")).as_deref(),
         Some("Impersonating pat as root.")
     );
     assert_eq!(
-        impersonation_banner(&impersonated("")).as_deref(),
+        impersonation_banner(&en, &impersonated("")).as_deref(),
         Some("Impersonating pat.")
     );
 }
 
 #[test]
 fn stop_errors() {
+    let en = en();
     assert_eq!(
-        stop_error_message(&Error::Auth(AuthError::Forbidden)),
+        stop_error_message(&en, &Error::Auth(AuthError::Forbidden)),
         "You can no longer return to your admin account. Sign out instead."
     );
     assert_eq!(
-        stop_error_message(&Error::Network("down".into())),
+        stop_error_message(&en, &Error::Network("down".into())),
         "Could not reach the server."
     );
+    assert_eq!(
+        stop_error_message(&en, &Error::Status(502)),
+        "Stopping failed: the server answered with HTTP 502."
+    );
+}
+
+/// The catalog parses, every id has the prefix, and every message formats.
+#[test]
+fn catalog() {
+    check::catalog(&L10N).unwrap();
+}
+
+/// Every `watchword-` id the code names is in the catalog, and every message
+/// in the catalog is used.
+#[test]
+fn catalog_matches_the_code() {
+    let defined = check::ids(&L10N, Lang::EN_US);
+    let mut used = Vec::new();
+
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+
+        if path.extension().is_none_or(|e| e != "rs") || path.ends_with("tests.rs") {
+            continue;
+        }
+
+        let source = std::fs::read_to_string(&path).unwrap();
+
+        for (start, _) in source.match_indices("\"watchword-") {
+            let rest = &source[start + 1..];
+            let id = &rest[..rest.find('"').unwrap()];
+
+            // The catalog's prefix.
+            if id == "watchword-" {
+                continue;
+            }
+
+            assert!(
+                defined.iter().any(|d| d == id),
+                "{}: {id} is not in locales/en-US.ftl",
+                path.display()
+            );
+
+            used.push(id.to_owned());
+        }
+    }
+
+    for id in &defined {
+        assert!(used.contains(id), "{id} in locales/en-US.ftl is not used");
+    }
+}
+
+/// Every reason has a message, the same English as watchword-core's.
+#[test]
+fn invalid_messages() {
+    let en = en();
+
+    let reasons = [
+        Invalid::PasswordTooShort { min: 8 },
+        Invalid::PasswordTooShort { min: 1 },
+        Invalid::PasswordIncorrect,
+        Invalid::EmailRequired,
+        Invalid::LoginOrEmailRequired,
+        Invalid::LoginEmpty,
+        Invalid::LoginsDisabled,
+        Invalid::EmailManagedByGoogle,
+        Invalid::GoogleAccountTaken,
+        Invalid::RoleNotChangeable,
+        Invalid::MalformedRequest,
+        Invalid::Unknown,
+    ];
+
+    for reason in reasons {
+        let message = l10n::invalid(&en, &reason);
+
+        if reason == (Invalid::PasswordTooShort { min: 1 }) {
+            assert_eq!(message, "Must be at least 1 character.");
+        } else {
+            assert_eq!(message, reason.to_string());
+        }
+    }
+}
+
+#[test]
+fn error_messages() {
+    let en = en();
+    let message = |error: Error| error_message(&en, &error, "watchword-failed-saving");
+
+    assert_eq!(
+        message(Error::Auth(AuthError::Conflict(Conflict::Email))),
+        "That email is already taken."
+    );
+    assert_eq!(
+        message(Error::Auth(AuthError::Invalid(Invalid::PasswordTooShort {
+            min: 8
+        }))),
+        "Must be at least 8 characters."
+    );
+    assert_eq!(
+        message(Error::Auth(AuthError::Unauthorized)),
+        "Your session has ended. Sign in again."
+    );
+    assert_eq!(
+        message(Error::Auth(AuthError::Gone)),
+        "Saving failed: the link was used or has expired."
+    );
+    assert_eq!(
+        message(Error::Status(500)),
+        "Saving failed: the server answered with HTTP 500."
+    );
+}
+
+/// An app's translations win, and what it lacks comes from watchword's
+/// English, whether or not it added watchword's catalog.
+#[test]
+fn translated_by_the_app() {
+    const SV_SE: Lang = Lang::new("sv-SE");
+
+    static APP: Catalog = Catalog::new(
+        "app",
+        &[
+            Source::new(Lang::EN_US, "title = Title\n"),
+            Source::new(
+                SV_SE,
+                "title = Titel\nwatchword-sign-in = Logga in\nwatchword-impersonating = Agerar som { $user }.\n",
+            ),
+        ],
+    );
+
+    for with_catalog in [true, false] {
+        let mut builder = Phrasebook::builder()
+            .language(Lang::EN_US, "English")
+            .language(SV_SE, "Svenska")
+            .catalog(&APP);
+
+        if with_catalog {
+            builder = builder.catalog(&L10N);
+        }
+
+        let sv = l10n::phrases(Some(builder.build().phrases(SV_SE)));
+
+        assert_eq!(&*sv.text("watchword-sign-in"), "Logga in");
+        assert_eq!(&*sv.text("watchword-sign-out"), "Sign out");
+        assert_eq!(
+            impersonation_banner(&sv, &impersonated("")).as_deref(),
+            Some("Agerar som pat.")
+        );
+    }
+}
+
+#[test]
+fn split_around_a_mark() {
+    assert_eq!(
+        split_around("Delete \u{E000}?", "\u{E000}"),
+        Some(("Delete ", "?"))
+    );
+    assert_eq!(split_around("\u{E000}", "\u{E000}"), Some(("", "")));
+    assert_eq!(split_around("Delete?", "\u{E000}"), None);
 }
 
 #[test]

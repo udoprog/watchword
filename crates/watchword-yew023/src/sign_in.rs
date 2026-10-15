@@ -1,8 +1,12 @@
+use std::rc::Rc;
+
+use phrasebook01::Phrases;
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
 use super::browser;
 use super::http::{self, Error};
+use super::l10n::{self, use_phrases};
 use watchword_core::{AuthConfig, AuthError, LoginRequest, UserInfo};
 
 /// The properties of [`SignIn`].
@@ -32,6 +36,7 @@ pub struct SignInProps {
 /// sign-in, is shown and removed from the URL.
 #[function_component]
 pub fn SignIn(props: &SignInProps) -> Html {
+    let phrases = use_phrases();
     let login = use_state(String::new);
     let password = use_state(String::new);
     let busy = use_state(|| false);
@@ -39,10 +44,11 @@ pub fn SignIn(props: &SignInProps) -> Html {
 
     {
         let error = error.clone();
+        let phrases = phrases.clone();
 
         use_effect_with((), move |_| {
             if let Some(code) = browser::take_query_error() {
-                error.set(Some(AttrValue::Static(query_error_message(&code))));
+                error.set(Some(AttrValue::from(query_error_message(&phrases, &code))));
             }
         });
     }
@@ -65,6 +71,7 @@ pub fn SignIn(props: &SignInProps) -> Html {
         let busy = busy.clone();
         let error = error.clone();
         let on_sign_in = props.on_sign_in.clone();
+        let phrases = phrases.clone();
 
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
@@ -84,12 +91,13 @@ pub fn SignIn(props: &SignInProps) -> Html {
             let busy = busy.clone();
             let error = error.clone();
             let on_sign_in = on_sign_in.clone();
+            let phrases = phrases.clone();
 
             spawn_local(async move {
                 match http::login(&request).await {
                     Ok(user) => on_sign_in.emit(user),
                     Err(e) => {
-                        error.set(Some(login_error(&e, logins)));
+                        error.set(Some(login_error(&phrases, &e, logins)));
                         busy.set(false);
                     }
                 }
@@ -101,6 +109,7 @@ pub fn SignIn(props: &SignInProps) -> Html {
         let busy = busy.clone();
         let error = error.clone();
         let on_sign_in = props.on_sign_in.clone();
+        let phrases = phrases.clone();
 
         Callback::from(move |_: MouseEvent| {
             if *busy {
@@ -113,12 +122,13 @@ pub fn SignIn(props: &SignInProps) -> Html {
             let busy = busy.clone();
             let error = error.clone();
             let on_sign_in = on_sign_in.clone();
+            let phrases = phrases.clone();
 
             spawn_local(async move {
                 match http::cloudflare().await {
                     Ok(user) => on_sign_in.emit(user),
                     Err(e) => {
-                        error.set(Some(cloudflare_error(&e)));
+                        error.set(Some(cloudflare_error(&phrases, &e)));
                         busy.set(false);
                     }
                 }
@@ -130,9 +140,9 @@ pub fn SignIn(props: &SignInProps) -> Html {
     let any = config.password || config.cloudflare || config.google;
 
     let (login_label, login_type, login_autocomplete) = if logins {
-        ("Login or email", "text", "username")
+        ("watchword-login-or-email", "text", "username")
     } else {
-        ("Email", "email", "email")
+        ("watchword-email", "email", "email")
     };
 
     html! {
@@ -142,7 +152,7 @@ pub fn SignIn(props: &SignInProps) -> Html {
                     <p class="auth-title">{title.clone()}</p>
                 }
 
-                <h1 class="auth-heading">{"Sign in"}</h1>
+                <h1 class="auth-heading">{phrases.text("watchword-sign-in")}</h1>
 
                 <div class="auth-message" role="alert">
                     if let Some(error) = &*error {
@@ -155,7 +165,7 @@ pub fn SignIn(props: &SignInProps) -> Html {
                 if config.password {
                     <form class="auth-form" {onsubmit}>
                         <div class="auth-field">
-                            <label for="auth-login">{login_label}</label>
+                            <label for="auth-login">{phrases.text(login_label)}</label>
                             <input
                                 id="auth-login"
                                 class="auth-input"
@@ -171,7 +181,7 @@ pub fn SignIn(props: &SignInProps) -> Html {
                         </div>
 
                         <div class="auth-field">
-                            <label for="auth-password">{"Password"}</label>
+                            <label for="auth-password">{phrases.text("watchword-password")}</label>
                             <input
                                 id="auth-password"
                                 class="auth-input"
@@ -185,7 +195,7 @@ pub fn SignIn(props: &SignInProps) -> Html {
                         </div>
 
                         <div class="auth-actions">
-                            <button type="submit" class="auth-submit" disabled={*busy}>{"Sign in"}</button>
+                            <button type="submit" class="auth-submit" disabled={*busy}>{phrases.text("watchword-sign-in")}</button>
                         </div>
                     </form>
                 }
@@ -194,55 +204,55 @@ pub fn SignIn(props: &SignInProps) -> Html {
                     <div class="auth-alternatives">
                         if config.cloudflare {
                             <button type="button" class="auth-cloudflare" onclick={on_cloudflare} disabled={*busy}>
-                                {"Sign in with Cloudflare"}
+                                {phrases.text("watchword-sign-in-cloudflare")}
                             </button>
                         }
 
                         if config.google {
-                            <a class="auth-google" href={http::GOOGLE_SIGN_IN}>{"Sign in with Google"}</a>
+                            <a class="auth-google" href={http::GOOGLE_SIGN_IN}>{phrases.text("watchword-sign-in-google")}</a>
                         }
                     </div>
                 }
 
                 if !any {
-                    <p class="auth-error">{"No way to sign in is enabled."}</p>
+                    <p class="auth-error">{phrases.text("watchword-sign-in-none")}</p>
                 }
             </div>
         </main>
     }
 }
 
-fn login_error(error: &Error, logins: bool) -> AttrValue {
-    match error {
-        Error::Auth(AuthError::Unauthorized) if logins => {
-            AttrValue::from("Wrong login or password.")
+fn login_error(phrases: &Phrases, error: &Error, logins: bool) -> AttrValue {
+    let id = match error {
+        Error::Auth(AuthError::Unauthorized) if logins => "watchword-sign-in-wrong-login",
+        Error::Auth(AuthError::Unauthorized) => "watchword-sign-in-wrong-email",
+        Error::Auth(AuthError::TooManyRequests) => "watchword-sign-in-too-many",
+        Error::Auth(AuthError::Forbidden) => "watchword-sign-in-forbidden",
+        Error::Auth(AuthError::Invalid(invalid)) => {
+            return AttrValue::from(l10n::invalid(phrases, invalid));
         }
-        Error::Auth(AuthError::Unauthorized) => AttrValue::from("Wrong email or password."),
-        Error::Auth(AuthError::TooManyRequests) => {
-            AttrValue::from("Too many failed sign-ins. Try again in a few minutes.")
-        }
-        Error::Auth(AuthError::Forbidden) => AttrValue::from("This account may not sign in."),
-        Error::Auth(AuthError::Invalid(invalid)) => AttrValue::from(invalid.to_string()),
-        Error::Network(..) => AttrValue::from("Could not reach the server."),
-        error => AttrValue::from(format!("Signing in failed: {error}.")),
-    }
+        Error::Network(..) => "watchword-error-unreachable",
+        error => return l10n::failed(phrases, "watchword-failed-signing-in", error),
+    };
+
+    l10n::text(phrases, id)
 }
 
-fn cloudflare_error(error: &Error) -> AttrValue {
+fn cloudflare_error(phrases: &Phrases, error: &Error) -> AttrValue {
     match error {
         Error::Auth(AuthError::Unauthorized | AuthError::Forbidden) => {
-            AttrValue::from("Cloudflare could not sign you in. Reload to try again.")
+            l10n::text(phrases, "watchword-sign-in-cloudflare-failed")
         }
-        error => login_error(error, true),
+        error => login_error(phrases, error, true),
     }
 }
 
 /// The message for an `?error=` code the server redirected with, such as
 /// the errors of Google sign-in.
-pub(super) fn query_error_message(code: &str) -> &'static str {
-    match code {
-        "auth-failed" => "Authentication failed.",
-        "user-not-found" => "User not found.",
-        _ => "Signing in failed.",
-    }
+pub(super) fn query_error_message(phrases: &Phrases, code: &str) -> Rc<str> {
+    phrases.text(match code {
+        "auth-failed" => "watchword-query-auth-failed",
+        "user-not-found" => "watchword-query-user-not-found",
+        _ => "watchword-query-failed",
+    })
 }

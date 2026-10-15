@@ -2,12 +2,15 @@ use std::rc::Rc;
 
 #[cfg(feature = "musliweb04")]
 use musli_web04::web03::prelude::ws;
+use phrasebook01::Phrases;
+use yew::context::ContextHandle;
 use yew::prelude::*;
 
 use super::browser;
 use super::client::Client;
 use super::context::AuthContext;
 use super::http::{self, Error};
+use super::l10n;
 use super::register::Register;
 use super::sign_in::SignIn;
 #[cfg(feature = "musliweb04")]
@@ -15,9 +18,6 @@ use super::socket::{Socket, SocketHandle};
 #[cfg(feature = "musliweb04")]
 use watchword_core::musliweb04::AuthUpdate;
 use watchword_core::{AuthConfig, UserInfo};
-
-/// The default `signed_out_notice` of [`AuthProvider`].
-pub const SESSION_ENDED: &str = "Your session has ended. Sign in again.";
 
 /// The properties of [`AuthProvider`].
 #[derive(Properties, PartialEq)]
@@ -27,8 +27,10 @@ pub struct AuthProviderProps {
     pub title: Option<AttrValue>,
     /// Shown on the sign-in page when the session ends under the user, as
     /// found by [`AuthContext::check_session`] or [`AuthContext::refresh`].
-    #[prop_or(AttrValue::Static(SESSION_ENDED))]
-    pub signed_out_notice: AttrValue,
+    /// Defaults to the message `watchword-session-ended`, "Your session has
+    /// ended. Sign in again."
+    #[prop_or_default]
+    pub signed_out_notice: Option<AttrValue>,
     /// Classes added to the splash, sign-in and registration pages.
     #[prop_or_default]
     pub class: Classes,
@@ -51,8 +53,15 @@ pub struct AuthProviderProps {
 /// user [`Resync`](watchword_core::musliweb04::AuthUpdate::Resync) carries),
 /// so a change to the user made elsewhere, such as an admin changing their
 /// role, shows at once.
+///
+/// Its text, and that of the pages it shows, comes from the
+/// [`Phrases`](phrasebook01::Phrases) the app provides around it, falling
+/// back to watchword's English (see [`L10N`](super::L10N)).
 pub struct AuthProvider {
     state: State,
+    phrases: Phrases,
+    /// Keeps this subscribed to the app's phrases.
+    _phrases: Option<ContextHandle<Phrases>>,
     config: Option<AuthConfig>,
     register_token: Option<AttrValue>,
     checking: bool,
@@ -73,9 +82,10 @@ pub struct AuthProvider {
 enum State {
     Loading,
     /// The server could not be reached or answered with an error.
-    Unreachable(AttrValue),
+    Unreachable(Error),
     SignedOut {
-        notice: Option<AttrValue>,
+        /// Whether the session ended under the user.
+        ended: bool,
     },
     Register,
     SignedIn(Rc<UserInfo>),
@@ -103,6 +113,7 @@ pub enum Msg {
     SetSocket(Option<ws::Handle>),
     #[cfg(feature = "musliweb04")]
     Update(AuthUpdate),
+    Phrases(Phrases),
 }
 
 impl Component for AuthProvider {
@@ -113,8 +124,13 @@ impl Component for AuthProvider {
         let link = ctx.link();
         link.send_message(Msg::Load);
 
+        let context = link.context::<Phrases>(link.callback(Msg::Phrases));
+        let phrases = l10n::phrases(context.as_ref().map(|(phrases, _)| phrases.clone()));
+
         Self {
             state: State::Loading,
+            phrases,
+            _phrases: context.map(|(_, handle)| handle),
             config: None,
             register_token: browser::register_token().map(AttrValue::from),
             checking: false,
@@ -156,7 +172,7 @@ impl Component for AuthProvider {
                 let config = match config {
                     Ok(config) => config,
                     Err(error) => {
-                        self.state = State::Unreachable(unreachable(&error));
+                        self.state = State::Unreachable(error);
                         return true;
                     }
                 };
@@ -167,10 +183,10 @@ impl Component for AuthProvider {
                     _ if self.register_token.is_some() => State::Register,
                     Some(Ok(user)) => State::SignedIn(Rc::new(user)),
                     Some(Err(error)) if error.is_unauthorized() => {
-                        State::SignedOut { notice: None }
+                        State::SignedOut { ended: false }
                     }
-                    Some(Err(error)) => State::Unreachable(unreachable(&error)),
-                    None => State::SignedOut { notice: None },
+                    Some(Err(error)) => State::Unreachable(error),
+                    None => State::SignedOut { ended: false },
                 };
             }
             Msg::SignedIn(user) => {
@@ -192,7 +208,7 @@ impl Component for AuthProvider {
             }
             Msg::SignedOut => {
                 browser::replace_url("/");
-                self.state = State::SignedOut { notice: None };
+                self.state = State::SignedOut { ended: false };
             }
             Msg::Refresh => {
                 let client = self.client();
@@ -211,7 +227,7 @@ impl Component for AuthProvider {
                     self.config = Some(config);
                 }
 
-                self.session_answer(ctx, me);
+                self.session_answer(me);
             }
             Msg::SetUser(user) => {
                 let State::SignedIn(current) = &self.state else {
@@ -232,7 +248,7 @@ impl Component for AuthProvider {
             }
             Msg::Checked(me) => {
                 self.checking = false;
-                self.session_answer(ctx, me);
+                self.session_answer(me);
             }
             #[cfg(feature = "musliweb04")]
             Msg::SetSocket(handle) => {
@@ -268,6 +284,9 @@ impl Component for AuthProvider {
                 // marker included, so it replaces the user as it is.
                 self.state = State::SignedIn(Rc::new(user));
             }
+            Msg::Phrases(phrases) => {
+                self.phrases = l10n::phrases(Some(phrases));
+            }
         }
 
         true
@@ -301,26 +320,26 @@ impl Component for AuthProvider {
                     }
                 </main>
             },
-            State::Unreachable(message) => html! {
+            State::Unreachable(error) => html! {
                 <main class={classes!("auth-page", "auth-splash", props.class.clone())}>
                     if let Some(title) = &props.title {
                         <p class="auth-title">{title.clone()}</p>
                     }
 
                     <div class="auth-message" role="alert">
-                        <p class="auth-error">{message.clone()}</p>
+                        <p class="auth-error">{unreachable(&self.phrases, error)}</p>
                     </div>
 
                     <div class="auth-actions">
-                        <button type="button" class="auth-retry" onclick={self.retry.clone()}>{"Retry"}</button>
+                        <button type="button" class="auth-retry" onclick={self.retry.clone()}>{self.phrases.text("watchword-retry")}</button>
                     </div>
                 </main>
             },
-            State::SignedOut { notice } => html! {
+            State::SignedOut { ended } => html! {
                 <SignIn
                     {config}
                     on_sign_in={self.on_signed_in.clone()}
-                    notice={notice.clone()}
+                    notice={ended.then(|| self.signed_out_notice(props))}
                     title={props.title.clone()}
                     class={props.class.clone()}
                 />
@@ -369,10 +388,18 @@ impl AuthProvider {
         }
     }
 
+    /// The notice shown when the session ended under the user.
+    fn signed_out_notice(&self, props: &AuthProviderProps) -> AttrValue {
+        match &props.signed_out_notice {
+            Some(notice) => notice.clone(),
+            None => l10n::text(&self.phrases, "watchword-session-ended"),
+        }
+    }
+
     /// Applies what the server said about the session to a signed-in user:
     /// a new user replaces it, and a 401 ends the session. Other failures,
     /// and answers arriving after signing out, change nothing.
-    fn session_answer(&mut self, ctx: &Context<Self>, me: Result<UserInfo, Error>) {
+    fn session_answer(&mut self, me: Result<UserInfo, Error>) {
         if !matches!(self.state, State::SignedIn(..)) {
             return;
         }
@@ -382,9 +409,7 @@ impl AuthProvider {
                 self.state = State::SignedIn(Rc::new(user));
             }
             Err(error) if error.is_unauthorized() => {
-                self.state = State::SignedOut {
-                    notice: Some(ctx.props().signed_out_notice.clone()),
-                };
+                self.state = State::SignedOut { ended: true };
             }
             Err(..) => {}
         }
@@ -403,11 +428,9 @@ pub(super) fn replace_user(current: &UserInfo, mut new: UserInfo) -> UserInfo {
     new
 }
 
-fn unreachable(error: &Error) -> AttrValue {
+fn unreachable(phrases: &Phrases, error: &Error) -> AttrValue {
     match error {
-        Error::Network(..) => AttrValue::from("Could not reach the server."),
-        error => AttrValue::from(format!(
-            "The server could not be asked who is signed in: {error}."
-        )),
+        Error::Network(..) => l10n::text(phrases, "watchword-error-unreachable"),
+        error => l10n::failed(phrases, "watchword-failed-checking-session", error),
     }
 }

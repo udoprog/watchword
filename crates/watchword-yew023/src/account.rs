@@ -1,12 +1,16 @@
+use std::rc::Rc;
+
+use phrasebook01::Phrases;
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
 use super::browser;
 use super::context::use_auth;
-use super::form::{error_message, identity_change, optional};
+use super::form::{identity_change, optional};
 use super::http::{self, Error};
+use super::l10n::{self, error_message, role_name, use_phrases};
 use watchword_core::{
-    AuthError, Method, PasswordChange, Role, UserChange, UserInfo, validate_password,
+    AuthError, Invalid, Method, PasswordChange, UserChange, UserInfo, validate_password,
 };
 
 /// The properties of [`AccountPanel`].
@@ -31,23 +35,24 @@ pub struct AccountPanelProps {
 #[function_component]
 pub fn AccountPanel(props: &AccountPanelProps) -> Html {
     let auth = use_auth();
+    let phrases = use_phrases();
     let user = auth.user.clone();
     let logins = auth.config.logins;
     let google_method = user.method == Method::Google;
 
     html! {
         <section class={classes!("auth-account", props.class.clone())}>
-            <h2 class="auth-heading">{"Account"}</h2>
+            <h2 class="auth-heading">{phrases.text("watchword-account")}</h2>
 
             <div class="auth-details">
                 <div class="auth-field">
-                    <span class="auth-label">{"Role"}</span>
-                    <span class="auth-value">{role_name(user.role)}</span>
+                    <span class="auth-label">{phrases.text("watchword-role")}</span>
+                    <span class="auth-value">{role_name(&phrases, user.role)}</span>
                 </div>
 
                 <div class="auth-field">
-                    <span class="auth-label">{"Signs in with"}</span>
-                    <span class="auth-value">{method_name(user.method)}</span>
+                    <span class="auth-label">{phrases.text("watchword-signs-in-with")}</span>
+                    <span class="auth-value">{method_name(&phrases, user.method)}</span>
                 </div>
             </div>
 
@@ -57,12 +62,12 @@ pub fn AccountPanel(props: &AccountPanelProps) -> Html {
             if auth.config.google {
                 <div class="auth-alternatives">
                     if google_method {
-                        <a class="auth-google" href={http::GOOGLE_LINK}>{"Switch to another Google account"}</a>
+                        <a class="auth-google" href={http::GOOGLE_LINK}>{phrases.text("watchword-switch-google-other")}</a>
                     } else {
                         <p class="auth-hint">
-                            {"Switching to Google removes your password and signs you out everywhere else."}
+                            {phrases.text("watchword-switch-google-hint")}
                         </p>
-                        <a class="auth-google" href={http::GOOGLE_LINK}>{"Switch to Google"}</a>
+                        <a class="auth-google" href={http::GOOGLE_LINK}>{phrases.text("watchword-switch-google")}</a>
                     }
                 </div>
             }
@@ -73,7 +78,7 @@ pub fn AccountPanel(props: &AccountPanelProps) -> Html {
                     class="auth-sign-out"
                     onclick={Callback::from(move |_: MouseEvent| auth.sign_out())}
                 >
-                    {"Sign out"}
+                    {phrases.text("watchword-sign-out")}
                 </button>
             </div>
         </section>
@@ -90,6 +95,7 @@ struct ProfileFormProps {
 #[function_component]
 fn ProfileForm(props: &ProfileFormProps) -> Html {
     let auth = use_auth();
+    let phrases = use_phrases();
     let login = use_state(|| props.user.login.clone().unwrap_or_default());
     let email = use_state(|| props.user.email.clone().unwrap_or_default());
     let busy = use_state(|| false);
@@ -125,6 +131,7 @@ fn ProfileForm(props: &ProfileFormProps) -> Html {
         let busy = busy.clone();
         let message = message.clone();
         let auth = auth.clone();
+        let phrases = phrases.clone();
 
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
@@ -137,7 +144,9 @@ fn ProfileForm(props: &ProfileFormProps) -> Html {
                 Ok(change) if *change == UserChange::default() => return,
                 Ok(change) => change.clone(),
                 Err(error) => {
-                    message.set(Some(Message::Error(AttrValue::Static(error))));
+                    message.set(Some(Message::Error(AttrValue::from(l10n::invalid(
+                        &phrases, error,
+                    )))));
                     return;
                 }
             };
@@ -148,15 +157,23 @@ fn ProfileForm(props: &ProfileFormProps) -> Html {
             let busy = busy.clone();
             let message = message.clone();
             let auth = auth.clone();
+            let phrases = phrases.clone();
 
             spawn_local(async move {
                 match auth.client().update_account(&change).await {
                     Ok(user) => {
-                        message.set(Some(Message::Notice(AttrValue::Static("Saved."))));
+                        message.set(Some(Message::Notice(l10n::text(
+                            &phrases,
+                            "watchword-saved",
+                        ))));
                         auth.set_user(user);
                     }
                     Err(e) => {
-                        message.set(Some(Message::Error(error_message(&e, "Saving"))));
+                        message.set(Some(Message::Error(error_message(
+                            &phrases,
+                            &e,
+                            "watchword-failed-saving",
+                        ))));
                         check_unauthorized(&auth, &e);
                     }
                 }
@@ -168,12 +185,12 @@ fn ProfileForm(props: &ProfileFormProps) -> Html {
 
     html! {
         <form class="auth-form auth-profile" {onsubmit}>
-            <h3 class="auth-subheading">{"Profile"}</h3>
+            <h3 class="auth-subheading">{phrases.text("watchword-profile")}</h3>
             {render_message(&message)}
 
             if logins {
                 <div class="auth-field">
-                    <label for="auth-account-login">{"Login"}</label>
+                    <label for="auth-account-login">{phrases.text("watchword-login")}</label>
                     <input
                         id="auth-account-login"
                         class="auth-input"
@@ -185,12 +202,12 @@ fn ProfileForm(props: &ProfileFormProps) -> Html {
                         oninput={on_login_input}
                         disabled={*busy}
                     />
-                    <span class="auth-hint">{"Sign in with this name or your email."}</span>
+                    <span class="auth-hint">{phrases.text("watchword-login-hint")}</span>
                 </div>
             }
 
             <div class="auth-field">
-                <label for="auth-account-email">{"Email"}</label>
+                <label for="auth-account-email">{phrases.text("watchword-email")}</label>
                 <input
                     id="auth-account-email"
                     class="auth-input"
@@ -204,13 +221,13 @@ fn ProfileForm(props: &ProfileFormProps) -> Html {
             </div>
 
             if google_method {
-                <p class="auth-hint">{"Your email is the one of your Google account."}</p>
+                <p class="auth-hint">{phrases.text("watchword-email-google")}</p>
             } else if logins {
-                <p class="auth-hint">{"Optional. Leave empty to remove it."}</p>
+                <p class="auth-hint">{phrases.text("watchword-email-optional")}</p>
             }
 
             <div class="auth-actions">
-                <button type="submit" class="auth-submit" disabled={*busy || unchanged}>{"Save"}</button>
+                <button type="submit" class="auth-submit" disabled={*busy || unchanged}>{phrases.text("watchword-save")}</button>
             </div>
         </form>
     }
@@ -225,6 +242,7 @@ struct PasswordFormProps {
 #[function_component]
 fn PasswordForm(props: &PasswordFormProps) -> Html {
     let auth = use_auth();
+    let phrases = use_phrases();
     let old_password = use_state(String::new);
     let new_password = use_state(String::new);
     let confirm = use_state(String::new);
@@ -250,6 +268,7 @@ fn PasswordForm(props: &PasswordFormProps) -> Html {
         let busy = busy.clone();
         let message = message.clone();
         let auth = auth.clone();
+        let phrases = phrases.clone();
 
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
@@ -259,13 +278,16 @@ fn PasswordForm(props: &PasswordFormProps) -> Html {
             }
 
             if let Some(invalid) = validate_password(&new_password) {
-                message.set(Some(Message::Error(AttrValue::from(invalid.to_string()))));
+                message.set(Some(Message::Error(AttrValue::from(l10n::invalid(
+                    &phrases, &invalid,
+                )))));
                 return;
             }
 
             if *new_password != *confirm {
-                message.set(Some(Message::Error(AttrValue::Static(
-                    "The passwords do not match.",
+                message.set(Some(Message::Error(l10n::text(
+                    &phrases,
+                    "watchword-passwords-differ",
                 ))));
                 return;
             }
@@ -284,6 +306,7 @@ fn PasswordForm(props: &PasswordFormProps) -> Html {
             let busy = busy.clone();
             let message = message.clone();
             let auth = auth.clone();
+            let phrases = phrases.clone();
 
             spawn_local(async move {
                 match auth.client().change_password(&request).await {
@@ -292,25 +315,27 @@ fn PasswordForm(props: &PasswordFormProps) -> Html {
                         new_password.set(String::new());
                         confirm.set(String::new());
                         let notice = if has_password {
-                            "Password changed. Your other sessions were signed out."
+                            "watchword-password-changed"
                         } else {
-                            "Password set. Your other sessions were signed out."
+                            "watchword-password-set"
                         };
-                        message.set(Some(Message::Notice(AttrValue::Static(notice))));
+                        message.set(Some(Message::Notice(l10n::text(&phrases, notice))));
                         auth.set_user(user);
                     }
                     // With a session (else the check below signs out), a
                     // 401 here is the current password being wrong.
                     Err(e @ Error::Auth(AuthError::Unauthorized)) => {
-                        message.set(Some(Message::Error(AttrValue::Static(
-                            "The current password is wrong.",
+                        message.set(Some(Message::Error(l10n::text(
+                            &phrases,
+                            "watchword-password-wrong",
                         ))));
                         check_unauthorized(&auth, &e);
                     }
                     Err(e) => {
                         message.set(Some(Message::Error(error_message(
+                            &phrases,
                             &e,
-                            "Changing the password",
+                            "watchword-failed-changing-password",
                         ))));
                     }
                 }
@@ -321,27 +346,27 @@ fn PasswordForm(props: &PasswordFormProps) -> Html {
     };
 
     let (heading, submit) = if has_password {
-        ("Change password", "Change password")
+        ("watchword-change-password", "watchword-change-password")
     } else {
-        ("Set a password", "Set password")
+        ("watchword-set-a-password", "watchword-set-password")
     };
 
     html! {
         <form class="auth-form auth-password" {onsubmit}>
-            <h3 class="auth-subheading">{heading}</h3>
+            <h3 class="auth-subheading">{phrases.text(heading)}</h3>
             {render_message(&message)}
 
             if google_method {
                 <p class="auth-hint">
-                    {"Setting a password switches you from Google to the password and signs you out everywhere else."}
+                    {phrases.text("watchword-password-google-hint")}
                 </p>
             } else {
-                <p class="auth-hint">{"Changing the password signs you out everywhere else."}</p>
+                <p class="auth-hint">{phrases.text("watchword-password-hint")}</p>
             }
 
             if has_password {
                 <div class="auth-field">
-                    <label for="auth-old-password">{"Current password"}</label>
+                    <label for="auth-old-password">{phrases.text("watchword-current-password")}</label>
                     <input
                         id="auth-old-password"
                         class="auth-input"
@@ -356,7 +381,7 @@ fn PasswordForm(props: &PasswordFormProps) -> Html {
             }
 
             <div class="auth-field">
-                <label for="auth-new-password">{"New password"}</label>
+                <label for="auth-new-password">{phrases.text("watchword-new-password")}</label>
                 <input
                     id="auth-new-password"
                     class="auth-input"
@@ -370,7 +395,7 @@ fn PasswordForm(props: &PasswordFormProps) -> Html {
             </div>
 
             <div class="auth-field">
-                <label for="auth-confirm-password">{"Confirm new password"}</label>
+                <label for="auth-confirm-password">{phrases.text("watchword-confirm-new-password")}</label>
                 <input
                     id="auth-confirm-password"
                     class="auth-input"
@@ -384,7 +409,7 @@ fn PasswordForm(props: &PasswordFormProps) -> Html {
             </div>
 
             <div class="auth-actions">
-                <button type="submit" class="auth-submit" disabled={*busy}>{submit}</button>
+                <button type="submit" class="auth-submit" disabled={*busy}>{phrases.text(submit)}</button>
             </div>
         </form>
     }
@@ -417,18 +442,11 @@ fn check_unauthorized(auth: &super::AuthContext, error: &Error) {
     }
 }
 
-pub(super) fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::Admin => "Administrator",
-        Role::Regular => "Regular user",
-    }
-}
-
-fn method_name(method: Method) -> &'static str {
-    match method {
-        Method::Password => "Password",
-        Method::Google => "Google",
-    }
+fn method_name(phrases: &Phrases, method: Method) -> Rc<str> {
+    phrases.text(match method {
+        Method::Password => "watchword-method-password",
+        Method::Google => "watchword-method-google",
+    })
 }
 
 /// The change to the user's own login and email that the form's inputs
@@ -440,7 +458,7 @@ pub(super) fn account_change(
     login: &str,
     email: &str,
     logins: bool,
-) -> Result<UserChange, &'static str> {
+) -> Result<UserChange, Invalid> {
     let login = if logins {
         optional(login)
     } else {

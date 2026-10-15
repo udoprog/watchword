@@ -1,9 +1,10 @@
+use phrasebook01::{Phrases, args};
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
 use super::context::use_auth;
-use super::form::error_message;
 use super::http::{self, Error};
+use super::l10n::{self, use_phrases};
 use watchword_core::{AuthError, UserInfo};
 
 /// The properties of [`UserMenu`].
@@ -37,6 +38,7 @@ pub struct UserMenuProps {
 #[function_component]
 pub fn UserMenu(props: &UserMenuProps) -> Html {
     let auth = use_auth();
+    let phrases = use_phrases();
     let open = use_state(|| false);
     let stopping = use_state(|| false);
     let stop_error = use_state(|| None::<AttrValue>);
@@ -66,6 +68,7 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
         let stopping = stopping.clone();
         let stop_error = stop_error.clone();
         let done = props.on_stop_impersonating.clone();
+        let phrases = phrases.clone();
 
         Callback::from(move |_: MouseEvent| {
             if *stopping {
@@ -79,6 +82,7 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
             let stopping = stopping.clone();
             let stop_error = stop_error.clone();
             let done = done.clone();
+            let phrases = phrases.clone();
 
             spawn_local(async move {
                 match http::stop_impersonating().await {
@@ -88,7 +92,7 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
                         done.emit(());
                     }
                     Err(error) => {
-                        stop_error.set(Some(stop_error_message(&error)));
+                        stop_error.set(Some(stop_error_message(&phrases, &error)));
 
                         if error.is_unauthorized() {
                             auth.check_session();
@@ -101,7 +105,7 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
         })
     };
 
-    let banner = impersonation_banner(&auth.user).map(|text| {
+    let banner = impersonation_banner(&phrases, &auth.user).map(|text| {
         html! {
             <div class="auth-impersonating" role="status">
                 <span class="auth-impersonating-text">{text}</span>
@@ -111,7 +115,7 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
                     onclick={on_stop}
                     disabled={*stopping}
                 >
-                    {"Stop impersonating"}
+                    {phrases.text("watchword-stop-impersonating")}
                 </button>
                 if let Some(error) = &*stop_error {
                     <span class="auth-error">{error.clone()}</span>
@@ -137,17 +141,17 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
             if *open {
                 <ul class="auth-menu-items">
                     <li>
-                        <button type="button" class="auth-menu-item" onclick={on_account}>{"Account"}</button>
+                        <button type="button" class="auth-menu-item" onclick={on_account}>{phrases.text("watchword-account")}</button>
                     </li>
 
                     if auth.is_admin() {
                         <li>
-                            <button type="button" class="auth-menu-item" onclick={on_admin}>{"Users"}</button>
+                            <button type="button" class="auth-menu-item" onclick={on_admin}>{phrases.text("watchword-users")}</button>
                         </li>
                     }
 
                     <li>
-                        <button type="button" class="auth-menu-item auth-sign-out" onclick={on_sign_out}>{"Sign out"}</button>
+                        <button type="button" class="auth-menu-item auth-sign-out" onclick={on_sign_out}>{phrases.text("watchword-sign-out")}</button>
                     </li>
                 </ul>
             }
@@ -157,23 +161,24 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
 
 /// The banner's text while an admin impersonates `user`, naming the user and
 /// the admin; `None` when the session is the user's own.
-pub(super) fn impersonation_banner(user: &UserInfo) -> Option<String> {
+pub(super) fn impersonation_banner(phrases: &Phrases, user: &UserInfo) -> Option<String> {
     let by = user.impersonated_by.as_ref()?;
 
     Some(if by.name.is_empty() {
-        format!("Impersonating {}.", user.name())
+        phrases.msg("watchword-impersonating", &args!(user = user.name()))
     } else {
-        format!("Impersonating {} as {}.", user.name(), by.name)
+        phrases.msg(
+            "watchword-impersonating-as",
+            &args!(user = user.name(), admin = by.name.as_str()),
+        )
     })
 }
 
 /// Why Stop impersonating failed. A refusal means the admin can no longer
 /// come back, so the way out is signing out.
-pub(super) fn stop_error_message(error: &Error) -> AttrValue {
+pub(super) fn stop_error_message(phrases: &Phrases, error: &Error) -> AttrValue {
     match error {
-        Error::Auth(AuthError::Forbidden) => {
-            AttrValue::from("You can no longer return to your admin account. Sign out instead.")
-        }
-        error => error_message(error, "Stopping"),
+        Error::Auth(AuthError::Forbidden) => l10n::text(phrases, "watchword-stop-forbidden"),
+        error => l10n::error_message(phrases, error, "watchword-failed-stopping"),
     }
 }

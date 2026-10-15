@@ -30,6 +30,9 @@ gloo-net = { version = "0.7.0", default-features = false, features = ["http", "j
 jiff = { version = "0.2.37", features = ["js"] }
 serde = "1.0.229"
 wasm-bindgen-futures = "0.4.56"
+# A path dependency until phrasebook is on crates.io; the path is that of the
+# main checkout, next to which phrasebook is checked out (../phrasebook).
+phrasebook01 = { package = "phrasebook", version = "0.1.0", path = "../../../phrasebook", features = ["yew023"] }
 musli-web04 = { package = "musli-web", version = "0.4.11", default-features = false, features = ["web03"], optional = true }
 web-sys = { version = "0.3.83", features = ["Clipboard", "History", "HtmlInputElement", "HtmlSelectElement", "Location", "Navigator", "RequestCredentials", "Window"] }
 

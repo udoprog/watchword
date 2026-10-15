@@ -81,6 +81,34 @@ signing in and out, registration and impersonation always use HTTP.
 
 <br>
 
+## Translating
+
+The components look their text up through [phrasebook] 0.1: in the
+`Phrases` the app provides with `ContextProvider<Phrases>`, falling back to
+watchword's own English messages, [`L10N`], for any message the app's
+phrasebook lacks. Without a provider they render that English, so an app
+that does not translate needs nothing.
+
+The messages are the `watchword-*` ids of [`locales/en-US.ftl`][ftl]. To
+translate them, an app adds those ids to its own `.ftl` resources and adds
+watchword's catalog after its own, so its messages win:
+
+```rust
+let book = Phrasebook::builder()
+    .language(Lang::EN_US, "English")
+    .language(SV_SE, "Svenska")
+    .catalog(&APP)
+    .catalog(&auth::yew023::L10N)
+    .build();
+```
+
+Errors from the server, including why a request is invalid, are phrased
+from their codes here, so they are translated the same way.
+[`AuthProvider`]'s `signed_out_notice` and [`CloudflareSettings`]'s
+`app_name` override their messages when given.
+
+<br>
+
 ## Styling
 
 The components render plain semantic HTML with stable class names and take
@@ -151,8 +179,11 @@ are:
 [`AuthProvider`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthProvider.html
 [`CloudflareSettings`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.CloudflareSettings.html
 [`http`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/http/index.html
+[`L10N`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/static.L10N.html
 [`use_auth`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth.html
 [`UserMenu`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.UserMenu.html
+[ftl]: https://github.com/udoprog/watchword/blob/main/crates/watchword-yew023/locales/en-US.ftl
 [musli-web]: https://docs.rs/musli-web
+[phrasebook]: https://docs.rs/phrasebook
 [watchword]: https://docs.rs/watchword
 [Yew]: https://yew.rs

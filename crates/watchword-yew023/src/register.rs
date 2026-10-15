@@ -1,8 +1,10 @@
+use phrasebook01::Phrases;
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
 use super::browser;
 use super::http::{self, Error};
+use super::l10n::{self, use_phrases};
 use watchword_core::{AuthError, RegisterInfo, RegisterRequest, UserInfo, validate_password};
 
 /// The properties of [`Register`].
@@ -33,6 +35,7 @@ enum Link {
 /// user in.
 #[function_component]
 pub fn Register(props: &RegisterProps) -> Html {
+    let phrases = use_phrases();
     let link = use_state(|| Link::Loading);
     let password = use_state(String::new);
     let confirm = use_state(String::new);
@@ -41,6 +44,7 @@ pub fn Register(props: &RegisterProps) -> Html {
 
     {
         let link = link.clone();
+        let phrases = phrases.clone();
 
         use_effect_with(props.token.clone(), move |token| {
             let token = token.clone();
@@ -49,7 +53,7 @@ pub fn Register(props: &RegisterProps) -> Html {
             spawn_local(async move {
                 link.set(match http::register_info(&token).await {
                     Ok(info) => Link::Valid(info),
-                    Err(e) => Link::Invalid(link_error(&e)),
+                    Err(e) => Link::Invalid(link_error(&phrases, &e)),
                 });
             });
         });
@@ -73,6 +77,7 @@ pub fn Register(props: &RegisterProps) -> Html {
         let busy = busy.clone();
         let error = error.clone();
         let on_register = props.on_register.clone();
+        let phrases = phrases.clone();
 
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
@@ -82,12 +87,12 @@ pub fn Register(props: &RegisterProps) -> Html {
             }
 
             if let Some(invalid) = validate_password(&password) {
-                error.set(Some(AttrValue::from(invalid.to_string())));
+                error.set(Some(AttrValue::from(l10n::invalid(&phrases, &invalid))));
                 return;
             }
 
             if *password != *confirm {
-                error.set(Some(AttrValue::from("The passwords do not match.")));
+                error.set(Some(l10n::text(&phrases, "watchword-passwords-differ")));
                 return;
             }
 
@@ -102,26 +107,29 @@ pub fn Register(props: &RegisterProps) -> Html {
             let busy = busy.clone();
             let error = error.clone();
             let on_register = on_register.clone();
+            let phrases = phrases.clone();
 
             spawn_local(async move {
                 match http::register(&token, &request).await {
                     Ok(user) => on_register.emit(user),
                     Err(e @ Error::Auth(AuthError::NotFound | AuthError::Gone)) => {
-                        link.set(Link::Invalid(link_error(&e)));
+                        link.set(Link::Invalid(link_error(&phrases, &e)));
                         busy.set(false);
                     }
                     Err(Error::Auth(AuthError::Invalid(invalid))) => {
-                        error.set(Some(AttrValue::from(invalid.to_string())));
+                        error.set(Some(AttrValue::from(l10n::invalid(&phrases, &invalid))));
                         busy.set(false);
                     }
                     Err(Error::Network(..)) => {
-                        error.set(Some(AttrValue::from("Could not reach the server.")));
+                        error.set(Some(l10n::text(&phrases, "watchword-error-unreachable")));
                         busy.set(false);
                     }
                     Err(e) => {
-                        error.set(Some(AttrValue::from(format!(
-                            "Setting the password failed: {e}."
-                        ))));
+                        error.set(Some(l10n::failed(
+                            &phrases,
+                            "watchword-failed-setting-password",
+                            &e,
+                        )));
                         busy.set(false);
                     }
                 }
@@ -131,7 +139,7 @@ pub fn Register(props: &RegisterProps) -> Html {
 
     let body = match &*link {
         Link::Loading => html! {
-            <p class="auth-status" role="status">{"Checking the link…"}</p>
+            <p class="auth-status" role="status">{phrases.text("watchword-register-checking")}</p>
         },
         Link::Invalid(message) => html! {
             <div class="auth-message" role="alert">
@@ -149,20 +157,20 @@ pub fn Register(props: &RegisterProps) -> Html {
                 <form class="auth-form" {onsubmit}>
                     if let Some(login) = &info.login {
                         <div class="auth-field">
-                            <span class="auth-label">{"Login"}</span>
+                            <span class="auth-label">{phrases.text("watchword-login")}</span>
                             <span class="auth-value">{login.clone()}</span>
                         </div>
                     }
 
                     if let Some(email) = &info.email {
                         <div class="auth-field">
-                            <span class="auth-label">{"Email"}</span>
+                            <span class="auth-label">{phrases.text("watchword-email")}</span>
                             <span class="auth-value">{email.clone()}</span>
                         </div>
                     }
 
                     <div class="auth-field">
-                        <label for="auth-password">{"Password"}</label>
+                        <label for="auth-password">{phrases.text("watchword-password")}</label>
                         <input
                             id="auth-password"
                             class="auth-input"
@@ -176,7 +184,7 @@ pub fn Register(props: &RegisterProps) -> Html {
                     </div>
 
                     <div class="auth-field">
-                        <label for="auth-confirm">{"Confirm password"}</label>
+                        <label for="auth-confirm">{phrases.text("watchword-confirm-password")}</label>
                         <input
                             id="auth-confirm"
                             class="auth-input"
@@ -190,14 +198,14 @@ pub fn Register(props: &RegisterProps) -> Html {
                     </div>
 
                     <div class="auth-actions">
-                        <button type="submit" class="auth-submit" disabled={*busy}>{"Set password"}</button>
+                        <button type="submit" class="auth-submit" disabled={*busy}>{phrases.text("watchword-set-password")}</button>
                     </div>
                 </form>
 
                 if info.google {
                     <div class="auth-alternatives">
                         <a class="auth-google" href={http::google_register_url(&props.token)}>
-                            {"Sign up with Google"}
+                            {phrases.text("watchword-sign-up-google")}
                         </a>
                     </div>
                 }
@@ -212,20 +220,20 @@ pub fn Register(props: &RegisterProps) -> Html {
                     <p class="auth-title">{title.clone()}</p>
                 }
 
-                <h1 class="auth-heading">{"Choose a password"}</h1>
+                <h1 class="auth-heading">{phrases.text("watchword-register-heading")}</h1>
                 {body}
             </div>
         </main>
     }
 }
 
-fn link_error(error: &Error) -> AttrValue {
-    match error {
-        Error::Auth(AuthError::NotFound) => AttrValue::from("This link is not valid."),
-        Error::Auth(AuthError::Gone) => AttrValue::from(
-            "This link has already been used or has expired. Ask an administrator for a new one.",
-        ),
-        Error::Network(..) => AttrValue::from("Could not reach the server. Reload to try again."),
-        error => AttrValue::from(format!("The link could not be checked: {error}.")),
-    }
+fn link_error(phrases: &Phrases, error: &Error) -> AttrValue {
+    let id = match error {
+        Error::Auth(AuthError::NotFound) => "watchword-link-invalid",
+        Error::Auth(AuthError::Gone) => "watchword-link-gone",
+        Error::Network(..) => "watchword-error-unreachable-reload",
+        error => return l10n::failed(phrases, "watchword-failed-checking-link", error),
+    };
+
+    l10n::text(phrases, id)
 }

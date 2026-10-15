@@ -1,6 +1,8 @@
+use phrasebook01::args;
 use yew::prelude::*;
 
 use super::browser;
+use super::l10n::{placed, use_phrases};
 use watchword_core::CloudflareConfig;
 
 /// The properties of [`CloudflareSettings`].
@@ -13,9 +15,10 @@ pub struct CloudflareSettingsProps {
     /// applies them with `Auth::set_cloudflare`, and passes them back as
     /// `value`.
     pub on_change: Callback<CloudflareConfig>,
-    /// The app's name, used in the setup instructions.
-    #[prop_or(AttrValue::Static("the app"))]
-    pub app_name: AttrValue,
+    /// The app's name, used in the setup instructions. Defaults to the
+    /// message `watchword-cloudflare-the-app`, "the app".
+    #[prop_or_default]
+    pub app_name: Option<AttrValue>,
     /// Disables the form, such as while saving.
     #[prop_or_default]
     pub disabled: bool,
@@ -30,9 +33,21 @@ pub struct CloudflareSettingsProps {
 /// the header is trusted without verifying the token.
 #[function_component]
 pub fn CloudflareSettings(props: &CloudflareSettingsProps) -> Html {
+    let phrases = use_phrases();
     let value = &props.value;
     let disabled = props.disabled;
-    let app = props.app_name.clone();
+    let app = match &props.app_name {
+        Some(app) => app.clone(),
+        None => AttrValue::from(phrases.text("watchword-cloudflare-the-app")),
+    };
+    let with_app = |id: &str| phrases.msg(id, &args!(app = app.as_str()));
+    let team_domain_step = placed(
+        &phrases,
+        "watchword-cloudflare-step-team-domain",
+        "host",
+        "<team>.cloudflareaccess.com",
+        |host| html! { <code>{host}</code> },
+    );
 
     let update = |apply: fn(&mut CloudflareConfig, &Event)| {
         let value = props.value.clone();
@@ -53,26 +68,16 @@ pub fn CloudflareSettings(props: &CloudflareSettingsProps) -> Html {
 
     html! {
         <section class={classes!("auth-cloudflare-settings", props.class.clone())}>
-            <h2 class="auth-heading">{"Cloudflare Access"}</h2>
+            <h2 class="auth-heading">{phrases.text("watchword-cloudflare-heading")}</h2>
 
             <div class="auth-instructions">
-                <p>
-                    {format!("Signs people in with their Cloudflare Zero Trust login when {app} sits behind Cloudflare Access. To set it up:")}
-                </p>
+                <p>{with_app("watchword-cloudflare-intro")}</p>
                 <ol>
-                    <li>{format!("In the Zero Trust dashboard, protect {app} with a self-hosted application under Access → Applications.")}</li>
-                    <li>
-                        {"Enter your team domain below: the "}
-                        <code>{"<team>.cloudflareaccess.com"}</code>
-                        {" host. The server fetches Cloudflare's signing keys from it and checks that tokens were issued by it."}
-                    </li>
-                    <li>
-                        {"Copy the application's Application Audience (AUD) Tag from its overview into Audience. Every application in your team is signed with the same keys, so the tag is what stops a token for another application from signing in here."}
-                    </li>
-                    <li>
-                        {"Give each person's account the email they sign in to Cloudflare with, on the Users page. Access only signs in existing users; it never creates them."}
-                    </li>
-                    <li>{"Turn on Sign in through Access."}</li>
+                    <li>{with_app("watchword-cloudflare-step-protect")}</li>
+                    <li>{team_domain_step}</li>
+                    <li>{phrases.text("watchword-cloudflare-step-audience")}</li>
+                    <li>{phrases.text("watchword-cloudflare-step-users")}</li>
+                    <li>{phrases.text("watchword-cloudflare-step-enable")}</li>
                 </ol>
             </div>
 
@@ -80,15 +85,13 @@ pub fn CloudflareSettings(props: &CloudflareSettingsProps) -> Html {
                 <div class="auth-field auth-toggle">
                     <label>
                         <input type="checkbox" checked={value.enabled} onchange={on_enabled} {disabled} />
-                        {"Sign in through Access"}
+                        {phrases.text("watchword-cloudflare-enabled")}
                     </label>
-                    <span class="auth-hint">
-                        {"Signs in the existing user whose email Cloudflare Access reports. Users are never created."}
-                    </span>
+                    <span class="auth-hint">{phrases.text("watchword-cloudflare-enabled-hint")}</span>
                 </div>
 
                 <div class="auth-field">
-                    <label for="auth-cloudflare-team-domain">{"Team domain"}</label>
+                    <label for="auth-cloudflare-team-domain">{phrases.text("watchword-cloudflare-team-domain")}</label>
                     <input
                         id="auth-cloudflare-team-domain"
                         class="auth-input"
@@ -100,13 +103,11 @@ pub fn CloudflareSettings(props: &CloudflareSettingsProps) -> Html {
                         onchange={on_team_domain}
                         {disabled}
                     />
-                    <span class="auth-hint">
-                        {"The host of your Zero Trust team, such as yourteam.cloudflareaccess.com."}
-                    </span>
+                    <span class="auth-hint">{phrases.text("watchword-cloudflare-team-domain-hint")}</span>
                 </div>
 
                 <div class="auth-field">
-                    <label for="auth-cloudflare-audience">{"Audience"}</label>
+                    <label for="auth-cloudflare-audience">{phrases.text("watchword-cloudflare-audience")}</label>
                     <input
                         id="auth-cloudflare-audience"
                         class="auth-input"
@@ -117,34 +118,28 @@ pub fn CloudflareSettings(props: &CloudflareSettingsProps) -> Html {
                         onchange={on_audience}
                         {disabled}
                     />
-                    <span class="auth-hint">
-                        {format!("The Application Audience (AUD) Tag from the Access application protecting {app}: a long hex string.")}
-                    </span>
+                    <span class="auth-hint">{with_app("watchword-cloudflare-audience-hint")}</span>
                 </div>
 
                 <div class="auth-field auth-toggle">
                     <label>
                         <input type="checkbox" checked={value.verify_jwt} onchange={on_verify_jwt} {disabled} />
-                        {"Verify token"}
+                        {phrases.text("watchword-cloudflare-verify-jwt")}
                     </label>
-                    <span class="auth-hint">
-                        {"Checks the signed Access token against your team's keys. Keep this on unless the server is only reachable through Cloudflare."}
-                    </span>
+                    <span class="auth-hint">{phrases.text("watchword-cloudflare-verify-jwt-hint")}</span>
                 </div>
 
                 <div class="auth-field auth-toggle">
                     <label>
                         <input type="checkbox" checked={value.trust_email_header} onchange={on_trust_email_header} {disabled} />
-                        {"Trust email header"}
+                        {phrases.text("watchword-cloudflare-trust-email")}
                     </label>
-                    <span class="auth-hint">
-                        {"Accepts the email header Access adds. With token verification on, the two must match."}
-                    </span>
+                    <span class="auth-hint">{phrases.text("watchword-cloudflare-trust-email-hint")}</span>
                 </div>
 
                 if header_unverified(value) {
                     <p class="auth-error" role="alert">
-                        {"Without Verify token, anyone who can reach the server without going through Cloudflare can sign in as any user by sending this header."}
+                        {phrases.text("watchword-cloudflare-unverified-warning")}
                     </p>
                 }
             </div>

@@ -35,5 +35,5 @@ musli-web04 = { package = "musli-web", version = "0.4.11", default-features = fa
 axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["json"], optional = true }
 
 [dev-dependencies]
-musli = { version = "0.1.9", features = ["storage"] }
+musli = { version = "0.1.9", features = ["storage", "wire", "descriptive"] }
 serde_json = "1.0.151"

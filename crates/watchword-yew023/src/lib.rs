@@ -78,6 +78,34 @@
 //!
 //! <br>
 //!
+//! ## Translating
+//!
+//! The components look their text up through [phrasebook] 0.1: in the
+//! `Phrases` the app provides with `ContextProvider<Phrases>`, falling back to
+//! watchword's own English messages, [`L10N`], for any message the app's
+//! phrasebook lacks. Without a provider they render that English, so an app
+//! that does not translate needs nothing.
+//!
+//! The messages are the `watchword-*` ids of [`locales/en-US.ftl`][ftl]. To
+//! translate them, an app adds those ids to its own `.ftl` resources and adds
+//! watchword's catalog after its own, so its messages win:
+//!
+//! ```ignore
+//! let book = Phrasebook::builder()
+//!     .language(Lang::EN_US, "English")
+//!     .language(SV_SE, "Svenska")
+//!     .catalog(&APP)
+//!     .catalog(&auth::yew023::L10N)
+//!     .build();
+//! ```
+//!
+//! Errors from the server, including why a request is invalid, are phrased
+//! from their codes here, so they are translated the same way.
+//! [`AuthProvider`]'s `signed_out_notice` and [`CloudflareSettings`]'s
+//! `app_name` override their messages when given.
+//!
+//! <br>
+//!
 //! ## Styling
 //!
 //! The components render plain semantic HTML with stable class names and take
@@ -148,9 +176,12 @@
 //! [`AuthProvider`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthProvider.html
 //! [`CloudflareSettings`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.CloudflareSettings.html
 //! [`http`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/http/index.html
+//! [`L10N`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/static.L10N.html
 //! [`use_auth`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth.html
 //! [`UserMenu`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.UserMenu.html
+//! [ftl]: https://github.com/udoprog/watchword/blob/main/crates/watchword-yew023/locales/en-US.ftl
 //! [musli-web]: https://docs.rs/musli-web
+//! [phrasebook]: https://docs.rs/phrasebook
 //! [watchword]: https://docs.rs/watchword
 //! [Yew]: https://yew.rs
 
@@ -165,6 +196,7 @@ mod client;
 mod cloudflare_settings;
 mod context;
 mod form;
+mod l10n;
 mod provider;
 mod register;
 mod sign_in;
@@ -179,7 +211,8 @@ pub use self::account::{AccountPanel, AccountPanelProps};
 pub use self::admin_users::{AdminUsers, AdminUsersProps, PAGE_SIZE, UsersQuery};
 pub use self::cloudflare_settings::{CloudflareSettings, CloudflareSettingsProps};
 pub use self::context::{AuthContext, use_auth};
-pub use self::provider::{AuthProvider, AuthProviderProps, SESSION_ENDED};
+pub use self::l10n::L10N;
+pub use self::provider::{AuthProvider, AuthProviderProps};
 pub use self::register::{Register, RegisterProps};
 pub use self::sign_in::{SignIn, SignInProps};
 pub use self::user_menu::{UserMenu, UserMenuProps};

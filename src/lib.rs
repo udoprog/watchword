@@ -35,7 +35,7 @@
 //! | `axum08` | [`axum08`] | for axum 0.8: the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors and `routes()` for the `/api/auth` JSON routes, plus the Cloudflare and Google routes when those features are on (implies `server`) |
 //! | `sqll014` | [`sqll014`] | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA`, and `docs/sqll/impersonator.sql`, the one-time upgrade for a database created with an older schema (implies `server`) |
 //! | `test-util` | [`google::fake`] | for an app's tests: `AuthBuilder::google_endpoints`, and with `axum08` `FakeGoogle`, a local fake Google to sign in through offline (implies `google`) |
-//! | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings` and the `http` client, from the [watchword-yew023] crate |
+//! | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings`, the `http` client and `L10N`, the components' messages as a [phrasebook] catalog, from the [watchword-yew023] crate |
 //!
 //! The most-used names that do not depend on a versioned feature are
 //! re-exported at the crate root.
@@ -99,6 +99,7 @@
 //! [`store`]: https://docs.rs/watchword/latest/watchword/store/index.html
 //! [`types`]: https://docs.rs/watchword/latest/watchword/types/index.html
 //! [`yew023`]: https://docs.rs/watchword/latest/watchword/yew023/index.html
+//! [phrasebook]: https://docs.rs/phrasebook
 //! [trunk]: https://trunkrs.dev
 //! [watchword-core]: https://docs.rs/watchword-core
 //! [watchword-yew023]: https://docs.rs/watchword-yew023

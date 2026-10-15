@@ -438,7 +438,9 @@ impl AuthError {
 /// its own language. [`Display`](fmt::Display) gives an English message for
 /// the user.
 ///
-/// New reasons may be added without a breaking release.
+/// New reasons may be added without a breaking release. One this version
+/// does not know, sent by a newer server, decodes as [`Invalid::Unknown`],
+/// so an older frontend still shows that the request was refused.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]
 #[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
@@ -481,6 +483,15 @@ pub enum Invalid {
     /// missing field.
     #[error("The request is malformed.")]
     MalformedRequest,
+    /// A reason this version does not know, from a newer server; its
+    /// parameters are dropped. A server never sends it.
+    ///
+    /// New reasons go after it, at the end, since musli numbers variants by
+    /// position.
+    #[error("The request is invalid.")]
+    #[serde(other)]
+    #[cfg_attr(feature = "musli01", musli(default))]
+    Unknown,
 }
 
 /// Which unique field a change conflicts on.

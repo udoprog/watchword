@@ -78,6 +78,16 @@ Two things follow from the rule:
 jiff 0.2 is in the API through the types' `Timestamp` fields and is not
 versioned: that would mean restructuring the types.
 
+phrasebook 0.1 is in watchword-yew023's API through `L10N`, a
+`phrasebook::Catalog`, and the `Phrases` context the components read, so its
+dependency key is `phrasebook01`. It is not optional (every component's text
+goes through it), so there is no feature, and `L10N` sits at the crate root
+rather than in a `phrasebook01` module: a later phrasebook would come with a
+yew of its own, hence with a new `watchword-yew0NN` crate anyway. Until
+phrasebook is on crates.io it is a path dependency on `../phrasebook` (next to
+the watchword checkout) with `version = "0.1.0"`, switched to the registry
+version once published.
+
 ### 1.3 Features
 
 No feature is on by default.
@@ -91,7 +101,7 @@ No feature is on by default.
 | `google` | `server` + the Google OAuth provider (`GoogleConfig`) | reqwest, serde_json, url, lru |
 | `axum08` | `server` + extractors and `routes()` for axum 0.8 | axum 0.8 |
 | `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, and its `SCHEMA` | sqll 0.14 |
-| `yew023` | watchword-yew023: components, context, hook, HTTP client | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures |
+| `yew023` | watchword-yew023: components, context, hook, HTTP client, and the messages as a phrasebook catalog (`L10N`) | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.1 (`yew023`) |
 | `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum08` also `google::fake::FakeGoogle` (see 2.4) | nothing more |
 | `musliweb04` *(2.7)* | `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
 
@@ -157,7 +167,8 @@ pub enum Conflict { Login, Email }
 #[non_exhaustive]
 pub enum Invalid { PasswordTooShort { min: usize }, PasswordIncorrect, EmailRequired,
                    LoginOrEmailRequired, LoginEmpty, LoginsDisabled, EmailManagedByGoogle,
-                   GoogleAccountTaken, RoleNotChangeable, MalformedRequest }
+                   GoogleAccountTaken, RoleNotChangeable, MalformedRequest,
+                   Unknown }   // a newer server's reason; new reasons go after it
 ```
 
 An error is sent as `{"error":"<code>"}`, with a `detail` for the two that
@@ -169,6 +180,16 @@ English message, and a frontend may phrase the code in its own language
 instead. `Invalid` is `#[non_exhaustive]`, so a reason can be added without a
 breaking release. `validate_password` returns the `Invalid` reason, so the
 frontend checks a password the same way the server does.
+
+A frontend older than its server (a page loaded before a deploy) meets reasons
+it does not know. Those decode as `Invalid::Unknown`, dropping their
+parameters, and the components say "The request is invalid." (decision 22):
+over JSON through `#[serde(other)]`, and over musli through
+`#[musli(default)]` in the formats that can skip a value, `wire` (musli-web's
+default) and `descriptive`. `storage` and `packed` cannot skip an unknown
+value, so with those both ends need the same version anyway. A server never
+sends `Unknown`. musli numbers variants by position, so a new reason goes at
+the end, after `Unknown`.
 
 ### 2.2 Server core (`server`)
 
@@ -461,7 +482,22 @@ frontend route `/register/{token}`, which `<AuthProvider>` serves.
 ### 2.6 Yew components (`yew023`)
 
 The components render plain semantic HTML with stable `auth-*` class names and
-take a `class` prop. Each app styles them with its own CSS. They talk to the
+take a `class` prop. Each app styles them with its own CSS.
+
+Their text goes through phrasebook (decision 21). Every string, including the
+messages for errors and `Invalid` reasons (phrased from their codes, not from
+`Display`), is a message in `crates/watchword-yew023/locales/en-US.ftl` under
+the `watchword-` prefix, shipped as `pub static L10N: phrasebook::Catalog`.
+Each function component reads `or_catalog(use_context::<Phrases>(), &L10N)`;
+the struct components (`AuthProvider`, `AdminUsers`) subscribe to the same
+context and keep the handle. So without a provider, or with an app phrasebook
+that never added `L10N`, they render watchword's English, and an app
+translates them by adding `watchword-*` ids to its own catalog, which it adds
+before `L10N` so its messages win. Arguments are placed by the message
+(`Delete { $name }?`), and where the components style an argument (the name in
+`<strong>`, the host in `<code>`), they wrap whatever the translation puts in
+its place. Tests run `phrasebook::check::catalog` on `L10N` and check that the
+ids the code names and the ids the catalog defines are the same set. They talk to the
 server through `watchword::yew023::http`, which uses gloo-net with same-origin
 cookies, so the library does not depend on the app's gloo version.
 
@@ -471,8 +507,8 @@ cookies, so the library does not depend on the app's gloo version.
     unreachable.
   - It shows `<SignIn>` when signed out, and `<Register>` on `/register/{token}`.
     Otherwise it renders its children with an `AuthContext`.
-  - Props: `title` (the app's name), and `signed_out_notice` for the "session
-    has ended" text (default `SESSION_ENDED`).
+  - Props: `title` (the app's name), and `signed_out_notice`, which overrides
+    the "session has ended" message `watchword-session-ended`.
 - `use_auth() -> AuthContext` gives `user: Rc<UserInfo>`, `config`,
   `is_admin()`, `sign_out()`, `refresh()`, `set_user(UserInfo)` and
   `check_session()`.
@@ -509,7 +545,8 @@ cookies, so the library does not depend on the app's gloo version.
 - `<CloudflareSettings value on_change app_name disabled>` is a settings form
   for Cloudflare Access: setup instructions, the fields, and a warning when the
   header is trusted without verifying the token. The app stores the value in its
-  own settings and calls `auth.set_cloudflare`.
+  own settings and calls `auth.set_cloudflare`. `app_name` overrides the
+  message `watchword-cloudflare-the-app` ("the app") in the instructions.
 
 ### 2.7 musli-web integration (`musliweb04`)
 
@@ -946,3 +983,25 @@ once the release is on crates.io.
     does not decode. Carrying the user saves the page a `Me` round trip; a
     separate users-changed signal next to a `Me` would need two broadcasts
     for one lag.
+21. **The components' text goes through phrasebook, with English built in.**
+    Apps translate their own pages with phrasebook; a library that renders
+    English inline, or takes a prop per string, leaves holes in a translated
+    page, and props cannot cover error messages built deep inside a
+    component. With the strings as `watchword-*` messages in a catalog of
+    watchword's own, an app translates them in the same `.ftl` files as its
+    other text, and one that does not translate changes nothing: the
+    fallback to `L10N` needs no provider. The props that overrode text
+    (`signed_out_notice`, `app_name`) stay as optional overrides of their
+    messages; `SESSION_ENDED`, an English constant, is gone in 0.2.
+22. **Unknown reasons decode as `Invalid::Unknown`.** A frontend is often
+    older than its server for a while: a page left open across a deploy, or
+    a cached build. Without a catch-all variant, a new reason makes the whole
+    error body undecodable, which the components show as an unexpected HTTP
+    400 with no hint that the request was refused for a reason. A unit
+    catch-all costs one variant and keeps the error an `AuthError::Invalid`
+    that says the request is invalid; its parameters are dropped, since an
+    older frontend could not phrase them anyway. serde's `#[serde(other)]`
+    and musli's `#[musli(default)]` both decode an unknown tag to a unit
+    variant, so the two wire formats agree. The alternative, a variant
+    carrying the raw code and parameters, would need a hand-written
+    deserializer per format for a message nobody can translate.
