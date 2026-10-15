@@ -1,4 +1,7 @@
-//! The filter of `Connection::update`, over `MemoryStore`.
+//! The filter of `Connection::update`, over `MemoryStore`; `socket` tests
+//! `Connection::handle` over a real WebSocket.
+
+mod socket;
 
 use super::{AuthUpdate, Connection};
 use crate::axum08::SignedIn;
