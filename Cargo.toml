@@ -10,9 +10,10 @@ repository = "https://github.com/udoprog/watchword"
 license = "MIT OR Apache-2.0"
 keywords = ["authentication", "axum", "oauth", "session", "yew"]
 categories = ["authentication", "wasm", "web-programming"]
-# The sqll tests include the migrations under docs/sqll; examples/app, CI
-# config and build output stay out of the package.
-include = ["/src/**", "/docs/**", "/README.md", "/LICENSE-*", "/Cargo.toml"]
+# The sqll tests include docs/sqll/impersonator.sql, which the sqll014 module
+# docs also point to; the rest of docs/, examples/app, CI config and build
+# output stay out of the package.
+include = ["/src/**", "/docs/sqll/**", "/README.md", "/LICENSE-*", "/Cargo.toml"]
 
 [lib]
 name = "watchword"

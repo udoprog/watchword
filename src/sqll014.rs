@@ -48,22 +48,14 @@
 //! The pool's statements are prepared when it opens, so the schema must be in
 //! place by then: run [`SCHEMA`] (or an app's migration) first.
 //!
-//! # Migrating track and territory
+//! # Moving existing tables onto the store
 //!
-//! Each app moves its existing auth tables onto this schema once, with the
-//! migration in `docs/sqll/track.sql` or `docs/sqll/territory.sql` of this
-//! repository, added to the app's own migrations:
-//!
-//! - track: `users.login` becomes optional (a table rebuild, which needs
-//!   foreign keys off, as track's migration connection has them), every user
-//!   becomes `active` with the `password` method, and `login_tokens` becomes
-//!   `auth_tokens`, its links becoming `reset` links.
-//! - territory: `users` gains an optional unique `login`, `auth_method`
-//!   becomes `method` (`plain` becomes `password`), `registration_tokens`
-//!   becomes `auth_tokens`, and every auth timestamp goes from RFC 3339 TEXT
-//!   to INTEGER milliseconds.
-//!
-//! Both also give `sessions` the `impersonator_id` column.
+//! An app that already keeps users, sessions or tokens in tables of its own
+//! moves them onto [`SCHEMA`] once, with a migration of its own among its
+//! migrations, before it first opens the store. Afterwards the store's tables
+//! must have every column [`SCHEMA`] gives them, with timestamps as INTEGER
+//! milliseconds since the Unix epoch; the app's own columns on `users` need
+//! defaults.
 //!
 //! # Upgrading a database made with an earlier schema
 //!
