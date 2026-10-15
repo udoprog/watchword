@@ -60,6 +60,25 @@ settings an app stores. They talk to the server through [`http`].
 
 <br>
 
+## With a musli-web socket
+
+With the `musliweb04` feature (watchword's `musliweb04` and `yew023`
+together), an app that talks to its server over a [musli-web] 0.4
+WebSocket hands its handle to the context once the socket is open inside
+[`AuthProvider`]:
+
+```rust
+let auth = use_auth();
+auth.set_socket(Some(service.handle().clone()));
+```
+
+The components then follow the server's `AuthBroadcast`: the context's
+user is replaced when it changes elsewhere, and [`AdminUsers`] applies
+users created, changed and deleted by others in place, so the app no
+longer bumps its `refresh` prop. Requests still go over HTTP.
+
+<br>
+
 ## Styling
 
 The components render plain semantic HTML with stable class names and take
@@ -132,5 +151,6 @@ are:
 [`http`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/http/index.html
 [`use_auth`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth.html
 [`UserMenu`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.UserMenu.html
+[musli-web]: https://docs.rs/musli-web
 [watchword]: https://docs.rs/watchword
 [Yew]: https://yew.rs

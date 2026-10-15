@@ -1,5 +1,7 @@
 use std::rc::Rc;
 
+#[cfg(feature = "musliweb04")]
+use musli_web04::web03::prelude::ws;
 use yew::prelude::*;
 
 use watchword_core::{AuthConfig, UserInfo};
@@ -18,6 +20,11 @@ pub struct AuthContext {
     pub(super) refresh: Callback<()>,
     pub(super) set_user: Callback<UserInfo>,
     pub(super) check_session: Callback<()>,
+    /// The app's socket, from [`AuthContext::set_socket`].
+    #[cfg(feature = "musliweb04")]
+    pub(super) socket: Option<ws::Handle>,
+    #[cfg(feature = "musliweb04")]
+    pub(super) set_socket: Callback<Option<ws::Handle>>,
 }
 
 impl AuthContext {
@@ -53,6 +60,29 @@ impl AuthContext {
     /// keep the user signed in. A check while one is in flight is dropped.
     pub fn check_session(&self) {
         self.check_session.emit(());
+    }
+
+    /// Hands watchword the app's musli-web socket, or takes it back with
+    /// `None`. Open the socket inside [`AuthProvider`](super::AuthProvider),
+    /// since its upgrade needs the session, and pass its handle here once it
+    /// exists; passing the same handle again does nothing.
+    ///
+    /// With a socket, the components follow the server's
+    /// [`AuthBroadcast`](watchword_core::musliweb04::AuthBroadcast): an
+    /// [`AuthUpdate::Me`](watchword_core::musliweb04::AuthUpdate::Me)
+    /// replaces [`user`](AuthContext::user), and
+    /// [`AdminUsers`](super::AdminUsers) applies the user-list updates in
+    /// place. Requests still go over HTTP. The socket is forgotten when the
+    /// session ends, so a later sign-in hands over the new one.
+    ///
+    /// ```ignore
+    /// let auth = use_auth();
+    /// auth.set_socket(Some(service.handle().clone()));
+    /// ```
+    #[cfg(feature = "musliweb04")]
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb04")))]
+    pub fn set_socket(&self, socket: Option<ws::Handle>) {
+        self.set_socket.emit(socket);
     }
 }
 

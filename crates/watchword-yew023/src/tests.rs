@@ -281,3 +281,83 @@ fn replacing_the_user_keeps_the_impersonation() {
     admin.id = UserId(9);
     assert_eq!(replace_user(&current, admin.clone()), admin);
 }
+
+#[cfg(feature = "musliweb04")]
+#[test]
+fn broadcasts_apply_to_the_users_list() {
+    use std::collections::HashMap;
+
+    use super::admin_users::apply_update;
+    use watchword_core::musliweb04::AuthUpdate;
+
+    let expires = Timestamp::UNIX_EPOCH;
+
+    let with_id = |id, login: &str, access| UserInfo {
+        id: UserId(id),
+        access,
+        ..user(Some(login), None, Method::Password)
+    };
+
+    let link = |token: &str| Link {
+        token: token.into(),
+        expires_at: expires,
+    };
+
+    let mut users = vec![
+        UserEntry {
+            user: with_id(1, "root", Access::Active),
+            link_expires_at: None,
+        },
+        UserEntry {
+            user: with_id(2, "patty", Access::Pending),
+            link_expires_at: Some(expires),
+        },
+    ];
+
+    let mut links = HashMap::from([(UserId(2), link("t"))]);
+
+    // The own user is the provider's.
+    let me = AuthUpdate::Me(with_id(1, "renamed", Access::Active));
+    assert!(!apply_update(&mut users, &mut links, me));
+    assert_eq!(users[0].user.login.as_deref(), Some("root"));
+
+    // A change that leaves the links alone applies in place.
+    let mut admin = with_id(2, "patty", Access::Pending);
+    admin.role = Role::Admin;
+    let changed = AuthUpdate::UserChanged(admin);
+    assert!(!apply_update(&mut users, &mut links, changed));
+    assert_eq!(users[1].user.role, Role::Admin);
+    assert_eq!(users[1].link_expires_at, Some(expires));
+    assert!(links.contains_key(&UserId(2)));
+
+    // Registering uses up the link, so the list is fetched again.
+    let registered = AuthUpdate::UserChanged(with_id(2, "patty", Access::Active));
+    assert!(apply_update(&mut users, &mut links, registered));
+    assert_eq!(users[1].user.access, Access::Active);
+    assert_eq!(users[1].link_expires_at, None);
+    assert!(!links.contains_key(&UserId(2)));
+
+    // A change to a user not shown fetches the list again.
+    let unknown = AuthUpdate::UserChanged(with_id(7, "ghost", Access::Active));
+    assert!(apply_update(&mut users, &mut links, unknown));
+    assert_eq!(users.len(), 2);
+
+    // A user created elsewhere shows at once; their link needs the list.
+    let created = AuthUpdate::UserCreated(with_id(3, "new", Access::Pending));
+    assert!(apply_update(&mut users, &mut links, created.clone()));
+    assert_eq!(users[2].user.id, UserId(3));
+    assert_eq!(users[2].link_expires_at, None);
+
+    // One already added here keeps the link its answer carried.
+    users[2].link_expires_at = Some(expires);
+    assert!(!apply_update(&mut users, &mut links, created));
+    assert_eq!(users.len(), 3);
+    assert_eq!(users[2].link_expires_at, Some(expires));
+
+    // A deleted user goes, with their link.
+    links.insert(UserId(3), link("u"));
+    let deleted = AuthUpdate::UserDeleted(UserId(3));
+    assert!(!apply_update(&mut users, &mut links, deleted));
+    assert_eq!(users.len(), 2);
+    assert!(links.is_empty());
+}

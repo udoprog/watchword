@@ -1,5 +1,7 @@
 use std::rc::Rc;
 
+#[cfg(feature = "musliweb04")]
+use musli_web04::web03::prelude::ws;
 use yew::prelude::*;
 
 use super::browser;
@@ -7,6 +9,10 @@ use super::context::AuthContext;
 use super::http::{self, Error};
 use super::register::Register;
 use super::sign_in::SignIn;
+#[cfg(feature = "musliweb04")]
+use super::socket::Socket;
+#[cfg(feature = "musliweb04")]
+use watchword_core::musliweb04::AuthUpdate;
 use watchword_core::{AuthConfig, UserInfo};
 
 /// The default `signed_out_notice` of [`AuthProvider`].
@@ -37,6 +43,12 @@ pub struct AuthProviderProps {
 /// out, it shows [`SignIn`]; on a `/register/{token}` page it shows
 /// [`Register`]. Once a user is signed in it renders its children with an
 /// [`AuthContext`], available through [`use_auth`](super::use_auth).
+///
+/// With the `musliweb04` feature and a socket handed over with
+/// [`AuthContext::set_socket`], it also follows the server's
+/// [`AuthUpdate::Me`](watchword_core::musliweb04::AuthUpdate::Me), so a
+/// change to the user made elsewhere, such as an admin changing their role,
+/// shows at once.
 pub struct AuthProvider {
     state: State,
     config: Option<AuthConfig>,
@@ -48,6 +60,12 @@ pub struct AuthProvider {
     set_user: Callback<UserInfo>,
     check_session: Callback<()>,
     retry: Callback<MouseEvent>,
+    #[cfg(feature = "musliweb04")]
+    socket: Socket,
+    #[cfg(feature = "musliweb04")]
+    set_socket: Callback<Option<ws::Handle>>,
+    #[cfg(feature = "musliweb04")]
+    on_update: Callback<AuthUpdate>,
 }
 
 enum State {
@@ -79,6 +97,10 @@ pub enum Msg {
     SetUser(UserInfo),
     CheckSession,
     Checked(Result<UserInfo, Error>),
+    #[cfg(feature = "musliweb04")]
+    SetSocket(Option<ws::Handle>),
+    #[cfg(feature = "musliweb04")]
+    Update(AuthUpdate),
 }
 
 impl Component for AuthProvider {
@@ -100,6 +122,12 @@ impl Component for AuthProvider {
             set_user: link.callback(Msg::SetUser),
             check_session: link.callback(|()| Msg::CheckSession),
             retry: link.callback(|_| Msg::Load),
+            #[cfg(feature = "musliweb04")]
+            socket: Socket::default(),
+            #[cfg(feature = "musliweb04")]
+            set_socket: link.callback(Msg::SetSocket),
+            #[cfg(feature = "musliweb04")]
+            on_update: link.callback(Msg::Update),
         }
     }
 
@@ -202,9 +230,39 @@ impl Component for AuthProvider {
                 self.checking = false;
                 self.session_answer(ctx, me);
             }
+            #[cfg(feature = "musliweb04")]
+            Msg::SetSocket(handle) => {
+                if !matches!(self.state, State::SignedIn(..)) {
+                    return false;
+                }
+
+                return self.socket.set(handle.as_ref(), self.on_update.clone());
+            }
+            #[cfg(feature = "musliweb04")]
+            Msg::Update(update) => {
+                // The user-list updates are for `AdminUsers`, which listens
+                // itself.
+                let (AuthUpdate::Me(user), State::SignedIn(..)) = (update, &self.state) else {
+                    return false;
+                };
+
+                // `Me` is set as the server answers `Me`, impersonation
+                // marker included, so it replaces the user as it is.
+                self.state = State::SignedIn(Rc::new(user));
+            }
         }
 
         true
+    }
+
+    /// Every change of state renders, so this sees each one.
+    #[cfg(feature = "musliweb04")]
+    fn rendered(&mut self, _: &Context<Self>, _: bool) {
+        // The socket belongs to the session: the app's own, inside the
+        // children, closes with it, and a new sign-in opens another.
+        if !matches!(self.state, State::SignedIn(..)) {
+            self.socket = Socket::default();
+        }
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
@@ -268,6 +326,10 @@ impl Component for AuthProvider {
                     refresh: self.refresh.clone(),
                     set_user: self.set_user.clone(),
                     check_session: self.check_session.clone(),
+                    #[cfg(feature = "musliweb04")]
+                    socket: self.socket.handle().cloned(),
+                    #[cfg(feature = "musliweb04")]
+                    set_socket: self.set_socket.clone(),
                 };
 
                 html! {

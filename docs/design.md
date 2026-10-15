@@ -93,7 +93,7 @@ No feature is on by default.
 | `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, and its `SCHEMA` | sqll 0.14 |
 | `yew023` | watchword-yew023: components, context, hook, HTTP client | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures |
 | `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum08` also `google::fake::FakeGoogle` (see 2.4) | nothing more |
-| `musliweb04` *(2.7)* | `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler *(proposed)*; with `yew023` the components' socket transport *(proposed)* | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
+| `musliweb04` *(2.7)* | `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler *(proposed)*; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts, and their requests over the socket *(proposed)* | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
 
 The modules are `watchword::{types, core, store, cloudflare, google, axum08,
 sqll014, musliweb04, yew023}`, and the most-used names that need no versioned feature are
@@ -513,10 +513,11 @@ cookies, so the library does not depend on the app's gloo version.
 
 ### 2.7 musli-web integration (`musliweb04`) — partly built
 
-*Status: the types (`watchword::musliweb04`) are built, and so are the
-server's `Connection::new` and `Connection::update`; `Connection::handle` and
-the components' socket transport are proposed. Decisions 13
-and 16–19 record why it is shaped this way.*
+*Status: built are the types (`watchword::musliweb04`), the server's
+`Connection::new` and `Connection::update`, and the components following the
+broadcasts (`AuthContext::set_socket`); `Connection::handle` and the
+components' requests over the socket are proposed. Decisions 13 and 16–19
+record why it is shaped this way.*
 
 An app whose frontend already talks to its server over a musli-web WebSocket
 can carry watchword's account and user-management operations, and its live
@@ -665,6 +666,22 @@ for `AuthBroadcast`: `Me` replaces the context's user, and `<AdminUsers>`
 applies `UserCreated`/`UserChanged`/`UserDeleted` to its list in place, so its
 `refresh` prop is no longer needed (it stays for HTTP-only apps). `http::Error`
 gains a variant for a socket request error.
+
+*Status: `set_socket` and following the broadcasts are built; the requests
+still all go over HTTP, and sending them through the socket is proposed.*
+As built: watchword-yew023 has a `musliweb04` feature, which watchword's
+`musliweb04` turns on with `yew023`. `set_socket` with the handle already set
+does nothing, and the socket is forgotten whenever the provider leaves the
+signed-in state, so the next sign-in hands over its own. `<AdminUsers>` reads
+the socket from the context and listens itself. A broadcast carries no link
+state (issuing and revoking a link emit no `AuthEvent`), so `<AdminUsers>`
+applies each update in place and fetches the list again only when it cannot
+know the links: for a user created elsewhere (shown at once, without a link
+until the list answers), when a user's account state or sign-in method
+changes (registering and revoking access use up the links), for a user not in
+its list, and when a load was in flight. A password reset through a link
+changes nothing a broadcast shows, so that link's expiry stays shown until the
+list is next fetched.
 
 watchword-yew023 takes musli-web under `musli-web04` with `web03`; it calls
 no musli-web macros, so it needs no alias.

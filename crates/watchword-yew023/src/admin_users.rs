@@ -3,6 +3,8 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use jiff::Timestamp;
+#[cfg(feature = "musliweb04")]
+use yew::context::ContextHandle;
 use yew::prelude::*;
 
 use super::account::role_name;
@@ -10,6 +12,10 @@ use super::browser;
 use super::context::AuthContext;
 use super::form::{error_message, identity_change, optional};
 use super::http::{self, CreatedUser, Error};
+#[cfg(feature = "musliweb04")]
+use super::socket::Socket;
+#[cfg(feature = "musliweb04")]
+use watchword_core::musliweb04::AuthUpdate;
 use watchword_core::{
     Access, Link, Method, NewUser, Role, UserChange, UserEntry, UserId, UserInfo,
 };
@@ -40,7 +46,9 @@ pub struct AdminUsersProps {
     #[prop_or_default]
     pub on_impersonate: Option<Callback<UserInfo>>,
     /// Bump it to fetch the users again, such as when the app forwards an
-    /// `AuthEvent` from the server.
+    /// `AuthEvent` from the server. Not needed once the app hands its
+    /// musli-web socket to [`AuthContext::set_socket`] (feature
+    /// `musliweb04`): the list then follows the server's broadcasts itself.
     #[prop_or_default]
     pub refresh: u64,
     /// Renders app content under a user, such as their groups.
@@ -80,10 +88,21 @@ pub struct AdminUsersProps {
 /// Use it inside [`AuthProvider`](super::AuthProvider): the context says
 /// whether the app uses logins, keeps the admin's own user current when they
 /// edit themselves, and signs out when a request finds the session ended.
+///
+/// With the `musliweb04` feature and a socket handed to
+/// [`AuthContext::set_socket`], it follows the server's `AuthBroadcast`:
+/// users created, changed or deleted elsewhere, such as by another admin,
+/// change in the list in place. A broadcast does not carry link state, so
+/// the list is fetched again when it cannot be known: for a user created
+/// elsewhere, and when a user's account state or sign-in method changes,
+/// which uses up their links.
 pub struct AdminUsers {
     users: Users,
     /// Bumped on each load, so an older answer is dropped.
     generation: u64,
+    /// The generation of the last load answered; a load is in flight while
+    /// it differs from `generation`.
+    loaded: u64,
     /// The query when the app does not keep it.
     query: UsersQuery,
     adding: Option<UserForm>,
@@ -93,6 +112,11 @@ pub struct AdminUsers {
     links: HashMap<UserId, Link>,
     busy: bool,
     message: Option<Message>,
+    /// Keeps this subscribed to the context, for its socket.
+    #[cfg(feature = "musliweb04")]
+    _context: Option<ContextHandle<AuthContext>>,
+    #[cfg(feature = "musliweb04")]
+    socket: Socket,
 }
 
 enum Users {
@@ -158,6 +182,10 @@ pub enum Msg {
     Done(UserId, Action, Result<(), Error>),
     Copy(String),
     Copied(bool),
+    #[cfg(feature = "musliweb04")]
+    Context(AuthContext),
+    #[cfg(feature = "musliweb04")]
+    Update(AuthUpdate),
 }
 
 impl Component for AdminUsers {
@@ -167,9 +195,25 @@ impl Component for AdminUsers {
     fn create(ctx: &Context<Self>) -> Self {
         ctx.link().send_message(Msg::Load);
 
+        #[cfg(feature = "musliweb04")]
+        let (_context, socket) = {
+            let link = ctx.link();
+            let mut socket = Socket::default();
+
+            let context = link
+                .context::<AuthContext>(link.callback(Msg::Context))
+                .map(|(auth, handle)| {
+                    socket.set(auth.socket.as_ref(), link.callback(Msg::Update));
+                    handle
+                });
+
+            (context, socket)
+        };
+
         Self {
             users: Users::Loading,
             generation: 0,
+            loaded: 0,
             query: ctx.props().query.clone(),
             adding: None,
             editing: None,
@@ -177,6 +221,10 @@ impl Component for AdminUsers {
             links: HashMap::new(),
             busy: false,
             message: None,
+            #[cfg(feature = "musliweb04")]
+            _context,
+            #[cfg(feature = "musliweb04")]
+            socket,
         }
     }
 
@@ -205,6 +253,8 @@ impl Component for AdminUsers {
                 if generation != self.generation {
                     return false;
                 }
+
+                self.loaded = generation;
 
                 match result {
                     Ok(users) => {
@@ -297,8 +347,12 @@ impl Component for AdminUsers {
                         let id = entry.user.id;
                         let filter = entry.user.name().to_owned();
 
+                        // The broadcast of the new user may have come first.
                         if let Users::Loaded(users) = &mut self.users {
-                            users.push(entry);
+                            match users.iter_mut().find(|e| e.user.id == id) {
+                                Some(existing) => *existing = entry,
+                                None => users.push(entry),
+                            }
                         }
 
                         self.links.insert(id, link);
@@ -542,6 +596,29 @@ impl Component for AdminUsers {
                         "The browser did not allow copying. Select the link and copy it instead.",
                     ))
                 });
+            }
+            #[cfg(feature = "musliweb04")]
+            Msg::Context(auth) => {
+                self.socket
+                    .set(auth.socket.as_ref(), ctx.link().callback(Msg::Update));
+            }
+            #[cfg(feature = "musliweb04")]
+            Msg::Update(update) => {
+                // A list still loading comes with the change; a failed one
+                // is fetched again by Retry.
+                let Users::Loaded(users) = &mut self.users else {
+                    return false;
+                };
+
+                let mut reload = apply_update(users, &mut self.links, update);
+
+                // A load in flight may answer with the list from before the
+                // change, so it is asked again.
+                reload |= self.loaded != self.generation;
+
+                if reload {
+                    ctx.link().send_message(Msg::Load);
+                }
             }
         }
 
@@ -1040,6 +1117,57 @@ impl Action {
             Action::RevokeAccess => "Access revoked.",
             Action::Impersonate => "Signed in as the user.",
             Action::Delete => "User deleted.",
+        }
+    }
+}
+
+/// Applies a live change to the list of `users` and the `links` shown,
+/// returning whether the list must be fetched again for what the broadcast
+/// does not carry: the link state of a user created elsewhere, of a user
+/// whose account state or sign-in method changed (registering and revoking
+/// access use up the links), and any change to a user not in the list.
+#[cfg(feature = "musliweb04")]
+pub(super) fn apply_update(
+    users: &mut Vec<UserEntry>,
+    links: &mut HashMap<UserId, Link>,
+    update: AuthUpdate,
+) -> bool {
+    match update {
+        // The provider's.
+        AuthUpdate::Me(..) => false,
+        AuthUpdate::UserCreated(user) => match users.iter_mut().find(|e| e.user.id == user.id) {
+            // Added here, with the link the answer carried.
+            Some(entry) => {
+                entry.user = user;
+                false
+            }
+            None => {
+                users.push(UserEntry {
+                    user,
+                    link_expires_at: None,
+                });
+                true
+            }
+        },
+        AuthUpdate::UserChanged(user) => {
+            let Some(entry) = users.iter_mut().find(|e| e.user.id == user.id) else {
+                return true;
+            };
+
+            let uses_links = entry.user.access != user.access || entry.user.method != user.method;
+
+            if uses_links {
+                entry.link_expires_at = None;
+                links.remove(&user.id);
+            }
+
+            entry.user = user;
+            uses_links
+        }
+        AuthUpdate::UserDeleted(id) => {
+            users.retain(|e| e.user.id != id);
+            links.remove(&id);
+            false
         }
     }
 }

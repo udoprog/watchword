@@ -15,7 +15,12 @@ categories = ["authentication", "wasm", "web-programming"]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(watchword_docsrs)'] }
 
 [package.metadata.docs.rs]
+all-features = true
 rustdoc-args = ["--cfg", "watchword_docsrs"]
+
+[features]
+default = []
+musliweb04 = ["dep:musli-web04", "watchword-core/musliweb04"]
 
 # yew's macros expand to `::yew::` paths, so the dependency key must stay `yew`.
 [dependencies]
@@ -25,6 +30,7 @@ gloo-net = { version = "0.7.0", default-features = false, features = ["http", "j
 jiff = { version = "0.2.37", features = ["js"] }
 serde = "1.0.229"
 wasm-bindgen-futures = "0.4.56"
+musli-web04 = { package = "musli-web", version = "0.4.11", default-features = false, features = ["web03"], optional = true }
 web-sys = { version = "0.3.83", features = ["Clipboard", "History", "HtmlInputElement", "HtmlSelectElement", "Location", "Navigator", "RequestCredentials", "Window"] }
 
 [dev-dependencies]
