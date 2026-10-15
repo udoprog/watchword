@@ -12,6 +12,7 @@ store_suite!(store(&scratch_uri(), true));
 
 const TRACK_MIGRATION: &str = include_str!("../../docs/sqll/track.sql");
 const TERRITORY_MIGRATION: &str = include_str!("../../docs/sqll/territory.sql");
+const IMPERSONATOR_MIGRATION: &str = include_str!("../../docs/sqll/impersonator.sql");
 
 /// A new in-memory database's URI, shared by every connection that opens it
 /// while one is open.
@@ -110,6 +111,61 @@ async fn schema_can_be_run_again() -> TestResult {
     store.config_set("session_key", "b").await?;
     assert_eq!(store.config_get("session_key").await?.as_deref(), Some("b"));
     Ok(())
+}
+
+/// A database made with the schema from before sessions recorded their
+/// impersonator takes the column from `docs/sqll/impersonator.sql`.
+#[tokio::test]
+async fn adds_the_impersonator_column() -> TestResult {
+    let column = "        impersonator_id INTEGER REFERENCES users (id) ON DELETE CASCADE,\n";
+    assert!(SCHEMA.contains(column));
+    let before = SCHEMA.replace(column, "");
+
+    let uri = scratch_uri();
+    let c = connect(&uri);
+    c.execute(&before)?;
+    c.execute(
+        "INSERT INTO users (id, login, role, access, created_at) VALUES \
+         (1, 'root', 'admin', 'active', 0), (2, 'bob', 'regular', 'active', 0);
+         INSERT INTO sessions (id, user_id, created_at, expires_at) \
+         VALUES ('old', 2, 0, 9999999999999);",
+    )?;
+    migrate(&c, IMPERSONATOR_MIGRATION)?;
+
+    let store = store(&uri, false);
+    let old = store.session("old").await?.unwrap();
+    assert_eq!((old.user, old.impersonator), (UserId(2), None));
+
+    let auth = Auth::builder(store.clone(), generate_session_key())
+        .impersonation(true)
+        .build();
+    let root = store.user(UserId(1)).await?.unwrap();
+    let (_, session) = auth
+        .impersonate(&root, &root_session(&old), UserId(2))
+        .await?;
+    let stored = store.session(&session.id).await?.unwrap();
+    assert_eq!(stored.impersonator, Some(UserId(1)));
+
+    // The column references users: deleting the admin removes the session.
+    assert!(store.delete_user(UserId(1)).await?);
+    assert!(store.session(&session.id).await?.is_none());
+    assert!(store.session("old").await?.is_some());
+    assert_eq!(
+        count(&c, "SELECT COUNT(*) FROM pragma_foreign_key_check"),
+        0
+    );
+    Ok(())
+}
+
+/// A session of the admin's own that is not impersonated, standing in for
+/// the one an admin acts from.
+fn root_session(other: &Session) -> Session {
+    Session {
+        id: new_session_id(),
+        user: UserId(1),
+        impersonator: None,
+        ..other.clone()
+    }
 }
 
 #[tokio::test]

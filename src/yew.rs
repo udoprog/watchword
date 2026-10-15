@@ -27,7 +27,7 @@
 //! ```
 //!
 //! Inside the provider, [`UserMenu`] gives the signed-in user Account, Users
-//! (for admins) and Sign out, [`AccountPanel`] is the user's own account,
+//! (for admins) and Sign out, and a way back while an admin impersonates them, [`AccountPanel`] is the user's own account,
 //! [`AdminUsers`] manages users for admins, and [`CloudflareSettings`] edits
 //! the Cloudflare Access settings an app stores. They talk to the server
 //! through [`http`].
@@ -72,6 +72,7 @@
 //! | `auth-name` | the user's name in the menu button |
 //! | `auth-menu-items` | the open menu's `<ul>` |
 //! | `auth-menu-item` | an item of the menu |
+//! | `auth-impersonating` | the banner in the menu while an admin impersonates the user, holding `auth-impersonating-text` and the `auth-stop-impersonating` button |
 //! | `auth-admin-users` | the outermost `<section>` of [`AdminUsers`] |
 //! | `auth-toolbar` | the heading row of the users list |
 //! | `auth-add` | the Add user button |

@@ -602,6 +602,63 @@ async fn impersonation() {
     .await;
     assert_eq!(me.status, StatusCode::OK);
     assert_eq!(me.body["access"], "pending");
+
+    // Both answers name the admin acting as pat; the admin's own do not.
+    let root_me = call(&app, Method::GET, "/api/auth/me", Some(&root), None).await;
+    assert!(root_me.body.get("impersonated_by").is_none());
+    let by = json!({ "id": root_me.body["id"], "name": "root" });
+    assert_eq!(as_pat.body["impersonated_by"], by);
+    assert_eq!(me.body["impersonated_by"], by);
+
+    // So do the account routes, which answer with the own user.
+    let renamed = call(
+        &app,
+        Method::PATCH,
+        "/api/auth/account",
+        Some(&as_pat.cookie()),
+        Some(json!({ "login": "patty" })),
+    )
+    .await;
+    assert_eq!(renamed.status, StatusCode::OK);
+    assert_eq!(renamed.body["login"], "patty");
+    assert_eq!(renamed.body["impersonated_by"], by);
+
+    // Only an impersonated session can stop.
+    let stop = "/api/auth/impersonate/stop";
+    let refused = call(&app, Method::POST, stop, Some(&root), None).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+    let refused = call(&app, Method::POST, stop, None, None).await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+
+    // Nor impersonate again from it (pat is not an admin anyway).
+    let refused = call(&app, Method::POST, &path, Some(&as_pat.cookie()), None).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+
+    // Stopping signs the admin back in and ends pat's session.
+    let back = call(&app, Method::POST, stop, Some(&as_pat.cookie()), None).await;
+    assert_eq!(back.status, StatusCode::OK);
+    assert_eq!(back.body["login"], "root");
+    assert!(back.body.get("impersonated_by").is_none());
+
+    let me = call(
+        &app,
+        Method::GET,
+        "/api/auth/me",
+        Some(&back.cookie()),
+        None,
+    )
+    .await;
+    assert_eq!(me.status, StatusCode::OK);
+    assert_eq!(me.body["login"], "root");
+    let gone = call(
+        &app,
+        Method::GET,
+        "/api/auth/me",
+        Some(&as_pat.cookie()),
+        None,
+    )
+    .await;
+    assert_eq!(gone.status, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

@@ -78,6 +78,7 @@ impl User {
             method: self.method,
             has_password: self.password_hash.is_some(),
             created_at: self.created_at,
+            impersonated_by: None,
         }
     }
 
@@ -101,6 +102,9 @@ pub struct Session {
     pub id: String,
     /// The signed-in user.
     pub user: UserId,
+    /// The admin acting as [`user`](Session::user), when the session was
+    /// created by impersonation.
+    pub impersonator: Option<UserId>,
     /// When the session was created.
     pub created_at: Timestamp,
     /// When the session expires.
@@ -206,8 +210,9 @@ pub trait Store: Send + Sync + 'static {
         change: &UserChange,
     ) -> impl Future<Output = Result<Result<Option<User>, Conflict>>> + Send;
 
-    /// Deletes the user with their sessions and tokens. Returns whether the
-    /// user existed.
+    /// Deletes the user with their sessions and tokens, and the sessions in
+    /// which they impersonate someone ([`Session::impersonator`]). Returns
+    /// whether the user existed.
     fn delete_user(&self, id: UserId) -> impl Future<Output = Result<bool>> + Send;
 
     /// In one transaction: sets the credential (setting

@@ -62,6 +62,16 @@
 //!   becomes `method` (`plain` becomes `password`), `registration_tokens`
 //!   becomes `auth_tokens`, and every auth timestamp goes from RFC 3339 TEXT
 //!   to INTEGER milliseconds.
+//!
+//! Both also give `sessions` the `impersonator_id` column.
+//!
+//! # Upgrading a database made with an earlier schema
+//!
+//! A database created with [`SCHEMA`] before sessions recorded the admin
+//! behind an impersonation lacks `sessions.impersonator_id`, and the store's
+//! statements fail to prepare on it. Add the column once with
+//! `docs/sqll/impersonator.sql` (a single `ALTER TABLE`) in the app's
+//! migrations. Running [`SCHEMA`] again does not add it.
 
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
@@ -173,7 +183,7 @@ mod statements {
         pub(super) users: TypedStatement<(i64,), UserLinkRow>,
         #[sql = "SELECT COUNT(*) FROM users"]
         pub(super) user_count: TypedStatement<(), i64>,
-        #[sql = "SELECT id, user_id, created_at, expires_at FROM sessions WHERE id = ?"]
+        #[sql = "SELECT id, user_id, impersonator_id, created_at, expires_at FROM sessions WHERE id = ?"]
         pub(super) session: TypedStatement<(String,), SessionRow>,
         #[sql = "SELECT id, user_id, kind, expires_at, used_at FROM auth_tokens WHERE id = ?"]
         pub(super) token: TypedStatement<(String,), TokenRow>,
@@ -221,12 +231,15 @@ mod statements {
         #[sql = "UPDATE users SET access = 'revoked', password_hash = NULL WHERE id = ? RETURNING id"]
         pub(super) revoke: TypedStatement<(i64,), i64>,
 
-        #[sql = "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)"]
-        pub(super) insert_session: TypedStatement<(String, i64, i64, i64), ()>,
+        #[sql = "INSERT INTO sessions (id, user_id, impersonator_id, created_at, expires_at)"]
+        #[sql = "VALUES (?, ?, ?, ?, ?)"]
+        pub(super) insert_session: TypedStatement<(String, i64, Option<i64>, i64, i64), ()>,
         #[sql = "DELETE FROM sessions WHERE id = ?"]
         pub(super) delete_session: TypedStatement<(String,), ()>,
         #[sql = "DELETE FROM sessions WHERE user_id = ? AND id IS NOT ?"]
         pub(super) delete_sessions: TypedStatement<(i64, Option<String>), ()>,
+        #[sql = "DELETE FROM sessions WHERE impersonator_id = ?"]
+        pub(super) delete_impersonations: TypedStatement<(i64,), ()>,
         #[sql = "DELETE FROM sessions WHERE expires_at <= ?"]
         pub(super) delete_expired_sessions: TypedStatement<(i64,), ()>,
 
@@ -363,6 +376,7 @@ impl Write {
         self.insert_session.execute((
             session.id.as_str(),
             sql_id(session.user),
+            session.impersonator.map(sql_id),
             millis(session.created_at),
             millis(session.expires_at),
         ))?;
@@ -483,6 +497,7 @@ where
         self.write(move |w| {
             let sql = sql_id(id);
             w.delete_sessions(sql, None)?;
+            w.delete_impersonations.execute((sql,))?;
             w.delete_tokens.execute((sql,))?;
             Ok(w.delete_user.bind((sql,))?.first()?.is_some())
         })
@@ -771,6 +786,7 @@ impl UserLinkRow {
 struct SessionRow {
     id: String,
     user_id: i64,
+    impersonator_id: Option<i64>,
     created_at: i64,
     expires_at: i64,
 }
@@ -782,6 +798,7 @@ impl TryFrom<SessionRow> for Session {
         Ok(Session {
             id: row.id,
             user: user_id(row.user_id),
+            impersonator: row.impersonator_id.map(user_id),
             created_at: timestamp(row.created_at)?,
             expires_at: timestamp(row.expires_at)?,
         })

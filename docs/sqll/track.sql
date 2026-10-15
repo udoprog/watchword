@@ -73,4 +73,7 @@ ADD COLUMN kind TEXT NOT NULL DEFAULT 'reset';
 
 CREATE INDEX idx_auth_tokens_user ON auth_tokens (user_id);
 
--- sessions (INTEGER ms) and config (key, value) already match.
+-- sessions gains the admin behind an impersonated session; its INTEGER ms
+-- timestamps already match, and so does config (key, value).
+ALTER TABLE sessions
+ADD COLUMN impersonator_id INTEGER REFERENCES users (id) ON DELETE CASCADE;

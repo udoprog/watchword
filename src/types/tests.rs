@@ -16,6 +16,7 @@ fn user() -> UserInfo {
         method: Method::Password,
         has_password: true,
         created_at: at("2026-10-01T12:00:00Z"),
+        impersonated_by: None,
     }
 }
 
@@ -92,6 +93,22 @@ fn user_json() {
     );
 
     assert_eq!(serde_json::from_value::<UserInfo>(value).unwrap(), user());
+}
+
+#[test]
+fn impersonated_user_json() {
+    let mut impersonated = user();
+    impersonated.impersonated_by = Some(Impersonator {
+        id: UserId(1),
+        name: "boss".into(),
+    });
+
+    let value = serde_json::to_value(&impersonated).unwrap();
+    assert_eq!(value["impersonated_by"], json!({ "id": 1, "name": "boss" }));
+    assert_eq!(
+        serde_json::from_value::<UserInfo>(value).unwrap(),
+        impersonated
+    );
 }
 
 #[test]
@@ -205,6 +222,13 @@ fn musli_round_trip() {
         let decoded: T = musli::storage::from_slice(&bytes).unwrap();
         assert_eq!(decoded, value);
     }
+
+    let mut impersonated = user();
+    impersonated.impersonated_by = Some(Impersonator {
+        id: UserId(1),
+        name: "boss".into(),
+    });
+    round_trip(impersonated);
 
     for link_expires_at in [None, Some(at("2026-10-08T00:00:00.5Z"))] {
         round_trip(UserEntry {

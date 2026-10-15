@@ -137,8 +137,14 @@ pub struct UserInfo {
     pub method: Method,
     pub has_password: bool,
     pub created_at: Timestamp,
+    /// The admin acting as this user, on the answers about the request's own
+    /// user (`me`, impersonate, account routes); see decision 12.
+    pub impersonated_by: Option<Impersonator>,   // omitted from JSON when None
 }
 impl UserInfo { pub fn name(&self) -> &str; pub fn is_admin(&self) -> bool; }
+
+/// The admin behind an impersonated session.
+pub struct Impersonator { pub id: UserId, pub name: String }
 
 /// A user in the admin list.
 pub struct UserEntry { pub user: UserInfo, pub link_expires_at: Option<Timestamp> }
@@ -197,8 +203,9 @@ auth.events() -> broadcast::Receiver<AuthEvent>;
 The operations behind the routes are public methods too, so an app can call
 them from its own handlers or tests: `sign_in_password`, `sign_in_cloudflare`,
 `sign_out`, `register`, `issue_link`, `revoke_link`, `sign_out_everywhere`,
-`revoke_access`, `set_role`, `update_user`, `delete_user`, `change_password`
-and `impersonate`. Each one enforces the rules in section 3: who may act on
+`revoke_access`, `set_role`, `update_user`, `delete_user`, `change_password`,
+`impersonate` and `stop_impersonating`; `session_info(&user, &session)` gives
+the `UserInfo` of the request's own user, marked when impersonated. Each one enforces the rules in section 3: who may act on
 whom, never on oneself, token usability, and ending sessions.
 
 ```rust
@@ -234,7 +241,7 @@ pub trait Store: Send + Sync + 'static {
     async fn user_count(&self) -> Result<u64>;
     async fn create_user(&self, new: &NewUser, now: Timestamp) -> Result<Result<User, Conflict>>;
     async fn update_user(&self, id: UserId, change: &UserChange) -> Result<Result<Option<User>, Conflict>>;
-    async fn delete_user(&self, id: UserId) -> Result<bool>;               // sessions and tokens go with it
+    async fn delete_user(&self, id: UserId) -> Result<bool>;               // sessions, tokens and the sessions they impersonate in go with it
     /// Sets the credential (password hash, or Google subject and email),
     /// marks the user active, and deletes the user's sessions except `keep`.
     /// Refuses (false) a revoked user, so a concurrent revoke is not undone.
@@ -274,7 +281,8 @@ pub trait Store: Send + Sync + 'static {
 pub struct User { pub id: UserId, pub login: Option<String>, pub email: Option<String>, pub role: Role,
                   pub access: Access, pub method: Method, pub password_hash: Option<String>,
                   pub google_sub: Option<String>, pub created_at: Timestamp }
-pub struct Session { pub id: String, pub user: UserId, pub created_at: Timestamp, pub expires_at: Timestamp }
+pub struct Session { pub id: String, pub user: UserId, pub impersonator: Option<UserId> /* the admin acting as `user` */,
+                     pub created_at: Timestamp, pub expires_at: Timestamp }
 pub struct Token { pub id: String, pub user: UserId, pub kind: TokenKind, pub expires_at: Timestamp, pub used_at: Option<Timestamp> }
 pub enum TokenKind { Registration, Reset }
 pub enum Credential { Password(String /* hash */), Google { sub: String, email: String } }
@@ -297,14 +305,16 @@ takes the app's `Arc<Pool<R, W>>`. A store over a pool of its own is
 | Table | Columns |
 |---|---|
 | `users` | `id` INTEGER PRIMARY KEY, `login` TEXT UNIQUE, `email` TEXT UNIQUE, `role` TEXT, `access` TEXT, `method` TEXT, `password_hash` TEXT, `google_sub` TEXT UNIQUE, `created_at` INTEGER ms |
-| `sessions` | `id` TEXT PRIMARY KEY, `user_id` → users, `created_at` and `expires_at` INTEGER ms |
+| `sessions` | `id` TEXT PRIMARY KEY, `user_id` → users, `impersonator_id` → users (NULL unless impersonated), `created_at` and `expires_at` INTEGER ms |
 | `auth_tokens` | `id` TEXT PRIMARY KEY, `user_id` → users, `kind` TEXT (`registration`/`reset`), `expires_at` and `used_at` INTEGER ms |
 | `config` | `key` TEXT PRIMARY KEY, `value` TEXT |
 
 `auth::sqll::SCHEMA` creates the tables in a new database. The one-time
 migrations from each app's current tables are `docs/sqll/track.sql` and
 `docs/sqll/territory.sql`; the tests run both against copies of the apps'
-current auth tables. The store deletes a user's sessions and links itself
+current auth tables. A database made with the schema from before sessions had
+`impersonator_id` takes it with `docs/sqll/impersonator.sql`, a single
+`ALTER TABLE`, since rerunning `SCHEMA` does not add columns. The store deletes a user's sessions and links itself
 rather than relying on `ON DELETE CASCADE`.
 
 ### 2.5 Providers
@@ -382,7 +392,7 @@ The routes are all JSON. Their errors are `AuthError` with the matching status:
 | Route | Who | What |
 |---|---|---|
 | `GET /api/auth/config` | anyone | `AuthConfig` (replaces track's `GET /api/auth/cloudflare` and the auth half of territory's `/api/config`) |
-| `GET /api/auth/me` | signed in | `UserInfo` |
+| `GET /api/auth/me` | signed in | `UserInfo`, with `impersonated_by` when an admin is acting as the user |
 | `POST /api/auth/login` | anyone | `LoginRequest` → `UserInfo` + cookie; throttled |
 | `POST /api/auth/cloudflare` | anyone | → `UserInfo` + cookie |
 | `GET /api/auth/google`, `/google/register/{token}`, `/google/link` | anyone / anyone / signed in | redirect to Google |
@@ -399,7 +409,8 @@ The routes are all JSON. Their errors are `AuthError` with the matching status:
 | `POST`/`DELETE /api/auth/users/{id}/link` | admin | issue (`Link`) / use up the link |
 | `POST /api/auth/users/{id}/sign-out` | admin | sign out everywhere (track's behaviour) |
 | `POST /api/auth/users/{id}/revoke` | admin | revoke access (territory's behaviour); not self |
-| `POST /api/auth/users/{id}/impersonate` | admin, if enabled | cookie for a session as that user; not self, not revoked |
+| `POST /api/auth/users/{id}/impersonate` | admin, if enabled | `UserInfo` (with `impersonated_by`) + cookie for a session as that user that records the admin; not self, not revoked, not from an impersonated session |
+| `POST /api/auth/impersonate/stop` | signed in, impersonated | `UserInfo` + cookie for a new session as the admin, ending the impersonated one; 403 unless the session is impersonated and its admin is still an active admin |
 
 The frontend route `/register/{token}` that links point to is unchanged in both
 apps. Links already handed out therefore keep working, because only the API
@@ -435,8 +446,11 @@ so the library does not depend on the app's gloo version.
 - `<AccountPanel>` covers the role, login (when `logins`), email, change or set
   password, switching to or linking Google, and sign out. The app wraps it in a
   page (track) or a modal (territory).
-- `<UserMenu on_account on_admin>` shows the user's name, Account, Users (for
-  admins only) and Sign out.
+- `<UserMenu on_account on_admin on_stop_impersonating>` shows the user's name,
+  Account, Users (for admins only) and Sign out. While an admin impersonates
+  the user it also shows a banner, "Impersonating {user} as {admin}.", with a
+  Stop impersonating button that calls `http::stop_impersonating`, sets the
+  admin as the user and calls `on_stop_impersonating` (optional).
 - `<AdminUsers>` covers:
   - the user list, with the filter and paging as props plus `on_query_change`,
     so territory can keep them in its URL;
@@ -497,7 +511,16 @@ so the library does not depend on the app's gloo version.
     a 5-minute re-check, which is the union of the two apps.
 11. **Role changes** apply per request (`Admin` re-reads the user) and are pushed
     as `AuthEvent::UserChanged`. Sockets see them through `guard.changed()`.
-12. **Impersonation** is territory's behaviour, behind `.impersonation(true)`.
+12. **Impersonation** is territory's behaviour, behind `.impersonation(true)`,
+    plus a marker and a way back (decided on card ba5d618e). The session records
+    the admin (`Session::impersonator`, `sessions.impersonator_id`), the own
+    user's `UserInfo` carries `impersonated_by`, `UserMenu` shows a banner, and
+    `POST /api/auth/impersonate/stop` ends the impersonated session and signs
+    the admin in again, only while they are still an active admin; otherwise
+    signing out is the way out. Impersonating from an impersonated session is
+    refused, so stopping always returns to the admin who started. Deleting the
+    admin deletes the sessions they impersonate in. The admin's own session is
+    left alone when impersonating (its cookie is replaced, and it expires).
 13. **Transport.** Account and admin operations move to the JSON routes above,
     out of each app's WebSocket protocol. Live updates reach the admin page
     through the app forwarding `AuthEvent`s. *Open question 4.*

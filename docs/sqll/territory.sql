@@ -41,11 +41,13 @@ DROP COLUMN created_at;
 ALTER TABLE users
 RENAME COLUMN created_at_ms TO created_at;
 
--- sessions: rebuilt with INTEGER ms timestamps. Nothing references sessions.
+-- sessions: rebuilt with INTEGER ms timestamps and an impersonator_id, NULL
+-- for every existing session. Nothing references sessions.
 CREATE TABLE
     sessions_new (
         id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+        impersonator_id INTEGER REFERENCES users (id) ON DELETE CASCADE,
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL
     );

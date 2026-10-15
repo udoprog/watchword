@@ -40,7 +40,9 @@ impl AuthContext {
     }
 
     /// Replaces the signed-in user, such as with the [`UserInfo`] an account
-    /// route answered with.
+    /// route answered with. A copy of the same user without
+    /// [`impersonated_by`](UserInfo::impersonated_by), such as from an admin
+    /// route, keeps the current one.
     pub fn set_user(&self, user: UserInfo) {
         self.set_user.emit(user);
     }

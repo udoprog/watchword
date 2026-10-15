@@ -18,8 +18,8 @@ use super::{
 };
 use crate::store::{Credential, DynStore, Session, Store, StoreError, Token, TokenKind, User};
 use crate::types::{
-    Access, AuthError, Conflict, Link, LoginRequest, Method, NewUser, PasswordChange, RegisterInfo,
-    RegisterRequest, Role, UserChange, UserEntry, UserId, UserInfo, normalize_email,
+    Access, AuthError, Conflict, Impersonator, Link, LoginRequest, Method, NewUser, PasswordChange,
+    RegisterInfo, RegisterRequest, Role, UserChange, UserEntry, UserId, UserInfo, normalize_email,
     validate_password,
 };
 
@@ -418,15 +418,40 @@ impl Auth {
         Session {
             id: new_session_id(),
             user,
+            impersonator: None,
             created_at: now,
             expires_at: session_expiry(now),
         }
     }
 
     async fn create_session(&self, user: UserId) -> Result<Session> {
-        let session = Self::new_session(user, Timestamp::now());
+        self.insert_session(Self::new_session(user, Timestamp::now()))
+            .await
+    }
+
+    async fn insert_session(&self, session: Session) -> Result<Session> {
         self.store().create_session(&session).await?;
         Ok(session)
+    }
+
+    /// What the frontend sees of `user`, signed in with `session`: their
+    /// [`UserInfo`] with [`impersonated_by`](UserInfo::impersonated_by) set
+    /// when an admin is acting as them.
+    pub async fn session_info(&self, user: &User, session: &Session) -> Result<UserInfo> {
+        let mut info = user.info();
+
+        if let Some(id) = session.impersonator {
+            // Deleting the admin deletes the session, so a missing admin
+            // means one deleted just now; the session is still marked.
+            let name = match self.store().user(id).await? {
+                Some(admin) => admin.info().name().to_owned(),
+                None => String::new(),
+            };
+
+            info.impersonated_by = Some(Impersonator { id, name });
+        }
+
+        Ok(info)
     }
 
     async fn user(&self, id: UserId) -> Result<User> {
@@ -991,23 +1016,67 @@ impl Auth {
     }
 
     /// Creates a session as the user `id`, for an admin to see what they
-    /// see. Pending users can be impersonated, revoked ones cannot. Admins
-    /// only, when [enabled](AuthBuilder::impersonation), and not themselves.
-    pub async fn impersonate(&self, actor: &User, id: UserId) -> Result<(User, Session)> {
+    /// see. The session records the admin as its
+    /// [`impersonator`](Session::impersonator), which
+    /// [`session_info`](Auth::session_info) shows and
+    /// [`stop_impersonating`](Auth::stop_impersonating) returns to.
+    ///
+    /// Pending users can be impersonated, revoked ones cannot. Admins only,
+    /// when [enabled](AuthBuilder::impersonation), not themselves, and not
+    /// from `session` if it is itself impersonated (an admin acting as
+    /// another admin), so that stopping always leads back to the admin who
+    /// started.
+    pub async fn impersonate(
+        &self,
+        actor: &User,
+        session: &Session,
+        id: UserId,
+    ) -> Result<(User, Session)> {
         if !self.inner.impersonation {
             return Err(AuthError::Forbidden.into());
         }
 
         require_admin(actor)?;
         not_self(actor, id)?;
+
+        if session.impersonator.is_some() {
+            return Err(AuthError::Forbidden.into());
+        }
+
         let user = self.user(id).await?;
 
         if user.access == Access::Revoked {
             return Err(AuthError::Forbidden.into());
         }
 
-        let session = self.create_session(user.id).await?;
-        Ok((user, session))
+        let mut new = Self::new_session(user.id, Timestamp::now());
+        new.impersonator = Some(actor.id);
+        let new = self.insert_session(new).await?;
+        Ok((user, new))
+    }
+
+    /// Ends the impersonated `session` and creates a session for the admin
+    /// who started it, returning the admin and the new session.
+    ///
+    /// [`AuthError::Forbidden`], with nothing changed, when `session` is not
+    /// impersonated, or its admin is no longer an active admin; signing out
+    /// is then the way out of it.
+    pub async fn stop_impersonating(&self, session: &Session) -> Result<(User, Session)> {
+        let Some(id) = session.impersonator else {
+            return Err(AuthError::Forbidden.into());
+        };
+
+        let Some(admin) = self.store().user(id).await? else {
+            return Err(AuthError::Forbidden.into());
+        };
+
+        if admin.access != Access::Active || !admin.is_admin() {
+            return Err(AuthError::Forbidden.into());
+        }
+
+        self.sign_out(&session.id).await?;
+        let new = self.create_session(admin.id).await?;
+        Ok((admin, new))
     }
 
     /// A trimmed login name. Setting one is [`AuthError::Invalid`] when

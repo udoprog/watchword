@@ -111,7 +111,11 @@ fn App() -> Html {
                         {nav(Page::Settings, "Settings")}
                     }
                 </nav>
-                <UserMenu on_account={go(Page::Account)} on_admin={go(Page::Users)} />
+                <UserMenu
+                    on_account={go(Page::Account)}
+                    on_admin={go(Page::Users)}
+                    on_stop_impersonating={go(Page::Users)}
+                />
             </header>
             <main class="content">{content}</main>
         </>

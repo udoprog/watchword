@@ -23,14 +23,14 @@ use crate::types::{
 /// | Route | Who | What |
 /// |---|---|---|
 /// | `GET /api/auth/config` | anyone | [`AuthConfig`] |
-/// | `GET /api/auth/me` | signed in | [`UserInfo`] |
+/// | `GET /api/auth/me` | signed in | [`UserInfo`], with [`impersonated_by`](UserInfo::impersonated_by) when an admin is acting as the user |
 /// | `POST /api/auth/login` | anyone | [`LoginRequest`] → [`UserInfo`] + cookie; throttled |
 /// | `POST /api/auth/cloudflare` | anyone, feature `cloudflare` | [`UserInfo`] + cookie for the user the request's Access credentials vouch for; activates a pending user |
 /// | `POST /api/auth/logout` | anyone | 204; ends the session and clears the cookie |
 /// | `GET /api/auth/register/{token}` | anyone | [`RegisterInfo`]; 404 unknown, 410 used or expired |
 /// | `POST /api/auth/register/{token}` | anyone | [`RegisterRequest`] → [`UserInfo`] + cookie; ends the user's other sessions |
-/// | `POST /api/auth/account/password` | signed in | [`PasswordChange`] → [`UserInfo`]; keeps this session, ends the others |
-/// | `PATCH /api/auth/account` | signed in | [`UserChange`] of the own login or email → [`UserInfo`] |
+/// | `POST /api/auth/account/password` | signed in | [`PasswordChange`] → [`UserInfo`] as for `me`; keeps this session, ends the others |
+/// | `PATCH /api/auth/account` | signed in | [`UserChange`] of the own login or email → [`UserInfo`] as for `me` |
 /// | `GET /api/auth/users` | admin | `Vec<`[`UserEntry`]`>` |
 /// | `POST /api/auth/users` | admin | [`NewUser`] → [`CreatedUser`] |
 /// | `PATCH /api/auth/users/{id}` | admin | [`UserChange`] → [`UserInfo`]; not the own role |
@@ -39,7 +39,8 @@ use crate::types::{
 /// | `DELETE /api/auth/users/{id}/link` | admin | 204; uses up the user's links |
 /// | `POST /api/auth/users/{id}/sign-out` | admin | 204; ends all of the user's sessions |
 /// | `POST /api/auth/users/{id}/revoke` | admin | [`UserInfo`]; revokes access; not self |
-/// | `POST /api/auth/users/{id}/impersonate` | admin, if enabled | [`UserInfo`] + cookie for a session as that user; not self, not revoked |
+/// | `POST /api/auth/users/{id}/impersonate` | admin, if enabled | [`UserInfo`] (with `impersonated_by`) + cookie for a session as that user, marked with the admin; not self, not revoked, not from an impersonated session |
+/// | `POST /api/auth/impersonate/stop` | signed in, impersonated | [`UserInfo`] + cookie for a new session as the admin, ending the impersonated one; 403 unless the session is impersonated and its admin is still an active admin |
 /// | `GET /api/auth/google` | anyone | redirect to Google to sign in; 404 unless Google is configured (feature `google`) |
 /// | `GET /api/auth/google/register/{token}` | anyone | redirect to Google to register with the link; 404 unknown, 410 used or expired |
 /// | `GET /api/auth/google/link` | signed in | redirect to Google to switch to it |
@@ -80,7 +81,8 @@ where
         )
         .route("/api/auth/users/{id}/sign-out", post(sign_out_everywhere))
         .route("/api/auth/users/{id}/revoke", post(revoke_access))
-        .route("/api/auth/users/{id}/impersonate", post(impersonate));
+        .route("/api/auth/users/{id}/impersonate", post(impersonate))
+        .route("/api/auth/impersonate/stop", post(stop_impersonating));
 
     #[cfg(feature = "cloudflare")]
     let router = router.route("/api/auth/cloudflare", post(cloudflare));
@@ -168,10 +170,16 @@ where
     }
 }
 
-/// Answers `user` with a cookie that signs in `session`.
+/// Answers `user` with a cookie that signs in `session`, which is not
+/// impersonated.
 fn signed_in(auth: &Auth, headers: &HeaderMap, user: &User, session: &Session) -> Response {
+    signed_in_as(auth, headers, user.info(), session)
+}
+
+/// Answers `info` with a cookie that signs in `session`.
+fn signed_in_as(auth: &Auth, headers: &HeaderMap, info: UserInfo, session: &Session) -> Response {
     let cookie = auth.set_cookie(headers, &session.id);
-    ([(header::SET_COOKIE, cookie)], Json(user.info())).into_response()
+    ([(header::SET_COOKIE, cookie)], Json(info)).into_response()
 }
 
 fn cookie_header(value: HeaderValue) -> [(header::HeaderName, HeaderValue); 1] {
@@ -204,8 +212,11 @@ async fn cloudflare(State(auth): State<Auth>, headers: HeaderMap) -> Result<Resp
     Ok(signed_in(&auth, &headers, &user, &session))
 }
 
-async fn me(signed_in: SignedIn) -> Json<UserInfo> {
-    Json(signed_in.user.info())
+async fn me(
+    State(auth): State<Auth>,
+    SignedIn { user, session }: SignedIn,
+) -> Result<Json<UserInfo>, Error> {
+    Ok(Json(auth.session_info(&user, &session).await?))
 }
 
 async fn login(
@@ -259,12 +270,12 @@ async fn change_password(
     Body(change): Body<PasswordChange>,
 ) -> Result<Json<UserInfo>, Error> {
     let user = auth.change_password(&user, &session, &change).await?;
-    Ok(Json(user.info()))
+    Ok(Json(auth.session_info(&user, &session).await?))
 }
 
 async fn update_account(
     State(auth): State<Auth>,
-    SignedIn { user, .. }: SignedIn,
+    SignedIn { user, session }: SignedIn,
     Body(change): Body<UserChange>,
 ) -> Result<Json<UserInfo>, Error> {
     if change.role.is_some() {
@@ -272,7 +283,7 @@ async fn update_account(
     }
 
     let user = auth.update_user(&user, user.id, &change).await?;
-    Ok(Json(user.info()))
+    Ok(Json(auth.session_info(&user, &session).await?))
 }
 
 async fn users(
@@ -351,6 +362,16 @@ async fn impersonate(
     Id(id): Id,
     headers: HeaderMap,
 ) -> Result<Response, Error> {
-    let (user, session) = auth.impersonate(&admin.user, id).await?;
-    Ok(signed_in(&auth, &headers, &user, &session))
+    let (user, session) = auth.impersonate(&admin.user, &admin.session, id).await?;
+    let info = auth.session_info(&user, &session).await?;
+    Ok(signed_in_as(&auth, &headers, info, &session))
+}
+
+async fn stop_impersonating(
+    State(auth): State<Auth>,
+    SignedIn { session, .. }: SignedIn,
+    headers: HeaderMap,
+) -> Result<Response, Error> {
+    let (admin, session) = auth.stop_impersonating(&session).await?;
+    Ok(signed_in(&auth, &headers, &admin, &session))
 }

@@ -1,6 +1,10 @@
+use yew::platform::spawn_local;
 use yew::prelude::*;
 
 use super::context::use_auth;
+use super::form::error_message;
+use super::http::{self, Error};
+use crate::types::{AuthError, UserInfo};
 
 /// The properties of [`UserMenu`].
 #[derive(Properties, PartialEq)]
@@ -11,6 +15,10 @@ pub struct UserMenuProps {
     /// Called when an admin picks Users, such as to show
     /// [`AdminUsers`](super::AdminUsers). The item is only shown to admins.
     pub on_admin: Callback<()>,
+    /// Called once Stop impersonating has signed the admin back in, such as
+    /// to show [`AdminUsers`](super::AdminUsers) again.
+    #[prop_or_default]
+    pub on_stop_impersonating: Callback<()>,
     /// Classes added to the menu.
     #[prop_or_default]
     pub class: Classes,
@@ -19,12 +27,19 @@ pub struct UserMenuProps {
 /// A menu under the signed-in user's name with Account, Users (for admins
 /// only) and Sign out.
 ///
+/// While an admin impersonates the user ([`UserInfo::impersonated_by`]), a
+/// banner before the menu button says whom they are acting as, with a Stop
+/// impersonating button that signs the admin back in (see
+/// [`http::stop_impersonating`]).
+///
 /// The menu is a button that opens a list; picking an item closes it. Use it
 /// inside [`AuthProvider`](super::AuthProvider).
 #[function_component]
 pub fn UserMenu(props: &UserMenuProps) -> Html {
     let auth = use_auth();
     let open = use_state(|| false);
+    let stopping = use_state(|| false);
+    let stop_error = use_state(|| None::<AttrValue>);
 
     let toggle = {
         let open = open.clone();
@@ -46,8 +61,68 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
         item(Callback::from(move |()| auth.sign_out()))
     };
 
+    let on_stop = {
+        let auth = auth.clone();
+        let stopping = stopping.clone();
+        let stop_error = stop_error.clone();
+        let done = props.on_stop_impersonating.clone();
+
+        Callback::from(move |_: MouseEvent| {
+            if *stopping {
+                return;
+            }
+
+            stopping.set(true);
+            stop_error.set(None);
+
+            let auth = auth.clone();
+            let stopping = stopping.clone();
+            let stop_error = stop_error.clone();
+            let done = done.clone();
+
+            spawn_local(async move {
+                match http::stop_impersonating().await {
+                    Ok(admin) => {
+                        auth.set_user(admin);
+                        done.emit(());
+                    }
+                    Err(error) => {
+                        stop_error.set(Some(stop_error_message(&error)));
+
+                        if error.is_unauthorized() {
+                            auth.check_session();
+                        }
+                    }
+                }
+
+                stopping.set(false);
+            });
+        })
+    };
+
+    let banner = impersonation_banner(&auth.user).map(|text| {
+        html! {
+            <div class="auth-impersonating" role="status">
+                <span class="auth-impersonating-text">{text}</span>
+                <button
+                    type="button"
+                    class="auth-stop-impersonating"
+                    onclick={on_stop}
+                    disabled={*stopping}
+                >
+                    {"Stop impersonating"}
+                </button>
+                if let Some(error) = &*stop_error {
+                    <span class="auth-error">{error.clone()}</span>
+                }
+            </div>
+        }
+    });
+
     html! {
         <nav class={classes!("auth-menu", (*open).then_some("auth-open"), props.class.clone())}>
+            {banner}
+
             <button
                 type="button"
                 class="auth-menu-button"
@@ -76,5 +151,28 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
                 </ul>
             }
         </nav>
+    }
+}
+
+/// The banner's text while an admin impersonates `user`, naming the user and
+/// the admin; `None` when the session is the user's own.
+pub(super) fn impersonation_banner(user: &UserInfo) -> Option<String> {
+    let by = user.impersonated_by.as_ref()?;
+
+    Some(if by.name.is_empty() {
+        format!("Impersonating {}.", user.name())
+    } else {
+        format!("Impersonating {} as {}.", user.name(), by.name)
+    })
+}
+
+/// Why Stop impersonating failed. A refusal means the admin can no longer
+/// come back, so the way out is signing out.
+pub(super) fn stop_error_message(error: &Error) -> AttrValue {
+    match error {
+        Error::Auth(AuthError::Forbidden) => {
+            AttrValue::from("You can no longer return to your admin account. Sign out instead.")
+        }
+        error => error_message(error, "Stopping"),
     }
 }

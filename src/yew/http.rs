@@ -194,10 +194,21 @@ pub async fn revoke_access(id: UserId) -> Result<(), Error> {
 /// Signs this browser in as another user, for admins when the server enables
 /// impersonation: `POST /api/auth/users/{id}/impersonate`. The session
 /// cookie is replaced; reload the user afterwards, such as with
-/// [`AuthContext::refresh`](super::AuthContext::refresh).
+/// [`AuthContext::refresh`](super::AuthContext::refresh). The user then has
+/// [`impersonated_by`](UserInfo::impersonated_by) set, and
+/// [`stop_impersonating`] returns to the admin.
 pub async fn impersonate(id: UserId) -> Result<(), Error> {
     check(post(&user_path(id, "/impersonate")).send().await?).await?;
     Ok(())
+}
+
+/// Ends the impersonated session this browser holds and signs the admin who
+/// started it back in: `POST /api/auth/impersonate/stop`. The session cookie
+/// is replaced, and the answer is the admin. Refused with
+/// [`AuthError::Forbidden`] when the session is not impersonated, or the
+/// admin is no longer an active admin.
+pub async fn stop_impersonating() -> Result<UserInfo, Error> {
+    read(post("/api/auth/impersonate/stop").send().await?).await
 }
 
 fn user_path(id: UserId, rest: &str) -> String {

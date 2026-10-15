@@ -186,6 +186,21 @@ a { color: var(--accent); }
 .auth-menu-item { display: block; width: 100%; text-align: left; border: none; background: none; }
 .auth-menu-item:hover { background: var(--bg); }
 
+/* While an admin impersonates someone: the banner before the menu button. */
+.auth-menu { display: flex; align-items: center; gap: 8px; }
+.auth-impersonating {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 4px 4px 12px;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  color: var(--warn);
+  font-size: 13px;
+}
+.auth-impersonating .auth-error { margin: 0; }
+
 /* The account panel. */
 
 .auth-account { display: flex; flex-direction: column; gap: 8px; }

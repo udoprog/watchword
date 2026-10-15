@@ -18,10 +18,13 @@ CREATE TABLE IF NOT EXISTS
         created_at INTEGER NOT NULL
     );
 
+-- `impersonator_id` is the admin acting as `user_id`, for a session created
+-- by impersonation, and NULL otherwise.
 CREATE TABLE IF NOT EXISTS
     sessions (
         id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+        impersonator_id INTEGER REFERENCES users (id) ON DELETE CASCADE,
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL
     );

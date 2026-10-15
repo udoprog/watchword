@@ -182,11 +182,11 @@ impl Component for AuthProvider {
                 self.session_answer(ctx, me);
             }
             Msg::SetUser(user) => {
-                if !matches!(self.state, State::SignedIn(..)) {
+                let State::SignedIn(current) = &self.state else {
                     return false;
-                }
+                };
 
-                self.state = State::SignedIn(Rc::new(user));
+                self.state = State::SignedIn(Rc::new(replace_user(current, user)));
             }
             Msg::CheckSession => {
                 if self.checking {
@@ -301,6 +301,18 @@ impl AuthProvider {
             Err(..) => {}
         }
     }
+}
+
+/// The signed-in user after [`AuthContext::set_user`] with `new`. Only the
+/// answers about the own user mark an impersonated session, so an unmarked
+/// copy of the same user, such as from the admin routes, keeps the mark: the
+/// session is the same until the user changes.
+pub(super) fn replace_user(current: &UserInfo, mut new: UserInfo) -> UserInfo {
+    if new.id == current.id && new.impersonated_by.is_none() {
+        new.impersonated_by = current.impersonated_by.clone();
+    }
+
+    new
 }
 
 fn unreachable(error: &Error) -> AttrValue {

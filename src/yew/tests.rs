@@ -5,10 +5,13 @@ use super::admin_users::{link_url, matches_filter, page_bounds, relative_time};
 use super::browser::{register_token_from_path, strip_query_param};
 use super::cloudflare_settings::header_unverified;
 use super::form::identity_change;
-use super::http::CreatedUser;
+use super::http::{CreatedUser, Error};
+use super::provider::replace_user;
 use super::sign_in::query_error_message;
+use super::user_menu::{impersonation_banner, stop_error_message};
 use crate::types::{
-    Access, CloudflareConfig, Link, Method, Role, UserChange, UserEntry, UserId, UserInfo,
+    Access, AuthError, CloudflareConfig, Impersonator, Link, Method, Role, UserChange, UserEntry,
+    UserId, UserInfo,
 };
 
 fn user(login: Option<&str>, email: Option<&str>, method: Method) -> UserInfo {
@@ -21,6 +24,7 @@ fn user(login: Option<&str>, email: Option<&str>, method: Method) -> UserInfo {
         method,
         has_password: method == Method::Password,
         created_at: Timestamp::UNIX_EPOCH,
+        impersonated_by: None,
     }
 }
 
@@ -215,4 +219,65 @@ fn created_user_json() {
         serde_json::from_value::<CreatedUser>(json).unwrap(),
         created
     );
+}
+
+fn impersonated(by: &str) -> UserInfo {
+    UserInfo {
+        impersonated_by: Some(Impersonator {
+            id: UserId(9),
+            name: by.to_owned(),
+        }),
+        ..user(Some("pat"), None, Method::Password)
+    }
+}
+
+#[test]
+fn impersonation_banners() {
+    assert_eq!(
+        impersonation_banner(&user(Some("pat"), None, Method::Password)),
+        None
+    );
+    assert_eq!(
+        impersonation_banner(&impersonated("root")).as_deref(),
+        Some("Impersonating pat as root.")
+    );
+    assert_eq!(
+        impersonation_banner(&impersonated("")).as_deref(),
+        Some("Impersonating pat.")
+    );
+}
+
+#[test]
+fn stop_errors() {
+    assert_eq!(
+        stop_error_message(&Error::Auth(AuthError::Forbidden)),
+        "You can no longer return to your admin account. Sign out instead."
+    );
+    assert_eq!(
+        stop_error_message(&Error::Network("down".into())),
+        "Could not reach the server."
+    );
+}
+
+#[test]
+fn replacing_the_user_keeps_the_impersonation() {
+    let current = impersonated("root");
+
+    // An unmarked copy of the same user, such as from an admin route.
+    let mut renamed = user(Some("patty"), None, Method::Password);
+    let kept = replace_user(&current, renamed.clone());
+    assert_eq!(kept.login.as_deref(), Some("patty"));
+    assert_eq!(kept.impersonated_by, current.impersonated_by);
+
+    // A marked one is taken as it is.
+    renamed.impersonated_by = Some(Impersonator {
+        id: UserId(8),
+        name: "other".into(),
+    });
+    assert_eq!(replace_user(&current, renamed.clone()), renamed);
+
+    // Another user, such as the admin after stopping, is taken as it is.
+    let mut admin = user(Some("root"), None, Method::Password);
+    admin.id = UserId(9);
+    assert_eq!(replace_user(&current, admin.clone()), admin);
 }

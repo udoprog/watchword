@@ -162,6 +162,24 @@ pub struct UserInfo {
     /// When the user was created.
     #[cfg_attr(feature = "musli", musli(with = self::musli_timestamp))]
     pub created_at: Timestamp,
+    /// The admin acting as this user, when this is the signed-in user of a
+    /// session an admin created by impersonating them. Only the answers about
+    /// the request's own user (`GET /api/auth/me`, sign-in, impersonation and
+    /// the account routes) set it; it is absent from JSON when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impersonated_by: Option<Impersonator>,
+}
+
+/// The admin behind an impersonated session; see
+/// [`UserInfo::impersonated_by`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "musli", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli", musli(crate = musli_core))]
+pub struct Impersonator {
+    /// The admin's id.
+    pub id: UserId,
+    /// The admin's name to show, as [`UserInfo::name`] gives it.
+    pub name: String,
 }
 
 impl UserInfo {

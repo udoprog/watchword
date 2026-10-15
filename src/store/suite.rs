@@ -201,17 +201,24 @@ where
 
     /// A session for the user, created directly in the store.
     async fn session(&self, user: UserId) -> Result<String, Box<dyn StdError>> {
+        Ok(self.plain_session(user).await?.id)
+    }
+
+    /// A session for the user that is not impersonated, created directly in
+    /// the store.
+    async fn plain_session(&self, user: UserId) -> Result<Session, Box<dyn StdError>> {
         let now = Timestamp::now();
 
         let session = Session {
             id: crate::core::new_session_id(),
             user,
+            impersonator: None,
             created_at: now,
             expires_at: crate::core::session_expiry(now),
         };
 
         self.store.create_session(&session).await?;
-        Ok(session.id)
+        Ok(session)
     }
 
     async fn live(&self, session: &str) -> Result<bool, Box<dyn StdError>> {
@@ -283,8 +290,9 @@ where
         assert!(user.password_hash.is_none());
         env.assert_locked_out(&user, std::slice::from_ref(token))
             .await?;
+        let mine = env.plain_session(env.admin.id).await?;
         assert_eq!(
-            refused(env.auth.impersonate(&env.admin, user.id).await),
+            refused(env.auth.impersonate(&env.admin, &mine, user.id).await),
             AuthError::Forbidden
         );
 
@@ -1050,6 +1058,7 @@ where
     let expired = Session {
         id: crate::core::new_session_id(),
         user: env.admin.id,
+        impersonator: None,
         created_at: now - SignedDuration::from_hours(24),
         expires_at: now - SignedDuration::from_secs(1),
     };
@@ -1124,7 +1133,11 @@ where
         forbidden
     );
     assert_eq!(refused(env.auth.delete_user(&user, id).await), forbidden);
-    assert_eq!(refused(env.auth.impersonate(&user, id).await), forbidden);
+    let theirs = env.plain_session(user.id).await?;
+    assert_eq!(
+        refused(env.auth.impersonate(&user, &theirs, id).await),
+        forbidden
+    );
 
     // Nor can a user make themselves an admin.
     assert_eq!(
@@ -1182,8 +1195,9 @@ where
         refused(env.auth.delete_user(&env.admin, me).await),
         forbidden
     );
+    let mine = env.plain_session(me).await?;
     assert_eq!(
-        refused(env.auth.impersonate(&env.admin, me).await),
+        refused(env.auth.impersonate(&env.admin, &mine, me).await),
         forbidden
     );
 
@@ -1384,18 +1398,102 @@ where
     S: Store + Clone,
 {
     let env = env(store.clone()).await?;
+    let mine = env.plain_session(env.admin.id).await?;
+    let forbidden = AuthError::Forbidden;
 
-    // Pending users can be impersonated.
+    // A session that is not impersonated says so.
+    let info = env.auth.session_info(&env.admin, &mine).await?;
+    assert_eq!(info, env.admin.info());
+    assert_eq!(info.impersonated_by, None);
+
+    // Pending users can be impersonated, and the session records the admin,
+    // in the store too.
     let (pending, _) = env.invite("pending@example.com").await?;
-    let (user, session) = env.auth.impersonate(&env.admin, pending.id).await?;
+    let (user, session) = env.auth.impersonate(&env.admin, &mine, pending.id).await?;
     assert_eq!(user.id, pending.id);
+    assert_eq!(session.impersonator, Some(env.admin.id));
     assert!(env.live(&session.id).await?);
+    let stored = env.store.session(&session.id).await?.ok_or("no session")?;
+    assert_eq!(stored.impersonator, Some(env.admin.id));
+
+    let info = env.auth.session_info(&user, &session).await?;
+    let by = info.impersonated_by.expect("marked as impersonated");
+    assert_eq!(by.id, env.admin.id);
+    assert_eq!(by.name, "admin");
+
+    // The admin's own session is untouched.
+    assert!(env.live(&mine.id).await?);
+
+    // Stopping is only for impersonated sessions.
+    assert_eq!(refused(env.auth.stop_impersonating(&mine).await), forbidden);
+
+    // Stopping ends the impersonated session and signs the admin in again.
+    let (admin, back) = env.auth.stop_impersonating(&session).await?;
+    assert_eq!(admin.id, env.admin.id);
+    assert_eq!(back.user, env.admin.id);
+    assert_eq!(back.impersonator, None);
+    assert!(env.live(&back.id).await?);
+    assert!(!env.live(&session.id).await?);
+    assert!(env.store.session(&session.id).await?.is_none());
+    assert_eq!(
+        env.auth.session_info(&admin, &back).await?.impersonated_by,
+        None
+    );
+
+    // An admin acting as another admin cannot impersonate from there, so
+    // stopping always leads back to the admin who started.
+    let other = env.password_user("other@example.com").await?;
+    env.auth.set_role(&env.admin, other.id, Role::Admin).await?;
+    let other = env.reload(other.id).await?;
+    let (_, as_other) = env.auth.impersonate(&env.admin, &mine, other.id).await?;
+    assert_eq!(
+        refused(env.auth.impersonate(&other, &as_other, pending.id).await),
+        forbidden
+    );
+
+    // An admin who is no longer an active admin cannot come back; the
+    // impersonated session stays as it is, to be signed out of.
+    let (_, session) = env.auth.impersonate(&env.admin, &mine, pending.id).await?;
+    let demote = UserChange {
+        role: Some(Role::Regular),
+        ..UserChange::default()
+    };
+    env.store
+        .update_user(env.admin.id, &demote)
+        .await?
+        .expect("no conflict");
+    assert_eq!(
+        refused(env.auth.stop_impersonating(&session).await),
+        forbidden
+    );
+    assert!(env.live(&session.id).await?);
+
+    let promote = UserChange {
+        role: Some(Role::Admin),
+        ..UserChange::default()
+    };
+    env.store
+        .update_user(env.admin.id, &promote)
+        .await?
+        .expect("no conflict");
+    env.store.revoke(env.admin.id, Timestamp::now()).await?;
+    assert_eq!(
+        refused(env.auth.stop_impersonating(&session).await),
+        forbidden
+    );
+
+    // Deleting the admin ends the sessions they impersonate in.
+    env.store.delete_user(env.admin.id).await?;
+    assert!(env.store.session(&session.id).await?.is_none());
+    assert!(env.store.session(&as_other.id).await?.is_none());
+    assert!(env.live(&env.session(pending.id).await?).await?);
 
     // Not when disabled.
     let auth = Auth::builder(store, generate_session_key()).build();
+    let theirs = env.plain_session(other.id).await?;
     assert_eq!(
-        refused(auth.impersonate(&env.admin, pending.id).await),
-        AuthError::Forbidden
+        refused(auth.impersonate(&other, &theirs, pending.id).await),
+        forbidden
     );
     Ok(())
 }

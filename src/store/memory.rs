@@ -265,7 +265,9 @@ impl Store for MemoryStore {
             return Ok(false);
         }
 
-        inner.sessions.retain(|_, s| s.user != id);
+        inner
+            .sessions
+            .retain(|_, s| s.user != id && s.impersonator != Some(id));
         inner.tokens.retain(|_, t| t.user != id);
         Ok(true)
     }
