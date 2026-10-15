@@ -4,8 +4,8 @@ version = "0.1.0"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
 description = "Authentication for axum + Yew apps: shared types, server core, sign-in providers, axum integration and Yew components, each behind a feature."
-license = "MIT OR Apache-2.0"
 readme = "README.md"
+license = "MIT OR Apache-2.0"
 publish = false
 
 [lib]

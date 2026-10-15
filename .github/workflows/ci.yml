@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '34 21 * * 5'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    # No feature is on by default, so this covers only the `types` module.
+    - run: cargo test --no-default-features
+    - run: cargo test --all-features --all-targets
+    - run: cargo test --all-features --doc
+
+  # Each feature is checked alone, because a feature that only compiles
+  # alongside another breaks the apps that take it alone.
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+    - run: cargo clippy --all-targets --no-default-features -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features musli -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features server -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features cloudflare -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features google -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features axum -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features sqll -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features yew -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features test-util -- -D warnings
+    - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+    - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew
+    - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew,musli
+
+  docs:
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - run: cargo doc --all-features --no-deps
+
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt
+    - run: cargo fmt --check --all
