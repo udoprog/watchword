@@ -516,3 +516,93 @@ async fn migrates_territory() -> TestResult {
     );
     Ok(())
 }
+
+/// An app's read statements with the store's nested, as the module
+/// documentation shows.
+#[derive(sqll::Statements)]
+#[sql(read_only)]
+struct AppRead {
+    #[sql(statements)]
+    auth: Read,
+    #[sql = "SELECT login FROM users WHERE login LIKE ? ORDER BY login"]
+    logins_like: sqll::TypedStatement<(String,), String>,
+    #[sql = "SELECT login FROM users ORDER BY login LIMIT ?"]
+    first_logins: sqll::TypedStatement<(i64,), String>,
+}
+
+impl AsMut<Read> for AppRead {
+    fn as_mut(&mut self) -> &mut Read {
+        &mut self.auth
+    }
+}
+
+/// The write side of [`AppRead`].
+#[derive(sqll::Statements)]
+struct AppWrite {
+    #[sql(statements)]
+    auth: Write,
+    #[sql = "SELECT login FROM users WHERE login LIKE ? ORDER BY login"]
+    logins_like: sqll::TypedStatement<(String,), String>,
+    #[sql = "SELECT login FROM users ORDER BY login LIMIT ?"]
+    first_logins: sqll::TypedStatement<(i64,), String>,
+}
+
+impl AsMut<Write> for AppWrite {
+    fn as_mut(&mut self) -> &mut Write {
+        &mut self.auth
+    }
+}
+
+fn logins<I: sqll::Bind>(
+    stmt: &mut sqll::TypedStatement<I, String>,
+    bind: impl sqll::Bind,
+) -> sqll::Result<Vec<String>> {
+    let mut stmt = stmt.bind(bind)?;
+    let mut out = Vec::new();
+
+    while let Some(login) = stmt.next()? {
+        out.push(login);
+    }
+
+    Ok(out)
+}
+
+/// The store shares an app's pool, whose own statements include ones SQLite
+/// re-prepares on every bind (a bare `LIKE ?` or `LIMIT ?`). Those fail with
+/// "bad parameter or other API misuse" on sqll before 0.14.6, whose pool
+/// closed the connections its statements were prepared on.
+#[tokio::test]
+async fn shares_an_app_pool() -> TestResult {
+    let pool = PoolBuilder::new(options(), 2)
+        .with_write_setup(|c| c.execute(SCHEMA))
+        .open::<AppRead, AppWrite>(scratch_uri())?;
+    let pool = Arc::new(pool);
+    let store = SqllStore::new(pool.clone());
+
+    for name in ["alice", "alex", "bob"] {
+        let new = NewUser {
+            login: Some(name.to_owned()),
+            email: None,
+            role: Role::Regular,
+        };
+        store.create_user(&new, Timestamp::now()).await?.unwrap();
+    }
+
+    assert!(store.user_by_login("alex").await?.is_some());
+
+    for _ in 0..2 {
+        let mut read = pool.clone().shared().await?;
+        assert_eq!(logins(&mut read.logins_like, ("al%",))?, ["alex", "alice"]);
+        assert_eq!(logins(&mut read.logins_like, ("b%",))?, ["bob"]);
+        assert_eq!(logins(&mut read.first_logins, (1,))?, ["alex"]);
+        assert_eq!(logins(&mut read.first_logins, (2,))?, ["alex", "alice"]);
+    }
+
+    let mut write = pool.clone().exclusive().await?;
+    assert_eq!(logins(&mut write.logins_like, ("al%",))?, ["alex", "alice"]);
+    assert_eq!(
+        logins(&mut write.first_logins, (3,))?,
+        ["alex", "alice", "bob"]
+    );
+    Ok(())
+}

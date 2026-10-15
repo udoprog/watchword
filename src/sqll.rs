@@ -77,7 +77,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 
 use jiff::Timestamp;
-use sqll::{IsReadOnly, Pool, Row, Statements};
+use sqll::{IsReadOnly, Pool, Row, Statements, TypedStatement};
 use tokio::task::spawn_blocking;
 
 use crate::store::{Credential, Result, Session, Store, StoreError, Token, TokenKind, User};
@@ -149,116 +149,104 @@ where
     }
 }
 
-/// The statement collections, apart because the code `Statements` derives
-/// trips `clippy::redundant_field_names`.
-mod statements {
-    #![allow(clippy::redundant_field_names)]
-
-    use sqll::{Statements, TypedStatement};
-
-    use super::{SessionRow, TokenRow, UserLinkRow, UserRow};
-
-    /// The store's read statements, to nest in an app's read-only statement
-    /// collection with `#[sql(statements)]`.
-    #[derive(Statements)]
-    #[sql(read_only)]
-    pub struct Read {
-        #[sql = "SELECT id, login, email, role, access, method, password_hash, google_sub, created_at"]
-        #[sql = "FROM users WHERE id = ?"]
-        pub(super) user: TypedStatement<(i64,), UserRow>,
-        #[sql = "SELECT id, login, email, role, access, method, password_hash, google_sub, created_at"]
-        #[sql = "FROM users WHERE email = ?"]
-        pub(super) user_by_email: TypedStatement<(String,), UserRow>,
-        #[sql = "SELECT id, login, email, role, access, method, password_hash, google_sub, created_at"]
-        #[sql = "FROM users WHERE login = ?"]
-        pub(super) user_by_login: TypedStatement<(String,), UserRow>,
-        #[sql = "SELECT id, login, email, role, access, method, password_hash, google_sub, created_at"]
-        #[sql = "FROM users WHERE google_sub = ?"]
-        pub(super) user_by_google_sub: TypedStatement<(String,), UserRow>,
-        #[sql = "SELECT u.id, u.login, u.email, u.role, u.access, u.method, u.password_hash,"]
-        #[sql = "u.google_sub, u.created_at,"]
-        #[sql = "(SELECT MAX(t.expires_at) FROM auth_tokens t"]
-        #[sql = " WHERE t.user_id = u.id AND t.used_at IS NULL AND t.expires_at > ?) AS link"]
-        #[sql = "FROM users u ORDER BY u.id"]
-        pub(super) users: TypedStatement<(i64,), UserLinkRow>,
-        #[sql = "SELECT COUNT(*) FROM users"]
-        pub(super) user_count: TypedStatement<(), i64>,
-        #[sql = "SELECT id, user_id, impersonator_id, created_at, expires_at FROM sessions WHERE id = ?"]
-        pub(super) session: TypedStatement<(String,), SessionRow>,
-        #[sql = "SELECT id, user_id, kind, expires_at, used_at FROM auth_tokens WHERE id = ?"]
-        pub(super) token: TypedStatement<(String,), TokenRow>,
-        #[sql = "SELECT value FROM config WHERE key = ?"]
-        pub(super) config: TypedStatement<(String,), String>,
-    }
-
-    /// The store's write statements, to nest in an app's write statement
-    /// collection with `#[sql(statements)]`. They include [`Read`].
-    #[derive(Statements)]
-    pub struct Write {
-        #[sql(statements)]
-        pub(super) read: Read,
-
-        #[sql = "BEGIN IMMEDIATE"]
-        pub(super) begin: TypedStatement<(), ()>,
-        #[sql = "COMMIT"]
-        pub(super) commit: TypedStatement<(), ()>,
-        #[sql = "ROLLBACK"]
-        pub(super) rollback: TypedStatement<(), ()>,
-
-        #[sql = "INSERT INTO users (login, email, role, access, method, created_at)"]
-        #[sql = "VALUES (?, ?, ?, 'pending', 'password', ?) RETURNING id"]
-        pub(super) insert_user: TypedStatement<(Option<String>, Option<String>, String, i64), i64>,
-        #[sql = "UPDATE users SET login = ? WHERE id = ?"]
-        pub(super) set_login: TypedStatement<(Option<String>, i64), ()>,
-        #[sql = "UPDATE users SET email = ? WHERE id = ?"]
-        pub(super) set_email: TypedStatement<(Option<String>, i64), ()>,
-        #[sql = "UPDATE users SET role = ? WHERE id = ?"]
-        pub(super) set_role: TypedStatement<(String, i64), ()>,
-        #[sql = "DELETE FROM users WHERE id = ? RETURNING id"]
-        pub(super) delete_user: TypedStatement<(i64,), i64>,
-        #[sql = "UPDATE users SET method = 'password', password_hash = ?, google_sub = NULL,"]
-        #[sql = "access = 'active' WHERE id = ? RETURNING id"]
-        pub(super) set_password: TypedStatement<(String, i64), i64>,
-        #[sql = "UPDATE users SET method = 'google', password_hash = NULL, google_sub = ?,"]
-        #[sql = "email = ?, access = 'active' WHERE id = ? RETURNING id"]
-        pub(super) set_google: TypedStatement<(String, String, i64), i64>,
-        #[sql = "UPDATE users SET google_sub = ? WHERE id = ?"]
-        pub(super) set_google_sub: TypedStatement<(String, i64), ()>,
-        #[sql = "UPDATE users SET access = ? WHERE id = ? RETURNING id"]
-        pub(super) set_access: TypedStatement<(String, i64), i64>,
-        #[sql = "UPDATE users SET access = 'active' WHERE id = ? AND access = 'pending' RETURNING id"]
-        pub(super) activate: TypedStatement<(i64,), i64>,
-        #[sql = "UPDATE users SET access = 'revoked', password_hash = NULL WHERE id = ? RETURNING id"]
-        pub(super) revoke: TypedStatement<(i64,), i64>,
-
-        #[sql = "INSERT INTO sessions (id, user_id, impersonator_id, created_at, expires_at)"]
-        #[sql = "VALUES (?, ?, ?, ?, ?)"]
-        pub(super) insert_session: TypedStatement<(String, i64, Option<i64>, i64, i64), ()>,
-        #[sql = "DELETE FROM sessions WHERE id = ?"]
-        pub(super) delete_session: TypedStatement<(String,), ()>,
-        #[sql = "DELETE FROM sessions WHERE user_id = ? AND id IS NOT ?"]
-        pub(super) delete_sessions: TypedStatement<(i64, Option<String>), ()>,
-        #[sql = "DELETE FROM sessions WHERE impersonator_id = ?"]
-        pub(super) delete_impersonations: TypedStatement<(i64,), ()>,
-        #[sql = "DELETE FROM sessions WHERE expires_at <= ?"]
-        pub(super) delete_expired_sessions: TypedStatement<(i64,), ()>,
-
-        #[sql = "INSERT INTO auth_tokens (id, user_id, kind, expires_at, used_at) VALUES (?, ?, ?, ?, ?)"]
-        pub(super) insert_token: TypedStatement<(String, i64, String, i64, Option<i64>), ()>,
-        #[sql = "UPDATE auth_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL"]
-        pub(super) use_up_tokens: TypedStatement<(i64, i64), ()>,
-        #[sql = "UPDATE auth_tokens SET used_at = ? WHERE id = ? AND used_at IS NULL"]
-        pub(super) use_token: TypedStatement<(i64, String), ()>,
-        #[sql = "DELETE FROM auth_tokens WHERE user_id = ?"]
-        pub(super) delete_tokens: TypedStatement<(i64,), ()>,
-
-        #[sql = "INSERT INTO config (key, value) VALUES (?, ?)"]
-        #[sql = "ON CONFLICT (key) DO UPDATE SET value = excluded.value"]
-        pub(super) set_config: TypedStatement<(String, String), ()>,
-    }
+/// The store's read statements, to nest in an app's read-only statement
+/// collection with `#[sql(statements)]`.
+#[derive(Statements)]
+#[sql(read_only)]
+pub struct Read {
+    #[sql = "SELECT id, login, email, role, access, method, password_hash, google_sub, created_at"]
+    #[sql = "FROM users WHERE id = ?"]
+    user: TypedStatement<(i64,), UserRow>,
+    #[sql = "SELECT id, login, email, role, access, method, password_hash, google_sub, created_at"]
+    #[sql = "FROM users WHERE email = ?"]
+    user_by_email: TypedStatement<(String,), UserRow>,
+    #[sql = "SELECT id, login, email, role, access, method, password_hash, google_sub, created_at"]
+    #[sql = "FROM users WHERE login = ?"]
+    user_by_login: TypedStatement<(String,), UserRow>,
+    #[sql = "SELECT id, login, email, role, access, method, password_hash, google_sub, created_at"]
+    #[sql = "FROM users WHERE google_sub = ?"]
+    user_by_google_sub: TypedStatement<(String,), UserRow>,
+    #[sql = "SELECT u.id, u.login, u.email, u.role, u.access, u.method, u.password_hash,"]
+    #[sql = "u.google_sub, u.created_at,"]
+    #[sql = "(SELECT MAX(t.expires_at) FROM auth_tokens t"]
+    #[sql = " WHERE t.user_id = u.id AND t.used_at IS NULL AND t.expires_at > ?) AS link"]
+    #[sql = "FROM users u ORDER BY u.id"]
+    users: TypedStatement<(i64,), UserLinkRow>,
+    #[sql = "SELECT COUNT(*) FROM users"]
+    user_count: TypedStatement<(), i64>,
+    #[sql = "SELECT id, user_id, impersonator_id, created_at, expires_at FROM sessions WHERE id = ?"]
+    session: TypedStatement<(String,), SessionRow>,
+    #[sql = "SELECT id, user_id, kind, expires_at, used_at FROM auth_tokens WHERE id = ?"]
+    token: TypedStatement<(String,), TokenRow>,
+    #[sql = "SELECT value FROM config WHERE key = ?"]
+    config: TypedStatement<(String,), String>,
 }
 
-pub use self::statements::{Read, Write};
+/// The store's write statements, to nest in an app's write statement
+/// collection with `#[sql(statements)]`. They include [`Read`].
+#[derive(Statements)]
+pub struct Write {
+    #[sql(statements)]
+    read: Read,
+
+    #[sql = "BEGIN IMMEDIATE"]
+    begin: TypedStatement<(), ()>,
+    #[sql = "COMMIT"]
+    commit: TypedStatement<(), ()>,
+    #[sql = "ROLLBACK"]
+    rollback: TypedStatement<(), ()>,
+
+    #[sql = "INSERT INTO users (login, email, role, access, method, created_at)"]
+    #[sql = "VALUES (?, ?, ?, 'pending', 'password', ?) RETURNING id"]
+    insert_user: TypedStatement<(Option<String>, Option<String>, String, i64), i64>,
+    #[sql = "UPDATE users SET login = ? WHERE id = ?"]
+    set_login: TypedStatement<(Option<String>, i64), ()>,
+    #[sql = "UPDATE users SET email = ? WHERE id = ?"]
+    set_email: TypedStatement<(Option<String>, i64), ()>,
+    #[sql = "UPDATE users SET role = ? WHERE id = ?"]
+    set_role: TypedStatement<(String, i64), ()>,
+    #[sql = "DELETE FROM users WHERE id = ? RETURNING id"]
+    delete_user: TypedStatement<(i64,), i64>,
+    #[sql = "UPDATE users SET method = 'password', password_hash = ?, google_sub = NULL,"]
+    #[sql = "access = 'active' WHERE id = ? RETURNING id"]
+    set_password: TypedStatement<(String, i64), i64>,
+    #[sql = "UPDATE users SET method = 'google', password_hash = NULL, google_sub = ?,"]
+    #[sql = "email = ?, access = 'active' WHERE id = ? RETURNING id"]
+    set_google: TypedStatement<(String, String, i64), i64>,
+    #[sql = "UPDATE users SET google_sub = ? WHERE id = ?"]
+    set_google_sub: TypedStatement<(String, i64), ()>,
+    #[sql = "UPDATE users SET access = ? WHERE id = ? RETURNING id"]
+    set_access: TypedStatement<(String, i64), i64>,
+    #[sql = "UPDATE users SET access = 'active' WHERE id = ? AND access = 'pending' RETURNING id"]
+    activate: TypedStatement<(i64,), i64>,
+    #[sql = "UPDATE users SET access = 'revoked', password_hash = NULL WHERE id = ? RETURNING id"]
+    revoke: TypedStatement<(i64,), i64>,
+
+    #[sql = "INSERT INTO sessions (id, user_id, impersonator_id, created_at, expires_at)"]
+    #[sql = "VALUES (?, ?, ?, ?, ?)"]
+    insert_session: TypedStatement<(String, i64, Option<i64>, i64, i64), ()>,
+    #[sql = "DELETE FROM sessions WHERE id = ?"]
+    delete_session: TypedStatement<(String,), ()>,
+    #[sql = "DELETE FROM sessions WHERE user_id = ? AND id IS NOT ?"]
+    delete_sessions: TypedStatement<(i64, Option<String>), ()>,
+    #[sql = "DELETE FROM sessions WHERE impersonator_id = ?"]
+    delete_impersonations: TypedStatement<(i64,), ()>,
+    #[sql = "DELETE FROM sessions WHERE expires_at <= ?"]
+    delete_expired_sessions: TypedStatement<(i64,), ()>,
+
+    #[sql = "INSERT INTO auth_tokens (id, user_id, kind, expires_at, used_at) VALUES (?, ?, ?, ?, ?)"]
+    insert_token: TypedStatement<(String, i64, String, i64, Option<i64>), ()>,
+    #[sql = "UPDATE auth_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL"]
+    use_up_tokens: TypedStatement<(i64, i64), ()>,
+    #[sql = "UPDATE auth_tokens SET used_at = ? WHERE id = ? AND used_at IS NULL"]
+    use_token: TypedStatement<(i64, String), ()>,
+    #[sql = "DELETE FROM auth_tokens WHERE user_id = ?"]
+    delete_tokens: TypedStatement<(i64,), ()>,
+
+    #[sql = "INSERT INTO config (key, value) VALUES (?, ?)"]
+    #[sql = "ON CONFLICT (key) DO UPDATE SET value = excluded.value"]
+    set_config: TypedStatement<(String, String), ()>,
+}
 
 impl AsMut<Read> for Read {
     #[inline]
