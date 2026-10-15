@@ -29,8 +29,9 @@ musli-web-macros):
 - **watchword-core**: the types of section 2.1 (`UserId`, `Role`, `Access`,
   `Method`, the wire types, `AuthError`, `validate_password`,
   `normalize_email`). Safe for wasm32. Its `musli01` feature adds musli's
-  derives, and its `axum08` feature `IntoResponse` for `AuthError` (Rust's
-  orphan rule keeps that impl in the crate defining `AuthError`).
+  derives, its `musliweb04` feature the musli-web API types of 2.7, and its
+  `axum08` feature `IntoResponse` for `AuthError` (Rust's orphan rule keeps
+  that impl in the crate defining `AuthError`).
 - **watchword-yew023**: everything for yew 0.23 (components, context,
   `use_auth`, the HTTP client and browser helpers). It depends on yew under the
   key `yew`, because yew's macros (`html!`, `#[function_component]`,
@@ -92,10 +93,10 @@ No feature is on by default.
 | `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, and its `SCHEMA` | sqll 0.14 |
 | `yew023` | watchword-yew023: components, context, hook, HTTP client | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures |
 | `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum08` also `google::fake::FakeGoogle` (see 2.4) | nothing more |
-| `musliweb04` *(proposed, 2.7)* | `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler; with `yew023` the components' socket transport | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
+| `musliweb04` *(2.7)* | `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler *(proposed)*; with `yew023` the components' socket transport *(proposed)* | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
 
 The modules are `watchword::{types, core, store, cloudflare, google, axum08,
-sqll014, yew023}`, and the most-used names that need no versioned feature are
+sqll014, musliweb04, yew023}`, and the most-used names that need no versioned feature are
 re-exported at the root.
 
 ## 2. API
@@ -510,10 +511,11 @@ cookies, so the library does not depend on the app's gloo version.
   header is trusted without verifying the token. The app stores the value in its
   own settings and calls `auth.set_cloudflare`.
 
-### 2.7 musli-web integration (`musliweb04`) — proposed
+### 2.7 musli-web integration (`musliweb04`) — partly built
 
-*Status: design only; nothing in this section is built yet. Decisions 13 and
-16–19 record why it is shaped this way.*
+*Status: the types (`watchword::musliweb04`) are built; the server's
+`Connection` and the components' socket transport are proposed. Decisions 13
+and 16–19 record why it is shaped this way.*
 
 An app whose frontend already talks to its server over a musli-web WebSocket
 can carry watchword's account and user-management operations, and its live
@@ -551,18 +553,18 @@ macro's paths resolve with `extern crate musli_web04 as musli_web;` at its
 root, under the feature. The module is re-exported as `watchword::musliweb04`.
 
 ```rust
-musli_web::define! {
-    #[musli(id = 32000)] pub type Me;            // () -> Result<UserInfo, AuthError>, with impersonated_by
+musli_web::api::define! {
+    #[musli(id = 32000)] pub type Me;            // MeRequest -> Result<UserInfo, AuthError>, with impersonated_by
     #[musli(id = 32001)] pub type UpdateAccount; // UserChange -> Result<UserInfo, AuthError>; own login/email
     #[musli(id = 32002)] pub type ChangePassword;// PasswordChange -> Result<UserInfo, AuthError>
-    #[musli(id = 32003)] pub type Users;         // () -> Result<Vec<UserEntry>, AuthError>; admin
+    #[musli(id = 32003)] pub type Users;         // UsersRequest -> Result<Vec<UserEntry>, AuthError>; admin
     #[musli(id = 32004)] pub type CreateUser;    // NewUser -> Result<CreatedUser, AuthError>; admin
     #[musli(id = 32005)] pub type UpdateUser;    // UserUpdate { id, change } -> Result<UserInfo, AuthError>; admin
-    #[musli(id = 32006)] pub type DeleteUser;    // UserId -> Result<(), AuthError>; admin
-    #[musli(id = 32007)] pub type IssueLink;     // UserId -> Result<Link, AuthError>; admin
-    #[musli(id = 32008)] pub type RevokeLink;    // UserId -> Result<(), AuthError>; admin
-    #[musli(id = 32009)] pub type SignOutUser;   // UserId -> Result<(), AuthError>; admin, sign out everywhere
-    #[musli(id = 32010)] pub type RevokeAccess;  // UserId -> Result<UserInfo, AuthError>; admin
+    #[musli(id = 32006)] pub type DeleteUser;    // DeleteUserRequest { id } -> Result<(), AuthError>; admin
+    #[musli(id = 32007)] pub type IssueLink;     // IssueLinkRequest { id } -> Result<Link, AuthError>; admin
+    #[musli(id = 32008)] pub type RevokeLink;    // RevokeLinkRequest { id } -> Result<(), AuthError>; admin
+    #[musli(id = 32009)] pub type SignOutUser;   // SignOutUserRequest { id } -> Result<(), AuthError>; admin, sign out everywhere
+    #[musli(id = 32010)] pub type RevokeAccess;  // RevokeAccessRequest { id } -> Result<UserInfo, AuthError>; admin
     #[musli(id = 32100)] pub type AuthBroadcast; // event AuthUpdate
 }
 
@@ -575,20 +577,26 @@ pub enum AuthUpdate {
 ```
 
 The request bodies are small structs in the module (`MeRequest`,
-`UsersRequest`, `UserUpdate { id, change }`, `UserTarget { id }`, ...) or the
-existing wire types (`UserChange`, `PasswordChange`, `NewUser`). Every
-response is `Result<T, AuthError>`, which musli encodes, so the frontend gets
-the same structured `AuthError` it gets over HTTP. An internal failure
-(store, hashing) is an `Err` from the handler, which musli-web sends as a
-request error, the analogue of HTTP 500.
+`UsersRequest`, `UserUpdate { id, change }`, and a `{ id }` struct per
+endpoint that only names its target user, such as `DeleteUserRequest`) or the
+existing wire types (`UserChange`, `PasswordChange`, `NewUser`). One shared
+`UserTarget { id }` cannot serve those five endpoints: `define!` implements
+`api::Request` for each request type with its endpoint as `type Endpoint`, so
+a type can be the request of only one endpoint. Every response is
+`Result<T, AuthError>`, which musli encodes (musli-core implements
+`Encode`/`Decode` for `Result`, so it meets `Endpoint::Response`'s bound
+directly), so the frontend gets the same structured `AuthError` it gets over
+HTTP. An internal failure (store, hashing) is an `Err` from the handler, which
+musli-web sends as a request error, the analogue of HTTP 500.
 
 **Ids.** watchword owns the band 32000–32255 and pins every id in it
 explicitly. An app keeps its own implicit ids, which start at 1 and never
 reach the band, or pins its own ids below it. A released id never changes
 meaning; a new endpoint takes the next free id in the band, and a removed one
-leaves its id unused. Pinning keeps watchword's ids stable whatever order its
-definitions are in, and the band makes a clash a matter of an app defining
-over 31 999 types.
+leaves its id unused. The module exports the band as `FIRST_ID` and
+`LAST_ID`, and `is_watchword_id(id)` tests an id against it. Pinning keeps
+watchword's ids stable whatever order its definitions are in, and the band
+makes a clash a matter of an app defining over 31 999 types.
 
 The app's `api` crate does not list watchword's types in its own `define!`
 (musli-web has no syntax for that): they are a second list on the same
@@ -633,8 +641,8 @@ event = events.recv() => if let Some(update) = conn.update(&event?).await? {
   socket, as today.
 
 An app that hand-writes a combined `api::Id` instead of delegating its
-`Unknown` arm can do so; `Connection::handles(id)` says whether an id is
-watchword's.
+`Unknown` arm can do so; `Connection::handles(id)` (or `is_watchword_id`, from
+the types) says whether an id is watchword's.
 
 #### Frontend: the components' socket transport (`musliweb04` + `yew023`)
 
@@ -787,7 +795,7 @@ once the release is on crates.io.
     socket.** Account and admin operations are HTTP JSON routes, so the
     components are self-contained, an app writes no user endpoints, and an app
     without a WebSocket needs nothing more. An app with a musli-web socket can
-    also carry them, and the live updates, on it (2.7, proposed): watchword
+    also carry them, and the live updates, on it (2.7, partly built): watchword
     defines the endpoints and the handler, so the app still writes no user
     endpoints, and the components need no app-supplied client trait because
     musli-web's handle is untyped. The HTTP routes stay, both for apps without

@@ -333,3 +333,87 @@ fn musli_round_trip() {
         round_trip(AuthError::Invalid(invalid));
     }
 }
+
+#[cfg(feature = "musliweb04")]
+mod musliweb04 {
+    use musli_web04::api::{Id, MessageId};
+
+    use super::*;
+    use crate::musliweb04::*;
+
+    /// The ids are part of the wire format: a released id never changes
+    /// meaning.
+    #[test]
+    fn ids_are_pinned() {
+        let ids: [(MessageId, u16); 12] = [
+            (Me::ID, 32000),
+            (UpdateAccount::ID, 32001),
+            (ChangePassword::ID, 32002),
+            (Users::ID, 32003),
+            (CreateUser::ID, 32004),
+            (UpdateUser::ID, 32005),
+            (DeleteUser::ID, 32006),
+            (IssueLink::ID, 32007),
+            (RevokeLink::ID, 32008),
+            (SignOutUser::ID, 32009),
+            (RevokeAccess::ID, 32010),
+            (AuthBroadcast::ID, 32100),
+        ];
+
+        for (id, expected) in ids {
+            assert_eq!(id.get(), expected, "{:?}", debug_id(id));
+            assert!(is_watchword_id(id));
+        }
+
+        assert_eq!(Request::from_id(Me::ID), Request::Me);
+        assert_eq!(Request::from_id(RevokeAccess::ID), Request::RevokeAccess);
+        assert_eq!(Event::from_id(AuthBroadcast::ID), Event::AuthBroadcast);
+
+        let app = MessageId::new(1).unwrap();
+        assert_eq!(Request::from_id(app), Request::Unknown(app));
+        assert!(!is_watchword_id(app));
+        assert!(!is_watchword_id(MessageId::new(FIRST_ID - 1).unwrap()));
+        assert!(is_watchword_id(MessageId::new(LAST_ID).unwrap()));
+        assert!(!is_watchword_id(MessageId::new(LAST_ID + 1).unwrap()));
+    }
+
+    #[test]
+    fn bodies_round_trip() {
+        fn round_trip<T>(value: T)
+        where
+            T: std::fmt::Debug
+                + PartialEq
+                + Encode<musli::mode::Binary>
+                + for<'de> Decode<'de, musli::mode::Binary, musli::alloc::Global>,
+        {
+            let bytes = musli::storage::to_vec(&value).unwrap();
+            let decoded: T = musli::storage::from_slice(&bytes).unwrap();
+            assert_eq!(decoded, value);
+        }
+
+        round_trip(MeRequest);
+        round_trip(UsersRequest);
+        round_trip(UserUpdate {
+            id: UserId(3),
+            change: UserChange {
+                login: Some(Some("new".into())),
+                email: Some(None),
+                role: None,
+            },
+        });
+        round_trip(DeleteUserRequest { id: UserId(3) });
+        round_trip(RevokeAccessRequest { id: UserId(3) });
+
+        round_trip(Ok::<_, AuthError>(user()));
+        round_trip(Err::<UserInfo, _>(AuthError::Invalid(
+            Invalid::PasswordTooShort { min: 8 },
+        )));
+        round_trip(Ok::<(), AuthError>(()));
+        round_trip(Err::<(), _>(AuthError::Forbidden));
+
+        round_trip(AuthUpdate::Me(user()));
+        round_trip(AuthUpdate::UserCreated(user()));
+        round_trip(AuthUpdate::UserChanged(user()));
+        round_trip(AuthUpdate::UserDeleted(UserId(3)));
+    }
+}

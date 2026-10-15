@@ -22,7 +22,9 @@ With no features the crate is safe to build for `wasm32-unknown-unknown`.
 | Feature | What it provides |
 |---|---|
 | `musli01` | musli 0.1 `Encode`/`Decode` on the wire types, so an app can embed them in its own WebSocket messages |
+| `musliweb04` | `musli01` + [`musliweb04`]: the account and user-management endpoints and `AuthBroadcast` as musli-web 0.4 API types, with their ids pinned in 32000–32255 |
 | `axum08` | axum 0.8 `IntoResponse` for [`AuthError`], answering with its JSON body and status; watchword's `axum08` feature turns it on (not for wasm) |
 
 [`AuthError`]: https://docs.rs/watchword-core/latest/watchword_core/enum.AuthError.html
+[`musliweb04`]: https://docs.rs/watchword-core/latest/watchword_core/musliweb04/index.html
 [watchword]: https://docs.rs/watchword

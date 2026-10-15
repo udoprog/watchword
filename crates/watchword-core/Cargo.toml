@@ -22,6 +22,7 @@ rustdoc-args = ["--cfg", "watchword_docsrs"]
 [features]
 default = []
 musli01 = ["dep:musli-core01"]
+musliweb04 = ["musli01", "dep:musli-web04"]
 axum08 = ["dep:axum08"]
 
 [dependencies]
@@ -30,6 +31,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.18"
 
 musli-core01 = { package = "musli-core", version = "0.1.7", default-features = false, features = ["alloc", "std"], optional = true }
+musli-web04 = { package = "musli-web", version = "0.4.11", default-features = false, features = ["api"], optional = true }
 axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["json"], optional = true }
 
 [dev-dependencies]

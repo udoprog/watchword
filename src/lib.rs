@@ -19,14 +19,16 @@
 //!
 //! A dependency that is not yet 1.0 and appears in the API is named after its
 //! version: its feature and module are `axum08` for axum 0.8, `sqll014` for
-//! sqll 0.14, `musli01` for musli 0.1 and `yew023` for yew 0.23. A later
-//! version is added beside it, so a watchword upgrade never forces an app onto
-//! a new axum, sqll, musli or yew, and an app moves when it chooses.
+//! sqll 0.14, `musli01` for musli 0.1, `musliweb04` for musli-web 0.4 and
+//! `yew023` for yew 0.23. A later version is added beside it, so a watchword
+//! upgrade never forces an app onto a new axum, sqll, musli, musli-web or yew,
+//! and an app moves when it chooses.
 //!
 //! | Feature | Module | What it provides |
 //! |---|---|---|
 //! | *(none)* | [`types`] | `UserId`, `Role`, `Access`, `Method`, the wire types (`UserInfo`, `AuthConfig`, `LoginRequest`, `CreatedUser`, ...), `AuthError` and its `Invalid` reasons, `validate_password`, `normalize_email`, from the [watchword-core] crate |
 //! | `musli01` | | musli 0.1 `Encode`/`Decode` on the wire types |
+//! | `musliweb04` | [`musliweb04`] | for musli-web 0.4: the account and user-management endpoints and the `AuthBroadcast` of live auth changes, as API types an app carries on its own musli-web WebSocket, with their ids pinned in 32000–32255 (implies `musli01`) |
 //! | `server` | [`core`], [`store`] | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin) and `Auth::guard` for WebSocket sessions; the `Store` trait and `MemoryStore` |
 //! | `cloudflare` | [`cloudflare`] | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
 //! | `google` | [`google`] | Google OAuth: `GoogleConfig` for `AuthBuilder::google`; with `axum08`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
@@ -91,6 +93,7 @@
 //! [`examples/app`]: https://github.com/udoprog/watchword/tree/main/examples/app
 //! [`google::fake`]: https://docs.rs/watchword/latest/watchword/google/fake/index.html
 //! [`google`]: https://docs.rs/watchword/latest/watchword/google/index.html
+//! [`musliweb04`]: https://docs.rs/watchword/latest/watchword/musliweb04/index.html
 //! [`sqll014`]: https://docs.rs/watchword/latest/watchword/sqll014/index.html
 //! [`store`]: https://docs.rs/watchword/latest/watchword/store/index.html
 //! [`types`]: https://docs.rs/watchword/latest/watchword/types/index.html
@@ -103,6 +106,11 @@
 
 #[doc(inline)]
 pub use watchword_core as types;
+
+#[cfg(feature = "musliweb04")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb04")))]
+#[doc(inline)]
+pub use watchword_core::musliweb04;
 
 #[cfg(feature = "server")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "server")))]
