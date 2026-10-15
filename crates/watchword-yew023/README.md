@@ -38,7 +38,7 @@ use yew::prelude::*;
 #[function_component]
 fn Root() -> Html {
     html! {
-        <AuthProvider title="Track">
+        <AuthProvider title="My App">
             <App />
         </AuthProvider>
     }

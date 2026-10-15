@@ -1,6 +1,6 @@
 //! Signing in with Google OAuth (the `google` feature).
 //!
-//! This is territory's authorization-code flow. Configure it with
+//! This is the OAuth authorization-code flow. Configure it with
 //! [`AuthBuilder::google`](crate::AuthBuilder::google); the `axum08` feature
 //! serves its routes:
 //!

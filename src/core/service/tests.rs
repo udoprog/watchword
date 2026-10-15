@@ -91,21 +91,21 @@ async fn key_is_created_once_and_read_in_either_encoding() {
         Some(STANDARD.encode(key))
     );
 
-    // track's padded base64, with whitespace.
-    let track = [7u8; 32];
+    // Standard padded base64, with whitespace.
+    let padded = [7u8; 32];
     store
-        .config_set(SESSION_KEY, &format!(" {}\n", STANDARD.encode(track)))
+        .config_set(SESSION_KEY, &format!(" {}\n", STANDARD.encode(padded)))
         .await
         .unwrap();
-    assert_eq!(load_or_create_key(&store).await.unwrap(), track);
+    assert_eq!(load_or_create_key(&store).await.unwrap(), padded);
 
-    // territory's unpadded base64url.
-    let territory = [0xfbu8; 32];
+    // Unpadded base64url.
+    let url_safe = [0xfbu8; 32];
     store
-        .config_set(SESSION_KEY, &URL_SAFE_NO_PAD.encode(territory))
+        .config_set(SESSION_KEY, &URL_SAFE_NO_PAD.encode(url_safe))
         .await
         .unwrap();
-    assert_eq!(load_or_create_key(&store).await.unwrap(), territory);
+    assert_eq!(load_or_create_key(&store).await.unwrap(), url_safe);
 
     store.config_set(SESSION_KEY, "c2hvcnQ=").await.unwrap();
     assert!(load_or_create_key(&store).await.is_err());

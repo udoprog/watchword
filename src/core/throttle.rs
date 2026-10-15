@@ -1,5 +1,4 @@
 //! Limits failed sign-ins per client address and per login, in memory.
-//! Ported from track's `login_throttle.rs`.
 
 use std::collections::HashMap;
 use std::net::IpAddr;

@@ -237,8 +237,8 @@ fn cloudflare_error(error: &Error) -> AttrValue {
     }
 }
 
-/// The message for an `?error=` code the server redirected with. The codes
-/// are territory's Google sign-in errors.
+/// The message for an `?error=` code the server redirected with, such as
+/// the errors of Google sign-in.
 pub(super) fn query_error_message(code: &str) -> &'static str {
     match code {
         "auth-failed" => "Authentication failed.",

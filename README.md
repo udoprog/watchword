@@ -6,8 +6,7 @@
 [<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/udoprog/watchword/ci.yml?branch=main&style=for-the-badge" height="20">](https://github.com/udoprog/watchword/actions?query=branch%3Amain)
 
 Authentication for axum servers and Yew frontends: password, Cloudflare
-Access and Google sign-in, sessions and user management. It is shared by
-track, army and territory, and grew out of `crates/auth` in track.
+Access and Google sign-in, sessions and user management.
 
 The design, including the full API each layer grows into, is in
 [`docs/design.md`].
@@ -35,7 +34,7 @@ a new axum, sqll, musli or yew, and an app moves when it chooses.
 | `cloudflare` | [`cloudflare`] | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
 | `google` | [`google`] | Google OAuth: `GoogleConfig` for `AuthBuilder::google`; with `axum08`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
 | `axum08` | [`axum08`] | for axum 0.8: the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors and `routes()` for the `/api/auth` JSON routes, plus the Cloudflare and Google routes when those features are on (implies `server`) |
-| `sqll014` | [`sqll014`] | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA`, and the one-time migrations for track and territory in `docs/sqll/` (implies `server`) |
+| `sqll014` | [`sqll014`] | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA`, and one-time migrations in `docs/sqll/` (implies `server`) |
 | `test-util` | [`google::fake`] | for an app's tests: `AuthBuilder::google_endpoints`, and with `axum08` `FakeGoogle`, a local fake Google to sign in through offline (implies `google`) |
 | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings` and the `http` client, from the [watchword-yew023] crate |
 

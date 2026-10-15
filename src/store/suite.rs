@@ -2,9 +2,6 @@
 //! suite: `store_suite!(expr)` defines one `#[tokio::test]` per test, each
 //! over a fresh store made by `expr` (evaluated inside the async test, so it
 //! may `.await`).
-//!
-//! Ported from territory's `auth/tests.rs` and `bootstrap/tests.rs`, with
-//! tests of the rules track and the design add.
 
 use std::error::Error as StdError;
 use std::net::IpAddr;

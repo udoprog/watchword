@@ -13,7 +13,7 @@ pub(crate) const LIVE_TTL: Duration = Duration::from_secs(10);
 const LIVE_CAPACITY: usize = 1024;
 
 /// Sessions recently confirmed live, for the `LiveSession` extractor on hot
-/// asset routes (territory's tile cache). Only live sessions are cached, and
+/// asset routes. Only live sessions are cached, and
 /// every [`AuthEvent`] that ends a session forgets it at once, so the TTL
 /// only bounds how long a session ended by another process stays usable.
 #[derive(Default)]

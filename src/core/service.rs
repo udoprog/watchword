@@ -128,8 +128,8 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// Loads the key that signs session cookies from the store's `session_key`
 /// setting, generating and storing one on first use.
 ///
-/// Reads the key as standard base64 (track) or unpadded base64url
-/// (territory), so both apps keep their existing sessions; a new key is
+/// Reads the key as standard padded base64 or unpadded base64url, so keys
+/// stored in either encoding keep their existing sessions; a new key is
 /// stored as standard base64.
 pub async fn load_or_create_key<S>(store: &S) -> Result<[u8; 32], StoreError>
 where
@@ -176,7 +176,7 @@ impl AuthBuilder {
         self
     }
 
-    /// Whether users have login names (track) or only emails (territory).
+    /// Whether users have login names or only emails.
     /// With `false`, every user needs an email, login names cannot be set,
     /// and password sign-in looks users up by email only. The default is
     /// `true`.

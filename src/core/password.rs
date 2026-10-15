@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 pub struct PasswordError(#[source] bcrypt::BcryptError);
 
 /// Hashes with bcrypt at its default cost, which keeps hashes interchangeable
-/// with territory's.
+/// with other bcrypt implementations.
 pub fn hash_password(password: &str) -> Result<String, PasswordError> {
     bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(PasswordError)
 }
