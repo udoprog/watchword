@@ -572,7 +572,8 @@ INTEGER ms (`SqllStore`'s schema).
 
 The SQL is `docs/sqll/territory.sql`. It also renames the column `auth_method`
 to `method`, and adds an optional unique `login`. Timestamps are rounded to
-the nearest millisecond (clamped at 59.999 seconds, so never rolled over). It never rebuilds `users`, so it is safe with foreign keys on.
+the nearest millisecond (clamped at 59.999 seconds, so never rolled over). It
+never rebuilds `users`, so it is safe with foreign keys on.
 
 **Deletes or shrinks:**
 
