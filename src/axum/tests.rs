@@ -661,6 +661,100 @@ async fn impersonation() {
     assert_eq!(gone.status, StatusCode::UNAUTHORIZED);
 }
 
+/// The session a request with `cookie` is signed in with, as the
+/// [`SignedIn`] extractor would load it.
+async fn loaded(auth: &Auth, cookie: &str) -> Option<SignedIn> {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::COOKIE, cookie.parse().unwrap());
+    let id = auth.session_id(&headers)?;
+    let (user, session) = auth.session(&id).await.unwrap()?;
+    Some(SignedIn { user, session })
+}
+
+/// An impersonated session ends when its admin is demoted or revoked: the
+/// extractors refuse it, its guard ends and the live cache forgets it.
+#[tokio::test]
+async fn impersonation_ends_with_its_admin() {
+    let auth = Auth::builder(MemoryStore::new(), generate_session_key())
+        .impersonation(true)
+        .build();
+    let app = router(&auth);
+    let root_cookie = admin(&auth, &app).await;
+    let root = loaded(&auth, &root_cookie).await.unwrap().user;
+    let (pat, pat_cookie) = regular(&app, &root_cookie, "pat").await;
+
+    // A second admin, boss, who impersonates pat.
+    let created = auth
+        .create_user(
+            &root,
+            &crate::NewUser {
+                login: Some("boss".to_owned()),
+                email: None,
+                role: Role::Admin,
+            },
+        )
+        .await
+        .unwrap();
+    let boss = register(&app, &created.1.token).await;
+    let boss_id = created.0.user.id;
+    let path = format!("/api/auth/users/{pat}/impersonate");
+    let me = "/api/auth/me";
+
+    let as_pat = call(&app, Method::POST, &path, Some(&boss), None).await;
+    assert_eq!(as_pat.status, StatusCode::OK);
+    let as_pat = as_pat.cookie();
+    let guard = auth.guard(&loaded(&auth, &as_pat).await.unwrap());
+    let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
+    assert_eq!(tile.status, StatusCode::OK);
+
+    // A change that leaves boss an admin keeps it.
+    let rename = UserChange {
+        login: Some(Some("chief".to_owned())),
+        ..UserChange::default()
+    };
+    auth.update_user(&root, boss_id, &rename).await.unwrap();
+    assert!(tokio::time::timeout(BRIEFLY, guard.ended()).await.is_err());
+    let answer = call(&app, Method::GET, me, Some(&as_pat), None).await;
+    assert_eq!(answer.status, StatusCode::OK);
+
+    // Demoting boss ends it, but not boss's own session.
+    auth.set_role(&root, boss_id, Role::Regular).await.unwrap();
+    tokio::time::timeout(WAIT, guard.ended()).await.unwrap();
+    let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
+    assert_eq!(tile.status, StatusCode::UNAUTHORIZED);
+    let answer = call(&app, Method::GET, me, Some(&as_pat), None).await;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED);
+    let answer = call(&app, Method::GET, me, Some(&boss), None).await;
+    assert_eq!(answer.status, StatusCode::OK);
+
+    // Promoting boss again does not bring it back.
+    auth.set_role(&root, boss_id, Role::Admin).await.unwrap();
+    let answer = call(&app, Method::GET, me, Some(&as_pat), None).await;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED);
+
+    // Revoking boss ends a new one too; stopping it is then refused as
+    // signed out.
+    let as_pat = call(&app, Method::POST, &path, Some(&boss), None).await;
+    assert_eq!(as_pat.status, StatusCode::OK);
+    let as_pat = as_pat.cookie();
+    let guard = auth.guard(&loaded(&auth, &as_pat).await.unwrap());
+    let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
+    assert_eq!(tile.status, StatusCode::OK);
+
+    auth.revoke_access(&root, boss_id).await.unwrap();
+    tokio::time::timeout(WAIT, guard.ended()).await.unwrap();
+    let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
+    assert_eq!(tile.status, StatusCode::UNAUTHORIZED);
+    let answer = call(&app, Method::GET, me, Some(&as_pat), None).await;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED);
+    let stop = "/api/auth/impersonate/stop";
+    let answer = call(&app, Method::POST, stop, Some(&as_pat), None).await;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED);
+
+    // pat's own sessions are untouched.
+    assert!(loaded(&auth, &pat_cookie).await.is_some());
+}
+
 #[tokio::test]
 async fn live_session() {
     let auth = auth();

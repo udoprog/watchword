@@ -1451,8 +1451,10 @@ where
         forbidden
     );
 
-    // An admin who is no longer an active admin cannot come back; the
-    // impersonated session stays as it is, to be signed out of.
+    // An impersonated session ends once its admin is no longer an active
+    // admin, here changed in the store as another process would. One
+    // loaded before still cannot go back to them, and finding it dead
+    // deletes it, so that promoting the admin again does not revive it.
     let (_, session) = env.auth.impersonate(&env.admin, &mine, pending.id).await?;
     let demote = UserChange {
         role: Some(Role::Regular),
@@ -1466,7 +1468,8 @@ where
         refused(env.auth.stop_impersonating(&session).await),
         forbidden
     );
-    assert!(env.live(&session.id).await?);
+    assert!(!env.live(&session.id).await?);
+    assert!(env.store.session(&session.id).await?.is_none());
 
     let promote = UserChange {
         role: Some(Role::Admin),
@@ -1476,11 +1479,20 @@ where
         .update_user(env.admin.id, &promote)
         .await?
         .expect("no conflict");
+    assert!(!env.live(&session.id).await?);
+
+    // The same for a revoked admin. Their own sessions end with the
+    // revocation; the impersonated one is not theirs.
+    let (_, session) = env.auth.impersonate(&env.admin, &mine, pending.id).await?;
+    assert!(env.live(&session.id).await?);
     env.store.revoke(env.admin.id, Timestamp::now()).await?;
+    assert!(env.store.session(&session.id).await?.is_some());
     assert_eq!(
         refused(env.auth.stop_impersonating(&session).await),
         forbidden
     );
+    assert!(!env.live(&session.id).await?);
+    assert!(env.store.session(&session.id).await?.is_none());
 
     // Deleting the admin ends the sessions they impersonate in.
     env.store.delete_user(env.admin.id).await?;

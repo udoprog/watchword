@@ -49,6 +49,7 @@ impl Auth {
             events: self.events(),
             session: signed_in.session.id.clone(),
             user: signed_in.user.id,
+            impersonator: signed_in.session.impersonator,
             expires_at: signed_in.session.expires_at,
             ended: ended_tx,
             changed: changed_tx,
@@ -75,7 +76,9 @@ pub struct SessionGuard {
 impl SessionGuard {
     /// Resolves once the session has ended: signed out, signed out
     /// everywhere, revoked, the credential changed elsewhere, the user
-    /// deleted, or the session expired. Once ended, it resolves at once.
+    /// deleted, or the session expired; for an impersonated session also
+    /// when its admin is revoked, demoted or deleted. Once ended, it
+    /// resolves at once.
     pub async fn ended(&self) {
         let mut ended = self.ended.lock().await;
         // An error means the watcher is gone, which it only is once ended.
@@ -107,6 +110,7 @@ struct Watcher {
     events: tokio::sync::broadcast::Receiver<AuthEvent>,
     session: String,
     user: UserId,
+    impersonator: Option<UserId>,
     expires_at: Timestamp,
     ended: watch::Sender<bool>,
     changed: watch::Sender<UserInfo>,
@@ -147,7 +151,11 @@ impl Watcher {
             AuthEvent::UserSessionsEnded { user, keep } => {
                 user != self.user || keep.as_deref() == Some(self.session.as_str())
             }
-            AuthEvent::UserDeleted(user) => user != self.user,
+            AuthEvent::UserDeleted(user) => user != self.user && Some(user) != self.impersonator,
+            // An impersonated session ends with its admin's standing.
+            AuthEvent::UserChanged(info) if Some(info.id) == self.impersonator => {
+                info.access == Access::Active && info.is_admin()
+            }
             AuthEvent::UserChanged(info) if info.id == self.user => {
                 if info.access == Access::Revoked {
                     return false;

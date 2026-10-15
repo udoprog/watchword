@@ -10,8 +10,10 @@ use crate::types::AuthError;
 ///
 /// Rejects with [`AuthError::Unauthorized`] (401) unless the request's
 /// session cookie names a live session of an active user, or of a pending
-/// user an admin impersonates. Since the user is read from the store on
-/// every request, a role change or revocation applies to the next one.
+/// user an admin impersonates. An impersonated session is live only while
+/// its admin is still an active admin. Since the user (and for an
+/// impersonated session its admin) is read from the store on every request,
+/// a role change or revocation applies to the next one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignedIn {
     /// The user, as stored now.
@@ -107,7 +109,8 @@ where
 ///
 /// A session confirmed live is believed for 10 seconds without asking the
 /// store again, for up to 1024 sessions. Signing out, revoking or deleting a
-/// user through [`Auth`] ends the session here at once; the 10 seconds only
+/// user through [`Auth`] ends the session here at once, and so does revoking,
+/// demoting or deleting the admin who impersonates in it; the 10 seconds only
 /// delay noticing a session ended in another process.
 ///
 /// Rejects with [`AuthError::Unauthorized`] (401) as [`SignedIn`] does.

@@ -40,7 +40,7 @@ use crate::types::{
 /// | `POST /api/auth/users/{id}/sign-out` | admin | 204; ends all of the user's sessions |
 /// | `POST /api/auth/users/{id}/revoke` | admin | [`UserInfo`]; revokes access; not self |
 /// | `POST /api/auth/users/{id}/impersonate` | admin, if enabled | [`UserInfo`] (with `impersonated_by`) + cookie for a session as that user, marked with the admin; not self, not revoked, not from an impersonated session |
-/// | `POST /api/auth/impersonate/stop` | signed in, impersonated | [`UserInfo`] + cookie for a new session as the admin, ending the impersonated one; 403 unless the session is impersonated and its admin is still an active admin |
+/// | `POST /api/auth/impersonate/stop` | signed in, impersonated | [`UserInfo`] + cookie for a new session as the admin, ending the impersonated one; 403 unless the session is impersonated (401 once its admin is no longer an active admin, which ends it; 403 if that happens while the request runs) |
 /// | `GET /api/auth/google` | anyone | redirect to Google to sign in; 404 unless Google is configured (feature `google`) |
 /// | `GET /api/auth/google/register/{token}` | anyone | redirect to Google to register with the link; 404 unknown, 410 used or expired |
 /// | `GET /api/auth/google/link` | signed in | redirect to Google to switch to it |

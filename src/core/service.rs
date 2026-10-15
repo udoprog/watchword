@@ -83,11 +83,14 @@ pub enum AuthEvent {
         /// The session that stays, if any.
         keep: Option<String>,
     },
-    /// The user's role, email, login, access or credential changed.
+    /// The user's role, email, login, access or credential changed. When
+    /// the user is no longer an active admin, the sessions in which they
+    /// impersonate someone ([`Session::impersonator`]) have ended.
     UserChanged(UserInfo),
     /// A user was created.
     UserCreated(UserInfo),
-    /// The user was deleted.
+    /// The user was deleted, with their sessions and the sessions in which
+    /// they impersonate someone.
     UserDeleted(UserId),
 }
 
@@ -381,8 +384,11 @@ impl Auth {
     }
 
     /// The live session `session_id` and its user: `None` if the session
-    /// does not exist, has expired, or its user was deleted or revoked.
-    /// Pending users hold a session only through impersonation.
+    /// does not exist, has expired, or its user was deleted or revoked, and
+    /// for an impersonated session also when its
+    /// [`impersonator`](Session::impersonator) is no longer an active admin
+    /// (deleted, revoked or demoted), which deletes the session. Pending
+    /// users hold a session only through impersonation.
     pub async fn session(&self, session_id: &str) -> Result<Option<(User, Session)>> {
         let Some(session) = self.store().session(session_id).await? else {
             return Ok(None);
@@ -399,6 +405,21 @@ impl Auth {
         // Revocation deletes the user's sessions, but one created
         // concurrently with it must not outlive it either.
         if user.access == Access::Revoked {
+            return Ok(None);
+        }
+
+        // An impersonated session lasts only while its admin is an active
+        // admin. Deleting the admin deletes it; revoking or demoting them
+        // leaves the row, which is deleted here so that promoting them again
+        // cannot bring it back.
+        if let Some(id) = session.impersonator
+            && !self
+                .store()
+                .user(id)
+                .await?
+                .is_some_and(|admin| is_active_admin(&admin))
+        {
+            self.store().delete_session(&session.id).await?;
             return Ok(None);
         }
 
@@ -1059,8 +1080,9 @@ impl Auth {
     /// who started it, returning the admin and the new session.
     ///
     /// [`AuthError::Forbidden`], with nothing changed, when `session` is not
-    /// impersonated, or its admin is no longer an active admin; signing out
-    /// is then the way out of it.
+    /// impersonated, or its admin is no longer an active admin. The latter
+    /// only happens between loading `session` and this call, since
+    /// [`session`](Auth::session) already ends such a session.
     pub async fn stop_impersonating(&self, session: &Session) -> Result<(User, Session)> {
         let Some(id) = session.impersonator else {
             return Err(AuthError::Forbidden.into());
@@ -1070,7 +1092,7 @@ impl Auth {
             return Err(AuthError::Forbidden.into());
         };
 
-        if admin.access != Access::Active || !admin.is_admin() {
+        if !is_active_admin(&admin) {
             return Err(AuthError::Forbidden.into());
         }
 
@@ -1223,6 +1245,12 @@ pub(crate) fn token_usable(token: &Token, user: &User, now: Timestamp) -> bool {
     token.used_at.is_none()
         && !is_expired(token.expires_at, now)
         && (user.access != Access::Active || token.kind == TokenKind::Reset)
+}
+
+/// Whether `user` may act as an admin, as the impersonator of a live
+/// session must.
+fn is_active_admin(user: &User) -> bool {
+    user.access == Access::Active && user.is_admin()
 }
 
 fn require_admin(actor: &User) -> Result<(), AuthError> {

@@ -219,6 +219,10 @@ pub enum AuthEvent {
 }
 ```
 
+An impersonated session also ends with its admin's standing (decision 12): a
+`UserChanged` of the admin that leaves them not an active admin, or their
+`UserDeleted`, ends the sessions they impersonate in, with no event of its own.
+
 The throttle is track's `LoginThrottle` as it stands: per address and per login,
 trusted proxies, and IPv6 grouped by /64. It applies to password sign-in.
 
@@ -364,7 +368,7 @@ rather than relying on `ON DELETE CASCADE`.
 
 ```rust
 // Extractors; each needs `Auth: FromRef<S>`.
-SignedIn { user: User, session: Session }   // 401 without a live session of an active (or impersonated pending) user
+SignedIn { user: User, session: Session }   // 401 without a live session of an active (or impersonated pending) user; an impersonated one only while its admin is an active admin
 Admin(SignedIn)                             // 403 unless the user is an admin *now*
 MaybeSignedIn(Option<SignedIn>)
 LiveSession(SessionId)                      // liveness only, cached for 10 s (territory's tile cache), for hot asset routes
@@ -375,7 +379,7 @@ pub fn routes<S>() -> Router<S> where Auth: FromRef<S>, S: Clone + Send + Sync +
 // WebSocket: resolves when the socket's session has ended, for the app's select! loop.
 let mut guard = auth.guard(&signed_in);
 tokio::select! {
-    end = guard.ended() => break,            // logout, revoke, credential change, delete, expiry
+    end = guard.ended() => break,            // logout, revoke, credential change, delete, expiry; the impersonating admin revoked, demoted or deleted
     change = guard.changed() => { /* UserInfo: role/email changed, e.g. reload groups, admin flag */ }
     ...
 }
@@ -384,7 +388,9 @@ tokio::select! {
 The guard subscribes to `AuthEvent`s. It sleeps until the session expires, as
 territory does. On broadcast lag, and every 5 minutes as track does, it
 re-checks the session, so a session deleted by another process still ends the
-socket.
+socket. A guard on an impersonated session also follows its admin's
+`UserChanged` and `UserDeleted`, so revoking, demoting or deleting the admin
+ends it at once.
 
 The routes are all JSON. Their errors are `AuthError` with the matching status:
 401, 403, 404, 409, 410, 429, or 400 with a message.
@@ -410,7 +416,7 @@ The routes are all JSON. Their errors are `AuthError` with the matching status:
 | `POST /api/auth/users/{id}/sign-out` | admin | sign out everywhere (track's behaviour) |
 | `POST /api/auth/users/{id}/revoke` | admin | revoke access (territory's behaviour); not self |
 | `POST /api/auth/users/{id}/impersonate` | admin, if enabled | `UserInfo` (with `impersonated_by`) + cookie for a session as that user that records the admin; not self, not revoked, not from an impersonated session |
-| `POST /api/auth/impersonate/stop` | signed in, impersonated | `UserInfo` + cookie for a new session as the admin, ending the impersonated one; 403 unless the session is impersonated and its admin is still an active admin |
+| `POST /api/auth/impersonate/stop` | signed in, impersonated | `UserInfo` + cookie for a new session as the admin, ending the impersonated one; 403 unless the session is impersonated (401 once its admin is no longer an active admin, which ends it; 403 if that happens while the request runs) |
 
 The frontend route `/register/{token}` that links point to is unchanged in both
 apps. Links already handed out therefore keep working, because only the API
@@ -516,11 +522,22 @@ so the library does not depend on the app's gloo version.
     the admin (`Session::impersonator`, `sessions.impersonator_id`), the own
     user's `UserInfo` carries `impersonated_by`, `UserMenu` shows a banner, and
     `POST /api/auth/impersonate/stop` ends the impersonated session and signs
-    the admin in again, only while they are still an active admin; otherwise
-    signing out is the way out. Impersonating from an impersonated session is
-    refused, so stopping always returns to the admin who started. Deleting the
-    admin deletes the sessions they impersonate in. The admin's own session is
-    left alone when impersonating (its cookie is replaced, and it expires).
+    the admin in again. Impersonating from an impersonated session is
+    refused, so stopping always returns to the admin who started. The admin's
+    own session is left alone when impersonating (its cookie is replaced, and
+    it expires).
+    An impersonated session lives only while its admin is an active admin
+    (decided by the user on card e38a7847). Deleting the admin deletes the
+    sessions they impersonate in. Revoking or demoting them makes
+    `Auth::session` treat those sessions as ended, at the cost of one extra
+    user lookup for impersonated sessions only, and it deletes each such
+    session it finds, so promoting the admin again cannot revive it; a
+    session nobody touches in between survives a demote-then-promote, since
+    the store cannot find sessions by impersonator. Guards and the
+    `LiveSession` cache end them at once on the admin's `UserChanged` or
+    `UserDeleted`, with no new event. `stop` keeps its 403 for an admin who is
+    no longer an active admin, but an ended session is refused with 401
+    before it gets there.
 13. **Transport.** Account and admin operations move to the JSON routes above,
     out of each app's WebSocket protocol. Live updates reach the admin page
     through the app forwarding `AuthEvent`s. *Open question 4.*
