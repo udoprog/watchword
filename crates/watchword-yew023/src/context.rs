@@ -6,6 +6,10 @@ use yew::prelude::*;
 
 use watchword_core::{AuthConfig, UserInfo};
 
+use super::client::Client;
+#[cfg(feature = "musliweb04")]
+use super::socket::SocketHandle;
+
 /// The signed-in user and what the app can do about the session, given by
 /// [`AuthProvider`](super::AuthProvider) to its children. Get it with
 /// [`use_auth`], or with `ctx.link().context::<AuthContext>(..)` in a struct
@@ -22,7 +26,7 @@ pub struct AuthContext {
     pub(super) check_session: Callback<()>,
     /// The app's socket, from [`AuthContext::set_socket`].
     #[cfg(feature = "musliweb04")]
-    pub(super) socket: Option<ws::Handle>,
+    pub(super) socket: Option<SocketHandle>,
     #[cfg(feature = "musliweb04")]
     pub(super) set_socket: Callback<Option<ws::Handle>>,
 }
@@ -40,8 +44,11 @@ impl AuthContext {
     }
 
     /// Fetches the user and the config again, such as after the app learns
-    /// that the user changed. A 401 shows the sign-in page with the
-    /// provider's `signed_out_notice`; other failures keep what is shown.
+    /// that the user changed. With a socket from
+    /// [`set_socket`](AuthContext::set_socket) (feature `musliweb04`), the
+    /// user is asked for over it while it is open. A 401 shows the sign-in
+    /// page with the provider's `signed_out_notice`; other failures keep what
+    /// is shown.
     pub fn refresh(&self) {
         self.refresh.emit(());
     }
@@ -72,8 +79,21 @@ impl AuthContext {
     /// [`AuthUpdate::Me`](watchword_core::musliweb04::AuthUpdate::Me)
     /// replaces [`user`](AuthContext::user), and
     /// [`AdminUsers`](super::AdminUsers) applies the user-list updates in
-    /// place. Requests still go over HTTP. The socket is forgotten when the
-    /// session ends, so a later sign-in hands over the new one.
+    /// place.
+    ///
+    /// The components also send the account and admin operations, and
+    /// [`refresh`](AuthContext::refresh)'s user, over the socket while it is
+    /// open, and over HTTP while it is not, such as while it reconnects. A
+    /// request the socket fails after sending it is not sent again, and fails
+    /// with [`http::Error::Socket`](super::http::Error::Socket). Signing in
+    /// and out, registering, impersonating, the config and
+    /// [`check_session`](AuthContext::check_session) always use HTTP. After
+    /// impersonating, or stopping it, the socket still speaks for the
+    /// session its upgrade carried, so the components use HTTP until it
+    /// next closes and reconnects with the new session cookie.
+    ///
+    /// The socket is forgotten when the session ends, so a later sign-in
+    /// hands over the new one.
     ///
     /// ```ignore
     /// let auth = use_auth();
@@ -83,6 +103,15 @@ impl AuthContext {
     #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb04")))]
     pub fn set_socket(&self, socket: Option<ws::Handle>) {
         self.set_socket.emit(socket);
+    }
+
+    /// The transport for the account and admin requests: the socket, when
+    /// one is handed over, and HTTP.
+    pub(super) fn client(&self) -> Client {
+        Client {
+            #[cfg(feature = "musliweb04")]
+            socket: self.socket.clone(),
+        }
     }
 }
 

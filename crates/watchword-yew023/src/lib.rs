@@ -72,7 +72,9 @@
 //! The components then follow the server's `AuthBroadcast`: the context's
 //! user is replaced when it changes elsewhere, and [`AdminUsers`] applies
 //! users created, changed and deleted by others in place, so the app no
-//! longer bumps its `refresh` prop. Requests still go over HTTP.
+//! longer bumps its `refresh` prop. The account and admin requests go over
+//! the socket too while it is open, and over HTTP while it reconnects;
+//! signing in and out, registration and impersonation always use HTTP.
 //!
 //! <br>
 //!
@@ -159,6 +161,7 @@ pub mod http;
 mod account;
 mod admin_users;
 mod browser;
+mod client;
 mod cloudflare_settings;
 mod context;
 mod form;

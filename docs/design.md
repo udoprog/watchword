@@ -93,7 +93,7 @@ No feature is on by default.
 | `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, and its `SCHEMA` | sqll 0.14 |
 | `yew023` | watchword-yew023: components, context, hook, HTTP client | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures |
 | `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum08` also `google::fake::FakeGoogle` (see 2.4) | nothing more |
-| `musliweb04` *(2.7)* | `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts, and their requests over the socket *(proposed)* | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
+| `musliweb04` *(2.7)* | `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
 
 The modules are `watchword::{types, core, store, cloudflare, google, axum08,
 sqll014, musliweb04, yew023}`, and the most-used names that need no versioned feature are
@@ -511,13 +511,13 @@ cookies, so the library does not depend on the app's gloo version.
   header is trusted without verifying the token. The app stores the value in its
   own settings and calls `auth.set_cloudflare`.
 
-### 2.7 musli-web integration (`musliweb04`) — partly built
+### 2.7 musli-web integration (`musliweb04`)
 
 *Status: built are the types (`watchword::musliweb04`), the server's
 `Connection` (`new`, `update`, `handle` and `handles`), and the components
-following the broadcasts (`AuthContext::set_socket`); the components'
-requests over the socket are proposed. Decisions 13 and 16–19 record why it
-is shaped this way.*
+following the broadcasts and sending their requests over the socket
+(`AuthContext::set_socket`). Decisions 13 and 16–19 record why it is shaped
+this way.*
 
 An app whose frontend already talks to its server over a musli-web WebSocket
 can carry watchword's account and user-management operations, and its live
@@ -679,8 +679,6 @@ applies `UserCreated`/`UserChanged`/`UserDeleted` to its list in place, so its
 `refresh` prop is no longer needed (it stays for HTTP-only apps). `http::Error`
 gains a variant for a socket request error.
 
-*Status: `set_socket` and following the broadcasts are built; the requests
-still all go over HTTP, and sending them through the socket is proposed.*
 As built: watchword-yew023 has a `musliweb04` feature, which watchword's
 `musliweb04` turns on with `yew023`. `set_socket` with the handle already set
 does nothing, and the socket is forgotten whenever the provider leaves the
@@ -694,6 +692,28 @@ changes (registering and revoking access use up the links), for a user not in
 its list, and when a load was in flight. A password reset through a link
 changes nothing a broadcast shows, so that link's expiry stays shown until the
 list is next fetched.
+
+As built, the requests: the components take a crate-private client from the
+context, which sends each operation of the band over the socket and falls
+back to HTTP only when musli-web refuses the request before sending it (the
+socket is not open), so nothing reaches the server twice. A request the
+socket fails after sending it, such as when the socket closes before the
+answer or the server answers with a request error, fails with
+`http::Error::Socket`. The public `http` functions stay HTTP-only. Admin
+`RevokeAccess` answers with the user over the socket and with nothing over
+HTTP; the client drops the user, as the component did not use it.
+
+Impersonating does not end the admin's session, and the socket's server-side
+`Connection` keeps the session its upgrade carried. So after
+`POST .../impersonate` or `/impersonate/stop` replaces the cookie, an open
+socket still speaks for the earlier session: `Me` over it would answer the
+admin, and its `AuthUpdate::Me` would put the admin back. The components
+that make those two requests mark the socket stale, and while it is stale
+the requests go over HTTP and `<AuthProvider>` ignores its `Me`. It stops
+being stale when it next closes: its reconnect upgrades with the new
+cookie. An app that keeps its socket open across impersonation therefore
+runs on HTTP until it reconnects, which it may do itself when its user
+changes.
 
 watchword-yew023 takes musli-web under `musli-web04` with `web03`; it calls
 no musli-web macros, so it needs no alias.
@@ -825,7 +845,7 @@ once the release is on crates.io.
     socket.** Account and admin operations are HTTP JSON routes, so the
     components are self-contained, an app writes no user endpoints, and an app
     without a WebSocket needs nothing more. An app with a musli-web socket can
-    also carry them, and the live updates, on it (2.7, partly built): watchword
+    also carry them, and the live updates, on it (2.7): watchword
     defines the endpoints and the handler, so the app still writes no user
     endpoints, and the components need no app-supplied client trait because
     musli-web's handle is untyped. The HTTP routes stay, both for apps without

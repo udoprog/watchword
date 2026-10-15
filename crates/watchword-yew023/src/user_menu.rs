@@ -83,6 +83,7 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
             spawn_local(async move {
                 match http::stop_impersonating().await {
                     Ok(admin) => {
+                        auth.client().session_replaced();
                         auth.set_user(admin);
                         done.emit(());
                     }

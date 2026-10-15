@@ -9,6 +9,7 @@ use yew::prelude::*;
 
 use super::account::role_name;
 use super::browser;
+use super::client::Client;
 use super::context::AuthContext;
 use super::form::{error_message, identity_change, optional};
 use super::http::{self, CreatedUser, Error};
@@ -95,7 +96,8 @@ pub struct AdminUsersProps {
 /// change in the list in place. A broadcast does not carry link state, so
 /// the list is fetched again when it cannot be known: for a user created
 /// elsewhere, and when a user's account state or sign-in method changes,
-/// which uses up their links.
+/// which uses up their links. Its requests, except Impersonate, go over the
+/// socket while it is open.
 pub struct AdminUsers {
     users: Users,
     /// Bumped on each load, so an older answer is dropped.
@@ -246,8 +248,9 @@ impl Component for AdminUsers {
                     self.users = Users::Loading;
                 }
 
+                let client = self.client();
                 ctx.link()
-                    .send_future(async move { Msg::Loaded(generation, http::users().await) });
+                    .send_future(async move { Msg::Loaded(generation, client.users().await) });
             }
             Msg::Loaded(generation, result) => {
                 if generation != self.generation {
@@ -336,8 +339,9 @@ impl Component for AdminUsers {
 
                 self.busy = true;
                 self.message = None;
+                let client = self.client();
                 ctx.link()
-                    .send_future(async move { Msg::Added(http::create_user(&new).await) });
+                    .send_future(async move { Msg::Added(client.create_user(&new).await) });
             }
             Msg::Added(result) => {
                 self.busy = false;
@@ -484,8 +488,9 @@ impl Component for AdminUsers {
 
                 self.busy = true;
                 self.message = None;
+                let client = self.client();
                 ctx.link()
-                    .send_future(async move { Msg::Issued(id, http::issue_link(id).await) });
+                    .send_future(async move { Msg::Issued(id, client.issue_link(id).await) });
             }
             Msg::Issued(id, result) => {
                 self.busy = false;
@@ -529,13 +534,23 @@ impl Component for AdminUsers {
                 self.confirm = None;
                 self.message = None;
 
+                let client = self.client();
+
                 ctx.link().send_future(async move {
                     let result = match action {
-                        Action::RevokeLink => http::revoke_link(id).await,
-                        Action::SignOut => http::sign_out_user(id).await,
-                        Action::RevokeAccess => http::revoke_access(id).await,
-                        Action::Impersonate => http::impersonate(id).await,
-                        Action::Delete => http::delete_user(id).await,
+                        Action::RevokeLink => client.revoke_link(id).await,
+                        Action::SignOut => client.sign_out_user(id).await,
+                        Action::RevokeAccess => client.revoke_access(id).await,
+                        Action::Impersonate => {
+                            let result = http::impersonate(id).await;
+
+                            if result.is_ok() {
+                                client.session_replaced();
+                            }
+
+                            result
+                        }
+                        Action::Delete => client.delete_user(id).await,
                     };
 
                     Msg::Done(id, action, result)
@@ -692,6 +707,15 @@ impl Component for AdminUsers {
 }
 
 impl AdminUsers {
+    /// The transport for the requests: the context's socket, when one is
+    /// handed over, and HTTP.
+    fn client(&self) -> Client {
+        Client {
+            #[cfg(feature = "musliweb04")]
+            socket: self.socket.handle().cloned(),
+        }
+    }
+
     /// The query shown: the app's when it keeps it, otherwise this
     /// component's.
     fn query<'a>(&'a self, ctx: &'a Context<Self>) -> &'a UsersQuery {
@@ -732,8 +756,10 @@ impl AdminUsers {
     ) {
         self.busy = true;
         self.message = None;
-        ctx.link()
-            .send_future(async move { Msg::Updated(http::update_user(id, &change).await, notice) });
+        let client = self.client();
+        ctx.link().send_future(async move {
+            Msg::Updated(client.update_user(id, &change).await, notice)
+        });
     }
 
     fn view_add(&self, ctx: &Context<Self>) -> Html {

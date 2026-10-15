@@ -23,7 +23,9 @@ pub struct AccountPanelProps {
 ///
 /// Changes go to `PATCH /api/auth/account` and
 /// `POST /api/auth/account/password`, and the user they answer with replaces
-/// the one in the [`AuthContext`](super::AuthContext). The app wraps the
+/// the one in the [`AuthContext`](super::AuthContext). With a socket handed
+/// to the context (feature `musliweb04`), they go over it while it is open.
+/// The app wraps the
 /// panel in a page or a modal. Use it inside
 /// [`AuthProvider`](super::AuthProvider).
 #[function_component]
@@ -148,7 +150,7 @@ fn ProfileForm(props: &ProfileFormProps) -> Html {
             let auth = auth.clone();
 
             spawn_local(async move {
-                match http::update_account(&change).await {
+                match auth.client().update_account(&change).await {
                     Ok(user) => {
                         message.set(Some(Message::Notice(AttrValue::Static("Saved."))));
                         auth.set_user(user);
@@ -284,7 +286,7 @@ fn PasswordForm(props: &PasswordFormProps) -> Html {
             let auth = auth.clone();
 
             spawn_local(async move {
-                match http::change_password(&request).await {
+                match auth.client().change_password(&request).await {
                     Ok(user) => {
                         old_password.set(String::new());
                         new_password.set(String::new());

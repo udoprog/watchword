@@ -5,12 +5,13 @@ use musli_web04::web03::prelude::ws;
 use yew::prelude::*;
 
 use super::browser;
+use super::client::Client;
 use super::context::AuthContext;
 use super::http::{self, Error};
 use super::register::Register;
 use super::sign_in::SignIn;
 #[cfg(feature = "musliweb04")]
-use super::socket::Socket;
+use super::socket::{Socket, SocketHandle};
 #[cfg(feature = "musliweb04")]
 use watchword_core::musliweb04::AuthUpdate;
 use watchword_core::{AuthConfig, UserInfo};
@@ -193,10 +194,12 @@ impl Component for AuthProvider {
                 self.state = State::SignedOut { notice: None };
             }
             Msg::Refresh => {
-                ctx.link().send_future(async {
+                let client = self.client();
+
+                ctx.link().send_future(async move {
                     Msg::Refreshed {
                         config: http::config().await,
-                        me: http::me().await,
+                        me: client.me().await,
                     }
                 });
 
@@ -236,6 +239,11 @@ impl Component for AuthProvider {
                     return false;
                 }
 
+                if self.socket.handle().map(SocketHandle::handle) == handle.as_ref() {
+                    return false;
+                }
+
+                let handle = handle.map(SocketHandle::new);
                 return self.socket.set(handle.as_ref(), self.on_update.clone());
             }
             #[cfg(feature = "musliweb04")]
@@ -245,6 +253,12 @@ impl Component for AuthProvider {
                 let (AuthUpdate::Me(user), State::SignedIn(..)) = (update, &self.state) else {
                     return false;
                 };
+
+                // A stale socket's user is the session's before impersonating
+                // or stopping it, not this browser's.
+                if self.socket.handle().is_some_and(SocketHandle::is_stale) {
+                    return false;
+                }
 
                 // `Me` is set as the server answers `Me`, impersonation
                 // marker included, so it replaces the user as it is.
@@ -343,6 +357,14 @@ impl Component for AuthProvider {
 }
 
 impl AuthProvider {
+    /// The transport for the requests that can use the socket.
+    fn client(&self) -> Client {
+        Client {
+            #[cfg(feature = "musliweb04")]
+            socket: self.socket.handle().cloned(),
+        }
+    }
+
     /// Applies what the server said about the session to a signed-in user:
     /// a new user replaces it, and a 401 ends the session. Other failures,
     /// and answers arriving after signing out, change nothing.

@@ -6,6 +6,11 @@
 //!
 //! Each function maps an error status to [`Error::Auth`] when the body is an
 //! [`AuthError`], as every route of watchword's `axum08` feature answers.
+//!
+//! These functions always use HTTP. With the `musliweb04` feature and a socket
+//! handed to [`AuthContext::set_socket`](super::AuthContext), the components
+//! send the account and admin operations over the socket instead while it is
+//! open.
 
 use std::fmt;
 
@@ -28,6 +33,12 @@ pub enum Error {
     Status(u16),
     /// The server could not be reached, or its answer could not be read.
     Network(String),
+    /// A request over the app's musli-web socket failed without an
+    /// [`AuthError`]: the server answered with a request error, such as an
+    /// internal failure, or the socket closed before the answer. Only with
+    /// the `musliweb04` feature and a socket handed to
+    /// [`AuthContext::set_socket`](super::AuthContext).
+    Socket(String),
 }
 
 impl Error {
@@ -44,6 +55,7 @@ impl fmt::Display for Error {
             Error::Auth(error) => error.fmt(f),
             Error::Status(status) => write!(f, "the server answered with HTTP {status}"),
             Error::Network(error) => write!(f, "could not reach the server: {error}"),
+            Error::Socket(error) => write!(f, "the request over the socket failed: {error}"),
         }
     }
 }
