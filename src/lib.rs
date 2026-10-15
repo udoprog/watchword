@@ -102,12 +102,6 @@
 
 #![cfg_attr(watchword_docsrs, feature(doc_cfg))]
 
-// `#[derive(Statements)]` expands to `::sqll::` paths. This alias goes once a
-// sqll release accepts `#[sql(crate = sqll014)]` on `Statements`, as it does
-// on `Row`.
-#[cfg(feature = "sqll014")]
-extern crate sqll014 as sqll;
-
 #[doc(inline)]
 pub use watchword_core as types;
 

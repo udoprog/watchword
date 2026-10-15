@@ -1,4 +1,4 @@
-//! [`SqllStore`], a [`Store`] over SQLite through [sqll] 0.14 (the `sqll014`
+//! [`SqllStore`], a [`Store`] over SQLite through [sqll](https://docs.rs/sqll/0.14) 0.14 (the `sqll014`
 //! feature).
 //!
 //! The store works over four tables with a fixed set of columns, created by
@@ -152,6 +152,7 @@ where
 /// The store's read statements, to nest in an app's read-only statement
 /// collection with `#[sql(statements)]`.
 #[derive(Statements)]
+#[sql(crate = sqll014)]
 #[sql(read_only)]
 pub struct Read {
     #[sql = "SELECT id, login, email, role, access, method, password_hash, google_sub, created_at"]
@@ -185,6 +186,7 @@ pub struct Read {
 /// The store's write statements, to nest in an app's write statement
 /// collection with `#[sql(statements)]`. They include [`Read`].
 #[derive(Statements)]
+#[sql(crate = sqll014)]
 pub struct Write {
     #[sql(statements)]
     read: Read,

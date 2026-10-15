@@ -520,6 +520,7 @@ async fn migrates_territory() -> TestResult {
 /// An app's read statements with the store's nested, as the module
 /// documentation shows.
 #[derive(sqll014::Statements)]
+#[sql(crate = sqll014)]
 #[sql(read_only)]
 struct AppRead {
     #[sql(statements)]
@@ -538,6 +539,7 @@ impl AsMut<Read> for AppRead {
 
 /// The write side of [`AppRead`].
 #[derive(sqll014::Statements)]
+#[sql(crate = sqll014)]
 struct AppWrite {
     #[sql(statements)]
     auth: Write,

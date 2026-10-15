@@ -82,7 +82,7 @@ lru = { version = "0.18.5", optional = true }
 axum08 = { package = "axum", version = "0.8.9", optional = true }
 
 # sqll014
-sqll014 = { package = "sqll", version = "0.14.6", optional = true }
+sqll014 = { package = "sqll", version = "0.14.7", optional = true }
 
 # yew023, versioned in lockstep with this crate.
 watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.1.0", optional = true }
@@ -90,6 +90,6 @@ watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.1.0", optio
 [dev-dependencies]
 serde_json = "1.0.151"
 # A bundled SQLite for the `sqll014` tests; apps pick their own linking.
-sqll014 = { package = "sqll", version = "0.14.6", features = ["bundled"] }
+sqll014 = { package = "sqll", version = "0.14.7", features = ["bundled"] }
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }
