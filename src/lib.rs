@@ -1,8 +1,8 @@
-//! Authentication shared by the Rust web apps (axum server, Yew/WASM frontend)
-//! in this family: track, army and territory. It grew out of `crates/auth` in
-//! track, history included.
+//! Authentication for axum servers and Yew frontends: password, Cloudflare
+//! Access and Google sign-in, sessions and user management. It is shared by
+//! track, army and territory, and grew out of `crates/auth` in track.
 //!
-//! The design, including the full API each layer grows into, is recorded in
+//! The design, including the full API each layer grows into, is in
 //! [`docs/design.md`].
 //!
 //! <br>
@@ -12,7 +12,7 @@
 //! Each layer sits behind a cargo feature, so an app takes only what it uses.
 //! Server-only and browser-only dependencies never share a feature, so a wasm
 //! frontend can take `yew` without pulling in server code. No feature is on by
-//! default.
+//! default. On docs.rs, items that need a feature are marked with it.
 //!
 //! | Feature | Module | What it provides |
 //! |---|---|---|
@@ -90,27 +90,36 @@
 //! [`yew`]: https://docs.rs/watchword/latest/watchword/yew/index.html
 //! [trunk]: https://trunkrs.dev
 
+#![cfg_attr(watchword_docsrs, feature(doc_cfg))]
+
 pub mod types;
 
 #[cfg(feature = "server")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "server")))]
 pub mod core;
 
 #[cfg(feature = "server")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "server")))]
 pub mod store;
 
 #[cfg(feature = "cloudflare")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "cloudflare")))]
 pub mod cloudflare;
 
 #[cfg(feature = "google")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "google")))]
 pub mod google;
 
 #[cfg(feature = "axum")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "axum")))]
 pub mod axum;
 
 #[cfg(feature = "sqll")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll")))]
 pub mod sqll;
 
 #[cfg(feature = "yew")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "yew")))]
 pub mod yew;
 
 pub use self::types::{
@@ -120,6 +129,7 @@ pub use self::types::{
 };
 
 #[cfg(feature = "server")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "server")))]
 pub use self::core::{
     Auth, AuthBuilder, AuthEvent, BootstrapAdmin, CookieConfig, PasswordError, SESSION_LIFETIME,
     Secure, TOKEN_LIFETIME, dummy_hash, generate_session_key, hash_password, is_expired,
@@ -128,9 +138,12 @@ pub use self::core::{
 };
 
 #[cfg(feature = "server")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "server")))]
 pub use self::store::{MemoryStore, Store};
 
 #[cfg(feature = "google")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "google")))]
 pub use self::google::GoogleConfig;
 #[cfg(feature = "sqll")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll")))]
 pub use self::sqll::SqllStore;

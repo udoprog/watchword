@@ -16,6 +16,7 @@ impl AuthBuilder {
     /// the service is built. `None` and settings that are not `enabled` both
     /// turn Access sign-in off. Change them later with
     /// [`Auth::set_cloudflare`]. The default is `None`.
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "cloudflare")))]
     pub fn cloudflare(mut self, config: Option<CloudflareConfig>) -> Self {
         self.cloudflare = config;
         self
@@ -28,6 +29,7 @@ impl Auth {
     /// not `enabled` both turn Access sign-in off. Settings that differ from
     /// the current ones are logged, with a warning when they are unsafe or
     /// let no one sign in; the same settings again change nothing.
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "cloudflare")))]
     pub fn set_cloudflare(&self, config: Option<CloudflareConfig>) {
         self.inner.cloudflare.set(config);
     }
@@ -39,6 +41,7 @@ impl Auth {
     ///
     /// When the request carries Access credentials that do not, the reason
     /// is logged as a warning, at most once a minute.
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "cloudflare")))]
     pub async fn cloudflare_available(&self, headers: &HeaderMap) -> Result<bool> {
         Ok(self.cloudflare_user(headers).await?.is_some())
     }
@@ -51,6 +54,7 @@ impl Auth {
     /// user, an unknown email and Access being disabled, is
     /// [`AuthError::Unauthorized`], with the reason logged as for
     /// [`cloudflare_available`](Auth::cloudflare_available).
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "cloudflare")))]
     pub async fn sign_in_cloudflare(&self, headers: &HeaderMap) -> Result<(User, Session)> {
         let mut user = self
             .cloudflare_user(headers)

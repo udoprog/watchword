@@ -36,6 +36,10 @@ pub use url::Url;
 use crate::types::UserId;
 
 #[cfg(all(feature = "axum", any(test, feature = "test-util")))]
+#[cfg_attr(
+    watchword_docsrs,
+    doc(cfg(all(feature = "axum", feature = "test-util")))
+)]
 pub mod fake;
 
 /// The path the callback is served at by the `axum` routes, which the

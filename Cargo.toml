@@ -3,7 +3,7 @@ name = "watchword"
 version = "0.1.0"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
-description = "Authentication for axum + Yew apps: shared types, server core, sign-in providers, axum integration and Yew components, each behind a feature."
+description = "Authentication for axum servers and Yew frontends: password, Cloudflare Access and Google sign-in, sessions and user management."
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 publish = false
@@ -11,8 +11,12 @@ publish = false
 [lib]
 name = "watchword"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(watchword_docsrs)'] }
+
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "watchword_docsrs"]
 
 # The features are disjoint: server-only dependencies (bcrypt, aws-lc-rs,
 # tokio, axum, reqwest, sqll) and browser-only ones (yew, gloo-net, web-sys)

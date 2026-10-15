@@ -62,6 +62,16 @@ jobs:
     - uses: dtolnay/rust-toolchain@stable
     - run: cargo doc --all-features --no-deps
 
+  # How docs.rs builds the docs, with the feature badges of `doc(cfg)`.
+  docsrs:
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: --cfg watchword_docsrs -D warnings
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@nightly
+    - run: cargo doc --all-features --no-deps
+
   rustfmt:
     runs-on: ubuntu-latest
     steps:

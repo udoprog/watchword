@@ -27,10 +27,10 @@
 //! ```
 //!
 //! Inside the provider, [`UserMenu`] gives the signed-in user Account, Users
-//! (for admins) and Sign out, and a way back while an admin impersonates them, [`AccountPanel`] is the user's own account,
-//! [`AdminUsers`] manages users for admins, and [`CloudflareSettings`] edits
-//! the Cloudflare Access settings an app stores. They talk to the server
-//! through [`http`].
+//! (for admins), Sign out, and a way back while an admin impersonates them.
+//! [`AccountPanel`] is the user's own account, [`AdminUsers`] manages users
+//! for admins, and [`CloudflareSettings`] edits the Cloudflare Access
+//! settings an app stores. They talk to the server through [`http`].
 //!
 //! # Styling
 //!

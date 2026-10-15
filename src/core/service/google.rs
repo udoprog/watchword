@@ -17,6 +17,7 @@ use crate::types::AuthError;
 impl AuthBuilder {
     /// The Google OAuth client to sign in with, or `None` to offer no
     /// Google sign-in. The default is `None`.
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "google")))]
     pub fn google(mut self, config: Option<GoogleConfig>) -> Self {
         self.google = config;
         self
@@ -27,6 +28,7 @@ impl AuthBuilder {
     /// signing in with Google offline (feature `test-util`). The default is
     /// Google's own, [`Endpoints::default`](crate::google::Endpoints).
     #[cfg(any(test, feature = "test-util"))]
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "test-util")))]
     pub fn google_endpoints(mut self, endpoints: crate::google::Endpoints) -> Self {
         self.google_endpoints = endpoints;
         self

@@ -39,6 +39,7 @@ impl Auth {
     /// minutes, so a session deleted by another process still ends the
     /// socket. It runs a task on the current Tokio runtime until it is
     /// dropped or the session ends.
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "axum")))]
     pub fn guard(&self, signed_in: &SignedIn) -> SessionGuard {
         let (ended_tx, ended) = watch::channel(false);
         let (changed_tx, changed) = watch::channel(signed_in.user.info());
