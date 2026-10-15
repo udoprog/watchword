@@ -1,6 +1,6 @@
 [package]
 name = "watchword"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
 description = "Authentication for axum servers and Yew frontends: password, Cloudflare Access and Google sign-in, sessions and user management."
@@ -41,7 +41,7 @@ yew023 = ["dep:watchword-yew023"]
 
 [dependencies]
 # types
-watchword-core = { path = "crates/watchword-core", version = "=0.1.0" }
+watchword-core = { path = "crates/watchword-core", version = "=0.2.0" }
 jiff = { version = "0.2.37", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.18"
@@ -74,7 +74,7 @@ musli-web04 = { package = "musli-web", version = "0.4.11", default-features = fa
 sqll014 = { package = "sqll", version = "0.14.7", optional = true }
 
 # yew023
-watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.1.0", optional = true }
+watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.2.0", optional = true }
 
 [dev-dependencies]
 # The musliweb04 socket tests: a real axum server and tungstenite client.

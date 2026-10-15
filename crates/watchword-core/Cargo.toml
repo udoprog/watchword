@@ -1,6 +1,6 @@
 [package]
 name = "watchword-core"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
 description = "The types watchword's server and frontends share: users, roles, the wire types of its routes, and AuthError."
