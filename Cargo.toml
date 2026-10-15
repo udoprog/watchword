@@ -30,11 +30,11 @@ rustdoc-args = ["--cfg", "watchword_docsrs"]
 [features]
 default = []
 musli01 = ["watchword-core/musli01"]
-musliweb04 = ["musli01", "watchword-core/musliweb04"]
+musliweb04 = ["musli01", "watchword-core/musliweb04", "dep:musli-web04"]
 server = ["dep:base64", "dep:bcrypt", "dep:cookie", "dep:hmac", "dep:http", "dep:rand", "dep:sha2", "dep:tokio", "tokio/macros", "dep:tracing"]
 cloudflare = ["server", "dep:aws-lc-rs", "dep:reqwest", "dep:serde_json"]
 google = ["server", "dep:reqwest", "dep:serde_json", "dep:url", "dep:lru"]
-axum08 = ["server", "dep:axum08", "watchword-core/axum08"]
+axum08 = ["server", "dep:axum08", "watchword-core/axum08", "musli-web04?/ws"]
 sqll014 = ["server", "dep:sqll014"]
 test-util = ["google"]
 yew023 = ["dep:watchword-yew023"]
@@ -67,8 +67,11 @@ lru = { version = "0.18.5", optional = true }
 # axum08
 axum08 = { package = "axum", version = "0.8.9", optional = true }
 
+# musliweb04; with axum08 its `ws` server side
+musli-web04 = { package = "musli-web", version = "0.4.11", default-features = false, optional = true }
+
 # sqll014
-sqll014 = { package = "sqll", version = "0.14.7", optional = true }
+sqll014 ={ package = "sqll", version = "0.14.7", optional = true }
 
 # yew023
 watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.1.0", optional = true }

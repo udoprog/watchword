@@ -39,6 +39,7 @@ jobs:
     - run: cargo clippy --all-targets --no-default-features --features cloudflare -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features google -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features axum08 -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features musliweb04,axum08 -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features sqll014 -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features yew023 -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features test-util -- -D warnings

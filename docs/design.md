@@ -513,8 +513,9 @@ cookies, so the library does not depend on the app's gloo version.
 
 ### 2.7 musli-web integration (`musliweb04`) — partly built
 
-*Status: the types (`watchword::musliweb04`) are built; the server's
-`Connection` and the components' socket transport are proposed. Decisions 13
+*Status: the types (`watchword::musliweb04`) are built, and so are the
+server's `Connection::new` and `Connection::update`; `Connection::handle` and
+the components' socket transport are proposed. Decisions 13
 and 16–19 record why it is shaped this way.*
 
 An app whose frontend already talks to its server over a musli-web WebSocket
@@ -622,7 +623,7 @@ event = events.recv() => if let Some(update) = conn.update(&event?).await? {
 }
 ```
 
-- `Connection` holds the `Auth` and the connection's session id. It is
+- `Connection` holds the `Auth` and the connection's session and user ids. It is
   `Clone` and cheap, so it sits inside the app's own handler.
 - `handle` returns `Ok(false)` for an id outside watchword's band, which the
   app treats as it treats its own unknown ids. For watchword's ids it decodes
