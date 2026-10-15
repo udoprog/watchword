@@ -310,8 +310,8 @@ async fn migrates_territory() -> TestResult {
     let c = connect(&uri);
     c.execute(TERRITORY_BEFORE)?;
 
-    // Times as jiff writes them, with sub-millisecond digits, which are
-    // truncated as the store truncates them.
+    // Times as jiff writes them, with sub-millisecond digits, which the
+    // migration rounds to the nearest millisecond.
     let created: Timestamp = "2026-10-14T12:34:56.123456789Z".parse()?;
     let expires: Timestamp = "2999-11-13T12:34:56.5Z".parse()?;
     let used: Timestamp = "2026-10-14T11:34:56.9996Z".parse()?;

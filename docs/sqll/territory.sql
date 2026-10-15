@@ -4,9 +4,10 @@
 -- rebuilds `users`.
 --
 -- Territory's timestamps are RFC 3339 TEXT, as jiff writes them; they become
--- INTEGER milliseconds, truncated to the millisecond as SqllStore stores
--- times. A timestamp SQLite cannot parse fails the migration (NOT NULL
--- constraint) rather than being lost.
+-- INTEGER milliseconds, rounded to the nearest millisecond (strftime('%f')
+-- rounds, and clamps at 59.999 so it never rolls over into the next second;
+-- the result is never more than 1 ms off). A timestamp SQLite cannot parse
+-- fails the migration (NOT NULL constraint) rather than being lost.
 
 -- users: an optional unique login, `auth_method` becomes `method` with 'plain'
 -- renamed to 'password', and created_at becomes INTEGER ms. The `email NOT
