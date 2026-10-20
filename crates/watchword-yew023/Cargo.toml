@@ -1,6 +1,6 @@
 [package]
 name = "watchword-yew023"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
 description = "watchword's Yew 0.23 frontend: sign-in, registration, account and user management components, the auth context and its HTTP client."
@@ -24,7 +24,7 @@ musliweb04 = ["dep:musli-web04", "watchword-core/musliweb04"]
 
 # yew's macros expand to `::yew::` paths, so the dependency key must stay `yew`.
 [dependencies]
-watchword-core = { path = "../watchword-core", version = "=0.2.0" }
+watchword-core = { path = "../watchword-core", version = "=0.2.1" }
 yew = "0.23.0"
 gloo-net = { version = "0.7.0", default-features = false, features = ["http", "json"] }
 jiff = { version = "0.2.37", features = ["js"] }
