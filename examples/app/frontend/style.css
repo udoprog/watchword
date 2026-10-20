@@ -244,6 +244,18 @@ a { color: var(--accent); }
 .auth-confirm { display: inline-flex; gap: 4px; align-items: center; }
 .auth-pages { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 12px; }
 
+/* On a phone each user is a card whose cells name themselves by data-label. */
+@media (max-width: 600px) {
+  .auth-users thead { display: none; }
+  .auth-users, .auth-users tbody, .auth-users tr, .auth-users td { display: block; }
+  .auth-users tr { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .auth-users td { display: grid; grid-template-columns: 7em minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 4px 6px; border-bottom: 0; }
+  .auth-users td::before { content: attr(data-label); color: var(--muted); font-size: 13px; }
+  .auth-users td.auth-user-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+  .auth-users td.auth-user-actions::before { content: none; }
+  .auth-link-url { min-width: 0; }
+}
+
 /* Cloudflare settings. */
 
 .auth-cloudflare-settings .auth-instructions { color: var(--muted); font-size: 14px; }

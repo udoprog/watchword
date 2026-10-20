@@ -899,23 +899,25 @@ impl AdminUsers {
             return html! { <p class="auth-status">{phrases.text(text)}</p> };
         }
 
+        let labels = Labels::new(phrases);
+
         html! {
             <>
                 <table class="auth-users">
                     <thead>
                         <tr>
                             if logins {
-                                <th scope="col">{phrases.text("watchword-login")}</th>
+                                <th scope="col">{labels.login.clone()}</th>
                             }
-                            <th scope="col">{phrases.text("watchword-email")}</th>
-                            <th scope="col">{phrases.text("watchword-role")}</th>
-                            <th scope="col">{phrases.text("watchword-status")}</th>
-                            <th scope="col">{phrases.text("watchword-link")}</th>
-                            <th scope="col"><span class="auth-hidden">{phrases.text("watchword-actions")}</span></th>
+                            <th scope="col">{labels.email.clone()}</th>
+                            <th scope="col">{labels.role.clone()}</th>
+                            <th scope="col">{labels.status.clone()}</th>
+                            <th scope="col">{labels.link.clone()}</th>
+                            <th scope="col"><span class="auth-hidden">{labels.actions.clone()}</span></th>
                         </tr>
                     </thead>
                     <tbody>
-                        {for shown[range].iter().map(|e| self.view_user(ctx, e, now))}
+                        {for shown[range].iter().map(|e| self.view_user(ctx, e, now, &labels))}
                     </tbody>
                 </table>
 
@@ -944,7 +946,13 @@ impl AdminUsers {
         }
     }
 
-    fn view_user(&self, ctx: &Context<Self>, entry: &UserEntry, now: Timestamp) -> Html {
+    fn view_user(
+        &self,
+        ctx: &Context<Self>,
+        entry: &UserEntry,
+        now: Timestamp,
+        labels: &Labels,
+    ) -> Html {
         let props = ctx.props();
         let link = ctx.link();
         let logins = logins(ctx);
@@ -1008,13 +1016,17 @@ impl AdminUsers {
         // The first cell names the user, so the badge and extra go there.
         let (login_cell, email_cell) = if logins {
             (
-                Some(html! { <td class="auth-user-login">{login_cell}{badge}{extra}</td> }),
-                html! { <td class="auth-user-email">{email_cell}</td> },
+                Some(html! {
+                    <td class="auth-user-login" data-label={labels.login.clone()}>{login_cell}{badge}{extra}</td>
+                }),
+                html! { <td class="auth-user-email" data-label={labels.email.clone()}>{email_cell}</td> },
             )
         } else {
             (
                 None,
-                html! { <td class="auth-user-email">{email_cell}{badge}{extra}</td> },
+                html! {
+                    <td class="auth-user-email" data-label={labels.email.clone()}>{email_cell}{badge}{extra}</td>
+                },
             )
         };
 
@@ -1036,12 +1048,14 @@ impl AdminUsers {
             <tr class={classes!("auth-user", me.then_some("auth-me"))}>
                 {for login_cell}
                 {email_cell}
-                <td class="auth-user-role">{role}</td>
-                <td class="auth-user-access">
+                <td class="auth-user-role" data-label={labels.role.clone()}>{role}</td>
+                <td class="auth-user-access" data-label={labels.status.clone()}>
                     <span class={classes!("auth-access", access_class)} title={access_title}>{access_label}</span>
                 </td>
-                <td class="auth-user-link">{self.view_link(ctx, entry, now)}</td>
-                <td class="auth-user-actions">{self.view_actions(ctx, entry, me, &name, editing.is_some())}</td>
+                <td class="auth-user-link" data-label={labels.link.clone()}>{self.view_link(ctx, entry, now)}</td>
+                <td class="auth-user-actions" data-label={labels.actions.clone()}>
+                    {self.view_actions(ctx, entry, me, &name, editing.is_some())}
+                </td>
             </tr>
         }
     }
@@ -1294,6 +1308,30 @@ fn role_select(
                 <option value={option.as_str()} selected={option == role}>{role_name(phrases, option)}</option>
             })}
         </select>
+    }
+}
+
+/// The column names of the users table, looked up once per render for its
+/// header and the `data-label` of every body cell.
+struct Labels {
+    login: AttrValue,
+    email: AttrValue,
+    role: AttrValue,
+    status: AttrValue,
+    link: AttrValue,
+    actions: AttrValue,
+}
+
+impl Labels {
+    fn new(phrases: &Phrases) -> Self {
+        Self {
+            login: l10n::text(phrases, "watchword-login"),
+            email: l10n::text(phrases, "watchword-email"),
+            role: l10n::text(phrases, "watchword-role"),
+            status: l10n::text(phrases, "watchword-status"),
+            link: l10n::text(phrases, "watchword-link"),
+            actions: l10n::text(phrases, "watchword-actions"),
+        }
     }
 }
 

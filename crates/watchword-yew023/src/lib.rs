@@ -170,6 +170,24 @@
 //! | `auth-instructions` | the Cloudflare setup instructions |
 //! | `auth-toggle` | a field with a checkbox |
 //!
+//! Every body cell of the `auth-users` table also carries a `data-label`
+//! attribute holding its column's name, the same localized text as the
+//! column header. On a narrow screen an app can use it to show each row as a
+//! stacked card whose cells name themselves, without assuming the column
+//! order:
+//!
+//! ```css
+//! @media (max-width: 600px) {
+//!   .auth-users thead { display: none; }
+//!   .auth-users, .auth-users tbody, .auth-users tr, .auth-users td { display: block; }
+//!   .auth-users tr { padding: 8px 0; border-bottom: 1px solid #ccc; }
+//!   .auth-users td { display: grid; grid-template-columns: 7em 1fr; gap: 8px; border: 0; }
+//!   .auth-users td::before { content: attr(data-label); color: #666; }
+//!   .auth-users td.auth-user-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+//!   .auth-users td.auth-user-actions::before { content: none; }
+//! }
+//! ```
+//!
 //! [`AccountPanel`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AccountPanel.html
 //! [`AdminUsers`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AdminUsers.html
 //! [`AuthContext`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html
