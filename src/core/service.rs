@@ -266,7 +266,8 @@ where
     Ok(key)
 }
 
-/// Builds an [`Auth`]; see [`Auth::builder`].
+/// Builds an [`Auth`]; see [`Auth::builder`] and
+/// [`Auth::builder_from_store`].
 pub struct AuthBuilder {
     store: Box<dyn DynStore>,
     key: [u8; 32],
@@ -373,7 +374,8 @@ struct Inner {
 
 impl Auth {
     /// Starts building the service over `store`, signing cookies with
-    /// `session_key` (see [`load_or_create_key`]).
+    /// `session_key` (see [`load_or_create_key`]). To use the key the store
+    /// keeps, use [`builder_from_store`](Auth::builder_from_store).
     pub fn builder<S>(store: S, session_key: [u8; 32]) -> AuthBuilder
     where
         S: Store,
@@ -392,6 +394,29 @@ impl Auth {
             #[cfg(feature = "google")]
             google_endpoints: crate::google::Endpoints::default(),
         }
+    }
+
+    /// Starts building the service over `store`, signing cookies with the
+    /// key the store keeps, which [`load_or_create_key`] loads or creates.
+    ///
+    /// This is how an app's server and its offline tools (an import, a
+    /// backup restore, a recovery command) open the same store with the same
+    /// key:
+    ///
+    /// ```
+    /// use watchword::{Auth, MemoryStore};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let auth = Auth::builder_from_store(MemoryStore::new()).await?.build();
+    /// # Ok(()) }
+    /// ```
+    pub async fn builder_from_store<S>(store: S) -> Result<AuthBuilder, StoreError>
+    where
+        S: Store,
+    {
+        let key = load_or_create_key(&store).await?;
+        Ok(Self::builder(store, key))
     }
 
     fn store(&self) -> &dyn DynStore {
@@ -611,7 +636,7 @@ impl Auth {
             return Err(AuthError::TooManyRequests.into());
         }
 
-        let user = self.find_by_name(&request.login).await?;
+        let user = self.find_user(&request.login).await?;
 
         let hash = user
             .as_ref()
@@ -642,9 +667,12 @@ impl Auth {
         Ok((user, session))
     }
 
-    /// The user signing in as `name`: by login name first (when logins are
-    /// used), then by email.
-    async fn find_by_name(&self, name: &str) -> Result<Option<User>> {
+    /// The user named `name`, as password sign-in finds them: by login name
+    /// first (trimmed, when logins are used), then by normalized email.
+    /// `None` when neither names a user, or `name` is blank.
+    ///
+    /// It checks no actor, so an app gates it as it needs.
+    pub async fn find_user(&self, name: &str) -> Result<Option<User>> {
         if self.inner.logins {
             let login = name.trim();
 
@@ -958,6 +986,15 @@ impl Auth {
     }
 
     async fn create_pending(&self, new: &NewUser) -> Result<(User, Link)> {
+        let now = Timestamp::now();
+        let user = self.create(new, now).await?;
+        let link = self.issue(&user, now).await?;
+        self.emit(AuthEvent::UserCreated(user.info()));
+        Ok((user, link))
+    }
+
+    /// Validates and normalizes `new` and stores the user, pending.
+    async fn create(&self, new: &NewUser, now: Timestamp) -> Result<User> {
         let login = self.normalize_login(new.login.as_deref())?;
         let email = normalize_optional_email(new.email.as_deref());
         self.check_identity(login.as_deref(), email.as_deref())?;
@@ -968,17 +1005,13 @@ impl Auth {
             role: new.role,
         };
 
-        let now = Timestamp::now();
-
         let user = self
             .store()
             .create_user(&new, now)
             .await?
             .map_err(AuthError::Conflict)?;
 
-        let link = self.issue(&user, now).await?;
-        self.emit(AuthEvent::UserCreated(user.info()));
-        Ok((user, link))
+        Ok(user)
     }
 
     /// Issues a new link to the user `id`, using up their earlier ones: a
@@ -1338,19 +1371,11 @@ impl Auth {
     /// [`issue_link`](Auth::issue_link) does, but acts as the system, so it
     /// needs no actor; never expose it to a request.
     ///
-    /// `name` is a login, or else an email. [`AuthError::NotFound`] when
-    /// neither names a user.
+    /// `name` is a login, or else an email, as for
+    /// [`find_user`](Auth::find_user). [`AuthError::NotFound`] when neither
+    /// names a user.
     pub async fn recovery_link(&self, name: &str) -> Result<Link> {
-        let login = name.trim();
-
-        let user = match self.store().user_by_login(login).await? {
-            Some(user) => user,
-            None => self
-                .store()
-                .user_by_email(&normalize_email(name))
-                .await?
-                .ok_or(AuthError::NotFound)?,
-        };
+        let user = self.find_user(name).await?.ok_or(AuthError::NotFound)?;
 
         let link = self.issue(&user, Timestamp::now()).await?;
         tracing::info!(
@@ -1359,6 +1384,24 @@ impl Auth {
             link.expires_at
         );
         Ok(link)
+    }
+
+    /// Creates a pending user without issuing them a link, for an app's own
+    /// import or backup-restore tool. It validates and normalizes `new` as
+    /// [`create_user`](Auth::create_user) does and sends
+    /// [`AuthEvent::UserCreated`], but acts as the system, so it needs no
+    /// actor; never expose it to a request.
+    ///
+    /// The user signs in once they have a link, from
+    /// [`issue_link`](Auth::issue_link) or
+    /// [`recovery_link`](Auth::recovery_link).
+    ///
+    /// [`AuthError::Invalid`] without a login or email (an email when logins
+    /// are not used), [`AuthError::Conflict`] when either is taken.
+    pub async fn import_user(&self, new: &NewUser) -> Result<User> {
+        let user = self.create(new, Timestamp::now()).await?;
+        self.emit(AuthEvent::UserCreated(user.info()));
+        Ok(user)
     }
 }
 

@@ -221,8 +221,7 @@ On top of them is the service, `Auth`, which is `Clone` and is a single `Arc`
 inside:
 
 ```rust
-let key = load_or_create_key(&store).await?;    // the store's `session_key` setting
-let auth = Auth::builder(store, key)
+let auth = Auth::builder_from_store(store).await? // key from the store's `session_key` setting
     .cookie(CookieConfig::new("app_session"))   // default name `session`, `Secure::Auto`
     .logins(true)                               // accept login names, not only emails
     .trusted_proxies(&trusted_proxies)
@@ -234,14 +233,19 @@ let auth = Auth::builder(store, key)
 auth.set_cloudflare(Option<CloudflareConfig>);  // when an admin changes the settings
 auth.bootstrap_admin(&BootstrapAdmin::new(name).public_url(public_url)).await?;  // -> Bootstrap
 auth.recovery_link(name).await?;                // -> Link, for the app's own CLI; no actor
+auth.import_user(&new_user).await?;             // -> User, pending, no link; for imports; no actor
+auth.find_user(name).await?;                    // -> Option<User>, by login, then email
 auth.events() -> broadcast::Receiver<AuthEvent>;
 auth.prune().await?;                            // delete expired sessions, for apps with a timer
 ```
 
-`load_or_create_key` reads the key as standard base64 or unpadded base64url, so
-keys stored by an app's earlier implementation keep their sessions valid; a new
-key is stored as standard base64. `BootstrapAdmin::new` takes an email if the
-name contains `@`, otherwise a login, as for a `--bootstrap-admin` option;
+`builder_from_store(store)` is `Auth::builder` with the key
+`load_or_create_key(&store)` returns, for apps that keep the key in their
+store; `Auth::builder` takes a key from elsewhere. `load_or_create_key` reads
+the key as standard base64 or unpadded base64url, so keys stored by an app's
+earlier implementation keep their sessions valid; a new key is stored as
+standard base64. `BootstrapAdmin::new` takes an email if the name contains
+`@`, otherwise a login, as for a `--bootstrap-admin` option;
 `BootstrapAdmin::email` and `::login` say which explicitly.
 
 ```rust
@@ -266,6 +270,22 @@ no actor: a reset link for an active user, a registration link otherwise. It
 is for an app's own command line, such as `track issue-link <login>`, to let in
 a user no admin can act for (a locked-out last admin, say), and must never be
 reachable from a request.
+
+`import_user(&new)` creates a pending user without issuing a link, for an
+app's own import or backup-restore tool: it validates and normalizes `new`
+as `create_user` does (login trimmed, email normalized, the identity rules of
+section 3, `Conflict` when either is taken) and sends `UserCreated`, but has
+no actor, so like `recovery_link` it must never be reachable from a request.
+The user gets a link later, from `issue_link` or `recovery_link`.
+`find_user(name)` finds a user as password sign-in does: by trimmed login
+first when logins are used, then by normalized email; `None` for a blank
+name. It checks no actor.
+
+An offline tool (an import, a restore, a recovery command) uses `Auth`
+rather than the `Store` directly, so it applies the same rules and keeps the
+same key: it opens the app's store, builds with `builder_from_store`, calls
+these operations, and exits. Events it sends reach nobody, since no server
+shares its `Auth`; a running server reads the new users from the store.
 
 The operations behind the routes are public methods too, so an app can call
 them from its own handlers or tests: `sign_in_password`, `sign_in_cloudflare`,

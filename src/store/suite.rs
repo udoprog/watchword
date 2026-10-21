@@ -47,6 +47,10 @@ macro_rules! store_suite {
             bootstrap_reissues_an_expired_link,
             bootstrap_leaves_a_pending_admin_to_an_active_admin,
             recovery_links_reset_register_and_restore,
+            imports_users_without_a_link,
+            imports_follow_the_identity_rules,
+            finds_users_by_login_or_email,
+            builder_from_store_keeps_the_session_key,
             password_sign_in_by_login_or_email,
             password_sign_in_by_email_only_without_logins,
             password_sign_in_is_throttled,
@@ -1008,6 +1012,133 @@ where
         refused(env.auth.recovery_link("nobody@example.com").await),
         AuthError::NotFound
     );
+    Ok(())
+}
+
+pub(crate) async fn imports_users_without_a_link<S>(store: S) -> TestResult
+where
+    S: Store + Clone,
+{
+    let env = env(store).await?;
+    let mut events = env.auth.events();
+
+    let new = NewUser {
+        login: Some(" pat ".to_owned()),
+        email: Some(" Pat@Example.com ".to_owned()),
+        role: Role::Admin,
+    };
+
+    let user = env.auth.import_user(&new).await?;
+    assert_eq!(user.login.as_deref(), Some("pat"));
+    assert_eq!(user.email.as_deref(), Some("pat@example.com"));
+    assert_eq!(user.role, Role::Admin);
+    assert_eq!(user.access, Access::Pending);
+    assert!(matches!(events.try_recv()?, AuthEvent::UserCreated(info) if info.id == user.id));
+
+    // No link was issued; the user gets one later.
+    let (_, expires_at) = env
+        .store
+        .users(Timestamp::now())
+        .await?
+        .into_iter()
+        .find(|(other, _)| other.id == user.id)
+        .ok_or("imported user missing")?;
+    assert_eq!(expires_at, None);
+
+    let link = env.auth.recovery_link("pat").await?;
+    assert_eq!(env.token_kind(&link.token).await?, TokenKind::Registration);
+    Ok(())
+}
+
+pub(crate) async fn imports_follow_the_identity_rules<S>(store: S) -> TestResult
+where
+    S: Store + Clone,
+{
+    let env = env(store.clone()).await?;
+
+    let new = |login: Option<&str>, email: Option<&str>| NewUser {
+        login: login.map(ToOwned::to_owned),
+        email: email.map(ToOwned::to_owned),
+        role: Role::Regular,
+    };
+
+    assert_eq!(
+        refused(env.auth.import_user(&new(None, None)).await),
+        AuthError::Invalid(Invalid::LoginOrEmailRequired)
+    );
+    assert_eq!(
+        refused(env.auth.import_user(&new(Some("  "), None)).await),
+        AuthError::Invalid(Invalid::LoginEmpty)
+    );
+    assert_eq!(
+        refused(env.auth.import_user(&new(Some(" admin "), None)).await),
+        AuthError::Conflict(Conflict::Login)
+    );
+    assert_eq!(
+        refused(
+            env.auth
+                .import_user(&new(None, Some("ADMIN@example.com")))
+                .await
+        ),
+        AuthError::Conflict(Conflict::Email)
+    );
+
+    let auth = Auth::builder(store, generate_session_key())
+        .logins(false)
+        .build();
+
+    assert_eq!(
+        refused(
+            auth.import_user(&new(Some("pat"), Some("pat@example.com")))
+                .await
+        ),
+        AuthError::Invalid(Invalid::LoginsDisabled)
+    );
+    assert_eq!(
+        refused(auth.import_user(&new(None, None)).await),
+        AuthError::Invalid(Invalid::EmailRequired)
+    );
+    Ok(())
+}
+
+pub(crate) async fn finds_users_by_login_or_email<S>(store: S) -> TestResult
+where
+    S: Store + Clone,
+{
+    let env = env(store.clone()).await?;
+    let id = env.admin.id;
+
+    let found = |user: Option<User>| user.map(|user| user.id);
+    assert_eq!(found(env.auth.find_user(" admin ").await?), Some(id));
+    assert_eq!(
+        found(env.auth.find_user(" Admin@Example.com ").await?),
+        Some(id)
+    );
+    assert_eq!(found(env.auth.find_user("nobody").await?), None);
+    assert_eq!(found(env.auth.find_user("  ").await?), None);
+
+    // Without logins, only the email names a user.
+    let auth = Auth::builder(store, generate_session_key())
+        .logins(false)
+        .build();
+    assert_eq!(found(auth.find_user("admin").await?), None);
+    assert_eq!(found(auth.find_user(ADMIN).await?), Some(id));
+    Ok(())
+}
+
+pub(crate) async fn builder_from_store_keeps_the_session_key<S>(store: S) -> TestResult
+where
+    S: Store + Clone,
+{
+    let server = Auth::builder_from_store(store.clone()).await?.build();
+    let offline = Auth::builder_from_store(store).await?.build();
+
+    // A cookie one signs, the other accepts.
+    let cookie = server.set_cookie(&http::HeaderMap::new(), "session-id");
+    let cookie = cookie.to_str()?.split(';').next().ok_or("empty cookie")?;
+    let mut headers = http::HeaderMap::new();
+    headers.insert(http::header::COOKIE, cookie.parse()?);
+    assert_eq!(offline.session_id(&headers).as_deref(), Some("session-id"));
     Ok(())
 }
 

@@ -198,12 +198,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
-    // An app keeps its session key in its database with
-    // `auth::load_or_create_key`; in memory there is nothing to keep.
-    let store = MemoryStore::new();
-    let key = auth::load_or_create_key(&store).await?;
-
-    let auth = Auth::builder(store, key)
+    // The builder loads the session key from the store, creating it on
+    // first use, so a persistent store keeps sessions across restarts; in
+    // memory there is nothing to keep.
+    let auth = Auth::builder_from_store(MemoryStore::new())
+        .await?
         .cookie(auth::CookieConfig::new("example_session"))
         .logins(true)
         .impersonation(args.impersonation)
