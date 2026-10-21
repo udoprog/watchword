@@ -34,10 +34,10 @@ musli01 = ["watchword-core/musli01"]
 musliweb04 = ["alloc", "musli01", "watchword-core/musliweb04", "dep:musli-web04", "watchword-yew023?/musliweb04"]
 server = ["std", "dep:base64", "dep:bcrypt", "dep:cookie", "dep:hmac", "dep:http", "dep:rand", "dep:sha2", "dep:tokio", "tokio/macros", "dep:tracing"]
 cloudflare = ["server", "dep:aws-lc-rs", "dep:reqwest", "dep:serde_json"]
-google = ["server", "dep:reqwest", "dep:serde_json", "dep:url", "dep:lru"]
+google = ["server", "dep:reqwest", "dep:serde_json", "dep:url", "dep:lru", "axum08?/query"]
 axum08 = ["server", "dep:axum08", "watchword-core/axum08", "musli-web04?/ws"]
 sqll014 = ["server", "dep:sqll014"]
-test-util = ["google"]
+test-util = ["google", "axum08?/http1"]
 yew023 = ["std", "dep:watchword-yew023"]
 
 [dependencies]
@@ -47,7 +47,8 @@ jiff = { version = "0.2.37", default-features = false, features = ["serde"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
 thiserror = { version = "2.0.18", default-features = false }
 
-# server
+# server; `tokio/macros` is for the `select!` in the live-session guard, `tracing/std`
+# so events reach a scoped subscriber.
 base64 = { version = "0.22.1", optional = true }
 bcrypt = { version = "0.19.1", optional = true }
 cookie = { version = "0.18.1", optional = true }
@@ -56,7 +57,7 @@ http = { version = "1.5.0", optional = true }
 rand = { version = "0.10.3", optional = true }
 sha2 = { version = "0.11.0", optional = true }
 tokio = { version = "1.53.1", features = ["rt", "sync", "time"], optional = true }
-tracing = { version = "0.1.44", optional = true }
+tracing = { version = "0.1.44", default-features = false, features = ["std"], optional = true }
 
 # cloudflare, google
 aws-lc-rs = { version = "1.18.1", optional = true }
@@ -65,8 +66,10 @@ serde_json = { version = "1.0.151", optional = true }
 url = { version = "2.5.8", optional = true }
 lru = { version = "0.18.5", optional = true }
 
-# axum08
-axum08 = { package = "axum", version = "0.8.9", optional = true }
+# axum08; `tokio` for `ConnectInfo`, the app picks `http1`/`http2` and the rest
+# (`google` adds `query` for the callback, `test-util` adds `http1` for the
+# `FakeGoogle` `axum::serve`).
+axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["tokio"], optional = true }
 
 # musliweb04; with axum08 its `ws` server side
 musli-web04 = { package = "musli-web", version = "0.4.11", default-features = false, optional = true }
@@ -80,6 +83,8 @@ sqll014 = { package = "sqll", version = "0.14.7", default-features = false, feat
 watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.2.1", default-features = false, optional = true }
 
 [dev-dependencies]
+# `serve` and `query` in the axum08 and musliweb04 socket tests.
+axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["tokio", "http1", "query"] }
 # The musliweb04 socket tests: a real axum server and tungstenite client.
 musli-web04 = { package = "musli-web", version = "0.4.11", default-features = false, features = ["axum08", "tungstenite030"] }
 musli = "0.1.9"
