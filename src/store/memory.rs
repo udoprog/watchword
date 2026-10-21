@@ -393,6 +393,13 @@ impl Store for MemoryStore {
         Ok(self.lock().tokens.get(id).cloned())
     }
 
+    async fn delete_expired_tokens(&self, before: Timestamp) -> Result<()> {
+        self.lock()
+            .tokens
+            .retain(|_, t| !is_expired(t.expires_at, before));
+        Ok(())
+    }
+
     async fn use_up_tokens(&self, user: UserId, now: Timestamp) -> Result<()> {
         self.lock().use_up_tokens(user, now);
         Ok(())

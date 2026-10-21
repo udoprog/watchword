@@ -280,6 +280,9 @@ pub trait Store: Send + Sync + 'static {
     /// The token with `id`, used or not.
     fn token(&self, id: &str) -> impl Future<Output = Result<Option<Token>>> + Send;
 
+    /// Deletes every token, used or not, that expired by `before`.
+    fn delete_expired_tokens(&self, before: Timestamp) -> impl Future<Output = Result<()>> + Send;
+
     /// Marks the user's unused tokens used at `now`.
     fn use_up_tokens(
         &self,
@@ -350,6 +353,7 @@ pub(crate) trait DynStore: Send + Sync + 'static {
     fn delete_expired_sessions(&self, now: Timestamp) -> BoxFuture<'_, ()>;
     fn create_token<'a>(&'a self, token: &'a Token, now: Timestamp) -> BoxFuture<'a, ()>;
     fn token<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<Token>>;
+    fn delete_expired_tokens(&self, before: Timestamp) -> BoxFuture<'_, ()>;
     fn use_up_tokens(&self, user: UserId, now: Timestamp) -> BoxFuture<'_, ()>;
     fn redeem_token<'a>(
         &'a self,
@@ -455,6 +459,10 @@ where
 
     fn token<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<Token>> {
         Box::pin(Store::token(self, id))
+    }
+
+    fn delete_expired_tokens(&self, before: Timestamp) -> BoxFuture<'_, ()> {
+        Box::pin(Store::delete_expired_tokens(self, before))
     }
 
     fn use_up_tokens(&self, user: UserId, now: Timestamp) -> BoxFuture<'_, ()> {

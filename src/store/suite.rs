@@ -8,13 +8,15 @@ use std::boxed::Box;
 use std::error::Error as StdError;
 use std::net::IpAddr;
 use std::string::String;
+use std::time::Duration;
 use std::vec::Vec;
 
 use jiff::{SignedDuration, Timestamp};
 
 use super::{Credential, Session, Store, Token, TokenKind, User};
 use crate::core::{
-    Auth, AuthEvent, Bootstrap, BootstrapAdmin, Error, generate_session_key, new_token,
+    Auth, AuthEvent, Bootstrap, BootstrapAdmin, Error, TOKEN_LIFETIME, generate_session_key,
+    new_token,
 };
 use crate::types::{
     Access, AuthError, Conflict, Invalid, Link, LoginRequest, Method, NewUser, PasswordChange,
@@ -45,6 +47,7 @@ macro_rules! store_suite {
             bootstraps_an_admin_by_login,
             bootstrap_is_skipped_once_users_exist,
             bootstrap_reissues_an_expired_link,
+            bootstrap_reissues_a_pruned_link,
             bootstrap_leaves_a_pending_admin_to_an_active_admin,
             recovery_links_reset_register_and_restore,
             imports_users_without_a_link,
@@ -59,6 +62,8 @@ macro_rules! store_suite {
             issuing_a_link_uses_up_earlier_ones,
             changing_the_password_keeps_this_session,
             sessions_expire_and_are_pruned,
+            long_expired_links_are_pruned,
+            the_builder_prunes_on_a_timer,
             sign_out_and_sign_out_everywhere,
             admin_operations_need_an_admin,
             admins_cannot_act_on_themselves,
@@ -725,16 +730,46 @@ async fn expire_links<S>(store: &S, user: UserId) -> Result<String, Box<dyn StdE
 where
     S: Store,
 {
-    let now = Timestamp::now();
+    expire_links_at(store, user, Timestamp::now() - SignedDuration::from_secs(1)).await
+}
+
+/// When a link that [`Auth::prune`] deletes expired: longer ago than
+/// [`TOKEN_LIFETIME`].
+fn long_ago() -> Timestamp {
+    Timestamp::now() - TOKEN_LIFETIME - SignedDuration::from_secs(1)
+}
+
+/// Replaces the user's links with one that expired at `expires_at`.
+async fn expire_links_at<S>(
+    store: &S,
+    user: UserId,
+    expires_at: Timestamp,
+) -> Result<String, Box<dyn StdError>>
+where
+    S: Store,
+{
     let token = Token {
         id: new_token(),
         user,
         kind: TokenKind::Registration,
-        expires_at: now - SignedDuration::from_secs(1),
+        expires_at,
         used_at: None,
     };
-    store.create_token(&token, now).await?;
+    store.create_token(&token, Timestamp::now()).await?;
     Ok(token.id)
+}
+
+/// The expiry of the user's live link, as [`Store::users`] reports it.
+async fn live_link<S>(store: &S, user: UserId) -> Result<Option<Timestamp>, Box<dyn StdError>>
+where
+    S: Store,
+{
+    let users = store.users(Timestamp::now()).await?;
+    let (_, link) = users
+        .into_iter()
+        .find(|(u, _)| u.id == user)
+        .ok_or("user missing")?;
+    Ok(link)
 }
 
 pub(crate) async fn bootstraps_an_admin_into_an_empty_store<S>(store: S) -> TestResult
@@ -909,6 +944,42 @@ where
     assert_eq!(registered.id, user.id);
     assert_eq!(registered.access, Access::Active);
     assert_eq!(auth.bootstrap_admin(&admin).await?, Bootstrap::Skipped);
+    Ok(())
+}
+
+pub(crate) async fn bootstrap_reissues_a_pruned_link<S>(store: S) -> TestResult
+where
+    S: Store + Clone,
+{
+    let auth = Auth::builder(store.clone(), generate_session_key()).build();
+    let admin = BootstrapAdmin::new(ADMIN);
+
+    let first = issued(auth.bootstrap_admin(&admin).await?)?;
+    let user = store.user_by_email(ADMIN).await?.ok_or("admin missing")?;
+
+    // The admin's link expired long ago and is pruned; the first one, used
+    // up by it, has not expired and stays.
+    let pruned = expire_links_at(&store, user.id, long_ago()).await?;
+    auth.prune().await?;
+    assert!(store.token(&pruned).await?.is_none());
+    assert!(store.token(&first.token).await?.is_some());
+    assert_eq!(live_link(&store, user.id).await?, None);
+
+    // A restart issues a new registration link, which pruning keeps.
+    let outcome = auth.bootstrap_admin(&admin).await?;
+    assert!(matches!(outcome, Bootstrap::Reissued(..)), "{outcome:?}");
+    let link = issued(outcome)?;
+    auth.prune().await?;
+
+    let token = store.token(&link.token).await?.ok_or("missing")?;
+    assert_eq!(live_link(&store, user.id).await?, Some(token.expires_at));
+    assert_eq!(
+        auth.bootstrap_admin(&admin).await?,
+        Bootstrap::Pending {
+            expires_at: token.expires_at
+        }
+    );
+    assert!(link_usable(&auth, &link.token).await);
     Ok(())
 }
 
@@ -1390,6 +1461,84 @@ where
     env.auth.prune().await?;
     assert!(env.store.session(&expired.id).await?.is_none());
     Ok(())
+}
+
+pub(crate) async fn long_expired_links_are_pruned<S>(store: S) -> TestResult
+where
+    S: Store + Clone,
+{
+    let env = env(store).await?;
+
+    let (live, link) = env.invite("live@example.com").await?;
+    let (recent, _) = env.invite("recent@example.com").await?;
+    let recent_link = expire_links(&env.store, recent.id).await?;
+    let (old, used) = env.invite("old@example.com").await?;
+    let old_link = expire_links_at(&env.store, old.id, long_ago()).await?;
+
+    let before = env.auth.users(&env.admin).await?;
+    env.auth.prune().await?;
+    assert_eq!(env.auth.users(&env.admin).await?, before);
+
+    // A live link stays live.
+    let live_expires_at = env.store.token(&link).await?.ok_or("missing")?.expires_at;
+    assert_eq!(live_link(&env.store, live.id).await?, Some(live_expires_at));
+    assert!(env.usable(&link).await);
+
+    // A link that expired recently, or was used up but has not expired, is
+    // kept and still reads as gone.
+    for token in [&recent_link, &used] {
+        assert!(env.store.token(token).await?.is_some());
+        assert_eq!(
+            refused(env.auth.register_info(token).await),
+            AuthError::Gone
+        );
+    }
+
+    assert_eq!(live_link(&env.store, recent.id).await?, None);
+
+    // One that expired longer ago than a link lasts is deleted.
+    assert!(env.store.token(&old_link).await?.is_none());
+    assert_eq!(
+        refused(env.auth.register_info(&old_link).await),
+        AuthError::NotFound
+    );
+    assert_eq!(live_link(&env.store, old.id).await?, None);
+
+    // Its user still gets a new link.
+    let new = env.issue(old.id).await?;
+    assert!(env.usable(&new).await);
+    Ok(())
+}
+
+pub(crate) async fn the_builder_prunes_on_a_timer<S>(store: S) -> TestResult
+where
+    S: Store + Clone,
+{
+    let env = env_with(store, |b| b.prune_every(Some(Duration::from_millis(10)))).await?;
+
+    let now = Timestamp::now();
+    let expired = Session {
+        id: crate::core::new_session_id(),
+        user: env.admin.id,
+        impersonator: None,
+        created_at: now - SignedDuration::from_hours(24),
+        expires_at: now - SignedDuration::from_secs(1),
+    };
+    env.store.create_session(&expired).await?;
+    let (user, _) = env.invite("user@example.com").await?;
+    let link = expire_links_at(&env.store, user.id, long_ago()).await?;
+
+    for _ in 0..500 {
+        if env.store.session(&expired.id).await?.is_none()
+            && env.store.token(&link).await?.is_none()
+        {
+            return Ok(());
+        }
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    Err("the expired session and link were not pruned".into())
 }
 
 pub(crate) async fn sign_out_and_sign_out_everywhere<S>(store: S) -> TestResult

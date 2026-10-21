@@ -207,6 +207,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .impersonation(args.impersonation)
         .google(google)
         .cloudflare(Some(cloudflare.clone()))
+        // Expired sessions, and links that expired over a week ago, are
+        // deleted now and every hour.
+        .prune_every(Some(Duration::from_secs(60 * 60)))
         .build();
 
     let bootstrap = BootstrapAdmin::new(&args.bootstrap_admin).public_url(Some(&public_url));
@@ -222,23 +225,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             link.url(Some(public_url.as_str()))
         );
     }
-
-    // Expired sessions and links are pruned now and then.
-    tokio::spawn({
-        let auth = auth.clone();
-
-        async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
-
-            loop {
-                interval.tick().await;
-
-                if let Err(error) = auth.prune().await {
-                    tracing::warn!("Pruning sessions and links failed: {error}");
-                }
-            }
-        }
-    });
 
     let state = AppState {
         auth,

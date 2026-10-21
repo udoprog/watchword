@@ -6,8 +6,8 @@ use std::fmt;
 use std::net::IpAddr;
 use std::string::String;
 use std::string::ToString;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use base64::Engine as _;
@@ -16,11 +16,12 @@ use cookie::{Cookie, SameSite};
 use http::{HeaderMap, HeaderValue, header};
 use jiff::Timestamp;
 use tokio::sync::broadcast;
+use tokio::time::MissedTickBehavior;
 
 use super::throttle::LoginThrottle;
 use super::{
-    PasswordError, dummy_hash, generate_session_key, hash_password, is_expired, new_session_id,
-    new_token, session_cookie, session_expiry, token_expiry, verify_password,
+    PasswordError, TOKEN_LIFETIME, dummy_hash, generate_session_key, hash_password, is_expired,
+    new_session_id, new_token, session_cookie, session_expiry, token_expiry, verify_password,
     verify_session_cookie,
 };
 use crate::store::{Credential, DynStore, Session, Store, StoreError, Token, TokenKind, User};
@@ -275,6 +276,7 @@ pub struct AuthBuilder {
     logins: bool,
     trusted_proxies: Vec<IpAddr>,
     impersonation: bool,
+    prune_every: Option<Duration>,
     #[cfg(feature = "cloudflare")]
     cloudflare: Option<crate::types::CloudflareConfig>,
     #[cfg(feature = "google")]
@@ -313,11 +315,49 @@ impl AuthBuilder {
         self
     }
 
+    /// Runs [`Auth::prune`] at [`build`](AuthBuilder::build) and then
+    /// every `period`, on a task that ends once every clone of the
+    /// [`Auth`] is dropped, logging a failure at `warn`. The default is
+    /// `None`: nothing is pruned except by calling [`Auth::prune`].
+    ///
+    /// With `Some`, [`build`](AuthBuilder::build) must be called within a
+    /// Tokio runtime.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use watchword::{Auth, MemoryStore};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let auth = Auth::builder_from_store(MemoryStore::new())
+    ///     .await?
+    ///     .prune_every(Some(Duration::from_secs(60 * 60)))
+    ///     .build();
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// If `period` is zero.
+    pub fn prune_every(mut self, period: Option<Duration>) -> Self {
+        assert!(
+            period != Some(Duration::ZERO),
+            "the prune period must be non-zero"
+        );
+        self.prune_every = period;
+        self
+    }
+
     /// Builds the service.
+    ///
+    /// # Panics
+    ///
+    /// Outside a Tokio runtime when [`prune_every`](AuthBuilder::prune_every)
+    /// is set.
     pub fn build(self) -> Auth {
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
 
-        Auth {
+        let auth = Auth {
             inner: Arc::new(Inner {
                 store: self.store,
                 key: self.key,
@@ -335,6 +375,30 @@ impl AuthBuilder {
                 #[cfg(feature = "axum08")]
                 live: crate::axum08::LiveCache::default(),
             }),
+        };
+
+        if let Some(period) = self.prune_every {
+            tokio::spawn(prune_periodically(Arc::downgrade(&auth.inner), period));
+        }
+
+        auth
+    }
+}
+
+/// Prunes now and then every `period`, for as long as the service exists.
+async fn prune_periodically(inner: Weak<Inner>, period: Duration) {
+    let mut interval = tokio::time::interval(period);
+    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+    loop {
+        interval.tick().await;
+
+        let Some(inner) = inner.upgrade() else {
+            return;
+        };
+
+        if let Err(error) = (Auth { inner }).prune().await {
+            tracing::warn!("Pruning expired sessions and links failed: {error}");
         }
     }
 }
@@ -387,6 +451,7 @@ impl Auth {
             logins: true,
             trusted_proxies: Vec::new(),
             impersonation: false,
+            prune_every: None,
             #[cfg(feature = "cloudflare")]
             cloudflare: None,
             #[cfg(feature = "google")]
@@ -565,11 +630,19 @@ impl Auth {
         Ok(Some((user, session)))
     }
 
-    /// Deletes the sessions that have expired. Creating a session may also
-    /// do this; call it on a timer to keep the store small.
+    /// Deletes the sessions that have expired, and the registration and
+    /// reset links that expired more than [`TOKEN_LIFETIME`] ago, used or
+    /// not. Until then an expired link still answers
+    /// [`AuthError::Gone`] rather than [`AuthError::NotFound`].
+    ///
+    /// Creating a session may also delete expired sessions. Call it on a
+    /// timer to keep the store small, or have
+    /// [`AuthBuilder::prune_every`] do so.
     pub async fn prune(&self) -> Result<()> {
+        let now = Timestamp::now();
+        self.store().delete_expired_sessions(now).await?;
         self.store()
-            .delete_expired_sessions(Timestamp::now())
+            .delete_expired_tokens(now - TOKEN_LIFETIME)
             .await?;
         Ok(())
     }

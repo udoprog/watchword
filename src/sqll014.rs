@@ -469,6 +469,8 @@ pub struct Write {
     use_token: TypedStatement<(i64, String), ()>,
     #[sql = "DELETE FROM auth_tokens WHERE user_id = ?"]
     delete_tokens: TypedStatement<(UserId,), ()>,
+    #[sql = "DELETE FROM auth_tokens WHERE expires_at <= ?"]
+    delete_expired_tokens: TypedStatement<(i64,), ()>,
 
     #[sql = "INSERT INTO config (key, value) VALUES (?, ?)"]
     #[sql = "ON CONFLICT (key) DO UPDATE SET value = excluded.value"]
@@ -857,6 +859,14 @@ where
     async fn token(&self, id: &str) -> Result<Option<Token>> {
         let id = id.to_owned();
         self.read(move |r| r.token(&id)).await
+    }
+
+    async fn delete_expired_tokens(&self, before: Timestamp) -> Result<()> {
+        self.write(move |w| {
+            w.delete_expired_tokens.execute((millis(before),))?;
+            Ok(())
+        })
+        .await
     }
 
     async fn use_up_tokens(&self, user: UserId, now: Timestamp) -> Result<()> {

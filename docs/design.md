@@ -230,6 +230,7 @@ let auth = Auth::builder_from_store(store).await? // key from the store's `sessi
     .cloudflare(cloudflare_config)              // feature `cloudflare`; Option, changeable later
     .google(google_config)                      // feature `google`; Option
     .impersonation(true)
+    .prune_every(Some(Duration::from_secs(3600)))  // run `prune` now and hourly; default None
     .build();
 
 auth.set_cloudflare(Option<CloudflareConfig>);  // when an admin changes the settings
@@ -238,7 +239,7 @@ auth.recovery_link(name).await?;                // -> Link, for the app's own CL
 auth.import_user(&new_user).await?;             // -> User, pending, no link; for imports; no actor
 auth.find_user(name).await?;                    // -> Option<User>, by login, then email
 auth.events() -> broadcast::Receiver<AuthEvent>;
-auth.prune().await?;                            // delete expired sessions, for apps with a timer
+auth.prune().await?;                            // delete expired sessions and long-expired links
 ```
 
 `builder_from_store(store)` is `Auth::builder` with the key
@@ -385,6 +386,7 @@ pub trait Store: Send + Sync + 'static {
     /// Inserts the token and uses up the user's other unused ones.
     fn create_token(&self, t: &Token, now: Timestamp) -> ...;
     fn token(&self, id: &str) -> ...Option<Token>;           // used or not
+    fn delete_expired_tokens(&self, before: Timestamp) -> ...;  // used or not
     fn use_up_tokens(&self, user: UserId, now: Timestamp) -> ...;
     /// In one transaction: marks the token used if it is still unused (else
     /// returns false), sets the credential as `set_credential` does, deletes
@@ -1097,9 +1099,15 @@ once the release is on crates.io.
    `Expires`. The value format is fixed and keyed by the store's
    `session_key`, so sessions survive restarts and an app whose cookies already
    use this format keeps them.
-8. **Expired sessions** are pruned on session creation (the store may) and by
-   `auth.prune()` for apps that want a timer. Reads always check the expiry, so
-   pruning only keeps the store small.
+8. **Expired sessions and links** are pruned: sessions on session creation
+   (the store may), and both by `auth.prune()`, which an app calls itself or
+   has `AuthBuilder::prune_every` run on a timer. `prune` deletes a link,
+   used or not, only once it expired longer ago than `TOKEN_LIFETIME`, so a
+   recently expired link still answers `Gone` (the UI's "link expired")
+   rather than `NotFound`. Reads always check the expiry, and a pruned link
+   reads as no live link in `UserEntry::link_expires_at` and
+   `bootstrap_admin` just as an expired one does, so pruning only keeps the
+   store small.
 9. **Throttling and dummy-hash timing apply to every password sign-in**, so
    neither guessing passwords nor probing for user names gets cheaper.
 10. **WebSocket end-of-session: every signal.** The guard combines an expiry
