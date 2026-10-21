@@ -1,4 +1,4 @@
-use std::string::String;
+use std::string::{String, ToString};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::vec::Vec;
 
