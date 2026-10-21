@@ -37,6 +37,25 @@ fn cloudflare_default_verifies_jwt() {
     assert!(config.verify_jwt);
 }
 
+/// A field missing from the JSON takes its default, so settings without
+/// `verify_jwt` still verify the token.
+#[test]
+fn cloudflare_missing_fields_are_safe() {
+    let config: CloudflareConfig = serde_json::from_value(json!({
+        "enabled": true,
+        "team_domain": "example.cloudflareaccess.com",
+        "audience": "aud",
+    }))
+    .unwrap();
+
+    assert!(config.enabled);
+    assert!(config.verify_jwt);
+    assert!(!config.trust_email_header);
+
+    let config: CloudflareConfig = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(config, CloudflareConfig::default());
+}
+
 #[test]
 fn names_round_trip() {
     for role in [Role::Admin, Role::Regular] {
@@ -443,7 +462,7 @@ mod musliweb04 {
     /// meaning.
     #[test]
     fn ids_are_pinned() {
-        let ids: [(MessageId, u16); 12] = [
+        let ids: [(MessageId, u16); 14] = [
             (Me::ID, 32000),
             (UpdateAccount::ID, 32001),
             (ChangePassword::ID, 32002),
@@ -455,6 +474,8 @@ mod musliweb04 {
             (RevokeLink::ID, 32008),
             (SignOutUser::ID, 32009),
             (RevokeAccess::ID, 32010),
+            (Cloudflare::ID, 32011),
+            (SetCloudflare::ID, 32012),
             (AuthBroadcast::ID, 32100),
         ];
 
@@ -501,6 +522,15 @@ mod musliweb04 {
         });
         round_trip(DeleteUserRequest { id: UserId(3) });
         round_trip(RevokeAccessRequest { id: UserId(3) });
+        round_trip(CloudflareRequest);
+        round_trip(CloudflareConfig::default());
+        round_trip(Ok::<_, AuthError>(CloudflareConfig {
+            enabled: true,
+            team_domain: "example.cloudflareaccess.com".into(),
+            audience: "aud".into(),
+            trust_email_header: true,
+            verify_jwt: false,
+        }));
 
         round_trip(Ok::<_, AuthError>(user()));
         round_trip(Err::<UserInfo, _>(AuthError::Invalid(

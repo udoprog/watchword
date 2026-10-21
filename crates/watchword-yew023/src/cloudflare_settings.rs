@@ -1,11 +1,200 @@
 use std::borrow::ToOwned;
 
-use phrasebook01::args;
+use phrasebook01::{Phrases, args};
+use yew::platform::spawn_local;
 use yew::prelude::*;
 
 use super::browser;
-use super::l10n::{placed, use_phrases};
-use watchword_core::CloudflareConfig;
+use super::context::use_auth;
+use super::http::Error;
+use super::l10n::{self, error_message, placed, use_phrases};
+use watchword_core::{AuthError, CloudflareConfig};
+
+/// The properties of [`AdminCloudflare`].
+#[derive(Properties, PartialEq)]
+pub struct AdminCloudflareProps {
+    /// The app's name, used in the setup instructions, as for
+    /// [`CloudflareSettings`].
+    #[prop_or_default]
+    pub app_name: Option<AttrValue>,
+    /// Called with the settings as stored, each time a change is saved.
+    #[prop_or_default]
+    pub on_saved: Option<Callback<CloudflareConfig>>,
+    /// Classes added to the outermost element.
+    #[prop_or_default]
+    pub class: Classes,
+}
+
+/// The settings as loaded, while loading, or why they could not be.
+#[derive(Clone, PartialEq)]
+enum Loaded {
+    Loading,
+    Settings(CloudflareConfig),
+    Failed(AttrValue),
+}
+
+#[derive(Clone, PartialEq)]
+enum Message {
+    Error(AttrValue),
+    Notice(AttrValue),
+}
+
+/// The Cloudflare Access settings page for admins, which loads and saves the
+/// settings the server keeps itself, over the `/api/auth/cloudflare` routes
+/// (`GET` and `PUT`).
+///
+/// It shows [`CloudflareSettings`] once the settings are loaded and saves
+/// each change as it is made: a toggle, or a text field once it is left.
+/// While a change saves, the form is disabled; a failed save puts the
+/// settings back as they were and says why. After a save, the
+/// [`AuthContext`](super::AuthContext) fetches the config again, since
+/// whether Access can sign anyone in may have changed. A server built
+/// without Cloudflare Access is reported as such.
+///
+/// Use it inside [`AuthProvider`](super::AuthProvider), for an admin. With
+/// the `musliweb04` feature and a socket handed to
+/// [`AuthContext::set_socket`](super::AuthContext::set_socket), its requests
+/// go over the socket while it is open.
+///
+/// An app that places the fields in a form of its own, and stores the
+/// settings itself, uses [`CloudflareSettings`] instead.
+#[function_component]
+pub fn AdminCloudflare(props: &AdminCloudflareProps) -> Html {
+    let auth = use_auth();
+    let phrases = use_phrases();
+    let loaded = use_state(|| Loaded::Loading);
+    let saving = use_state(|| false);
+    let message = use_state(|| None::<Message>);
+
+    {
+        let auth = auth.clone();
+        let phrases = phrases.clone();
+        let loaded = loaded.clone();
+
+        use_effect_with((), move |()| {
+            spawn_local(async move {
+                match auth.client().cloudflare_settings().await {
+                    Ok(settings) => loaded.set(Loaded::Settings(settings)),
+                    Err(error) => {
+                        let text = failure(&phrases, &error, "watchword-failed-loading-cloudflare");
+                        loaded.set(Loaded::Failed(text));
+
+                        if error.is_unauthorized() {
+                            auth.check_session();
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    let on_change = {
+        let auth = auth.clone();
+        let phrases = phrases.clone();
+        let loaded = loaded.clone();
+        let saving = saving.clone();
+        let message = message.clone();
+        let on_saved = props.on_saved.clone();
+
+        Callback::from(move |settings: CloudflareConfig| {
+            if *saving {
+                return;
+            }
+
+            let Loaded::Settings(previous) = (*loaded).clone() else {
+                return;
+            };
+
+            // Shown at once, so a toggle does not flip back while saving.
+            loaded.set(Loaded::Settings(settings.clone()));
+            saving.set(true);
+            message.set(None);
+
+            let auth = auth.clone();
+            let phrases = phrases.clone();
+            let loaded = loaded.clone();
+            let saving = saving.clone();
+            let message = message.clone();
+            let on_saved = on_saved.clone();
+
+            spawn_local(async move {
+                match auth.client().set_cloudflare_settings(&settings).await {
+                    Ok(stored) => {
+                        loaded.set(Loaded::Settings(stored.clone()));
+                        message.set(Some(Message::Notice(l10n::text(
+                            &phrases,
+                            "watchword-saved",
+                        ))));
+                        // Whether Access can sign anyone in may have changed.
+                        auth.refresh();
+
+                        if let Some(on_saved) = &on_saved {
+                            on_saved.emit(stored);
+                        }
+                    }
+                    Err(error) => {
+                        loaded.set(Loaded::Settings(previous));
+                        message.set(Some(Message::Error(failure(
+                            &phrases,
+                            &error,
+                            "watchword-failed-saving",
+                        ))));
+
+                        if error.is_unauthorized() {
+                            auth.check_session();
+                        }
+                    }
+                }
+
+                saving.set(false);
+            });
+        })
+    };
+
+    let body = match &*loaded {
+        Loaded::Loading => html! {
+            <p class="auth-status" role="status">{phrases.text("watchword-cloudflare-loading")}</p>
+        },
+        Loaded::Failed(error) => html! {
+            <div class="auth-message" role="alert">
+                <p class="auth-error">{error.clone()}</p>
+            </div>
+        },
+        Loaded::Settings(settings) => html! {
+            <>
+                <div class="auth-message" role="alert">
+                    {match &*message {
+                        Some(Message::Error(error)) => html! { <p class="auth-error">{error.clone()}</p> },
+                        Some(Message::Notice(notice)) => html! { <p class="auth-notice">{notice.clone()}</p> },
+                        None => Html::default(),
+                    }}
+                </div>
+                <CloudflareSettings
+                    value={settings.clone()}
+                    {on_change}
+                    app_name={props.app_name.clone()}
+                    disabled={*saving}
+                />
+            </>
+        },
+    };
+
+    html! {
+        <section class={classes!("auth-admin-cloudflare", props.class.clone())}>
+            {body}
+        </section>
+    }
+}
+
+/// The message for a failed request of [`AdminCloudflare`], where
+/// `failed_id` is the `watchword-failed-` message for an unexpected failure.
+pub(super) fn failure(phrases: &Phrases, error: &Error, failed_id: &str) -> AttrValue {
+    match error {
+        // The server has no settings routes: it is built without Access.
+        Error::Auth(AuthError::NotFound) => l10n::text(phrases, "watchword-cloudflare-unavailable"),
+        error => error_message(phrases, error, failed_id),
+    }
+}
 
 /// The properties of [`CloudflareSettings`].
 #[derive(Properties, PartialEq)]
@@ -13,8 +202,9 @@ pub struct CloudflareSettingsProps {
     /// The settings shown.
     pub value: CloudflareConfig,
     /// Called with the changed settings on each change: a toggle, or a text
-    /// field once it is left. The app stores them in its own settings,
-    /// applies them with `Auth::set_cloudflare`, and passes them back as
+    /// field once it is left. The app saves them, such as with
+    /// [`http::set_cloudflare_settings`](super::http::set_cloudflare_settings)
+    /// (which [`AdminCloudflare`] does for it), and passes them back as
     /// `value`.
     pub on_change: Callback<CloudflareConfig>,
     /// The app's name, used in the setup instructions. Defaults to the

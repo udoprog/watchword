@@ -9,7 +9,7 @@ use phrasebook01::{Catalog, Lang, Phrasebook, Phrases, Source, check};
 use super::account::account_change;
 use super::admin_users::{link_url, matches_filter, page_bounds, relative_time};
 use super::browser::{register_token_from_path, return_url, safe_next, strip_query_param};
-use super::cloudflare_settings::header_unverified;
+use super::cloudflare_settings::{failure, header_unverified};
 use super::form::identity_change;
 use super::http::{CreatedUser, Error};
 use super::l10n::{self, error_message, split_around};
@@ -486,6 +486,27 @@ fn error_messages() {
     assert_eq!(
         message(Error::Status(500)),
         "Saving failed: the server answered with HTTP 500."
+    );
+}
+
+/// The Cloudflare settings page says when the server has no settings
+/// routes, and otherwise phrases failures as the other admin pages do.
+#[test]
+fn cloudflare_settings_errors() {
+    let en = en();
+    let id = "watchword-failed-loading-cloudflare";
+
+    assert_eq!(
+        failure(&en, &Error::Auth(AuthError::NotFound), id),
+        "This server does not offer Cloudflare Access sign-in."
+    );
+    assert_eq!(
+        failure(&en, &Error::Auth(AuthError::Forbidden), id),
+        "You are not allowed to do that."
+    );
+    assert_eq!(
+        failure(&en, &Error::Status(500), id),
+        "Loading the Cloudflare Access settings failed: the server answered with HTTP 500."
     );
 }
 

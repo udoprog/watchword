@@ -54,6 +54,19 @@ fn refused<T>(result: Result<T, Error>) -> AuthError {
     }
 }
 
+/// An active admin, to save settings as.
+async fn admin(store: &MemoryStore) -> Result<User, Box<dyn StdError>> {
+    let new = NewUser {
+        login: Some("root".to_owned()),
+        email: None,
+        role: Role::Admin,
+    };
+    let user = store.create_user(&new, Timestamp::now()).await?.unwrap();
+    let cred = Credential::Password(crate::core::dummy_hash().to_owned());
+    assert!(store.set_credential(user.id, &cred, None).await?);
+    Ok(store.user(user.id).await?.unwrap())
+}
+
 /// A pending user with `email`.
 async fn pending(store: &MemoryStore, email: &str) -> Result<User, Box<dyn StdError>> {
     let new = NewUser {
@@ -276,35 +289,119 @@ async fn bad_tokens_are_logged() -> TestResult {
 async fn settings_change_at_runtime() -> TestResult {
     let store = MemoryStore::new();
     active(&store, "alice@example.com").await?;
+    let root = admin(&store).await?;
     let auth = auth(&store, None);
     let headers = email("alice@example.com");
 
     assert!(!auth.cloudflare_available(&headers).await?);
 
-    auth.set_cloudflare(Some(header_only()));
+    auth.set_cloudflare(&root, header_only()).await?;
     assert!(auth.cloudflare_available(&headers).await?);
     auth.sign_in_cloudflare(&headers).await?;
 
     // Applying the same settings again is harmless.
-    auth.set_cloudflare(Some(header_only()));
+    auth.set_cloudflare(&root, header_only()).await?;
     assert!(auth.cloudflare_available(&headers).await?);
 
     // Requiring the token, which this request lacks.
-    auth.set_cloudflare(Some(config(true, true)));
+    auth.set_cloudflare(&root, config(true, true)).await?;
     assert!(!auth.cloudflare_available(&headers).await?);
 
-    auth.set_cloudflare(Some(CloudflareConfig {
-        enabled: false,
-        ..header_only()
-    }));
+    auth.set_cloudflare(
+        &root,
+        CloudflareConfig {
+            enabled: false,
+            ..header_only()
+        },
+    )
+    .await?;
     assert!(!auth.cloudflare_available(&headers).await?);
-
-    auth.set_cloudflare(Some(header_only()));
-    assert!(auth.cloudflare_available(&headers).await?);
-
-    auth.set_cloudflare(None);
     let error = refused(auth.sign_in_cloudflare(&headers).await);
     assert_eq!(error, AuthError::Unauthorized);
+
+    auth.set_cloudflare(&root, header_only()).await?;
+    assert!(auth.cloudflare_available(&headers).await?);
+    Ok(())
+}
+
+/// Without stored settings, the builder's are used; once saved, the stored
+/// ones are, by every service over the store, and the builder's no longer
+/// matter.
+#[tokio::test]
+async fn settings_are_stored() -> TestResult {
+    let store = MemoryStore::new();
+    active(&store, "alice@example.com").await?;
+    let headers = email("alice@example.com");
+
+    let none = auth(&store, None);
+    assert_eq!(none.cloudflare().await?, None);
+    assert_eq!(store.config_get("cloudflare").await?, None);
+
+    let initial = auth(&store, Some(header_only()));
+    assert_eq!(initial.cloudflare().await?, Some(header_only()));
+    assert!(initial.cloudflare_available(&headers).await?);
+    // Using the builder's settings does not store them.
+    assert_eq!(store.config_get("cloudflare").await?, None);
+
+    let disabled = CloudflareConfig {
+        enabled: false,
+        team_domain: " example.cloudflareaccess.com\n".to_owned(),
+        audience: " aud ".to_owned(),
+        ..header_only()
+    };
+    let root = admin(&store).await?;
+    let alice = store.user_by_email("alice@example.com").await?.unwrap();
+    let error = refused(initial.set_cloudflare(&alice, disabled.clone()).await);
+    assert_eq!(error, AuthError::Forbidden);
+    assert_eq!(store.config_get("cloudflare").await?, None);
+
+    let saved = initial.set_cloudflare(&root, disabled).await?;
+    assert_eq!(
+        saved,
+        CloudflareConfig {
+            enabled: false,
+            ..header_only()
+        }
+    );
+    // Disabled settings are still the settings, for the admin page.
+    assert_eq!(initial.cloudflare().await?, Some(saved.clone()));
+    assert!(!initial.cloudflare_available(&headers).await?);
+
+    // A restart with other builder settings keeps what was saved.
+    let restarted = auth(&store, Some(header_only()));
+    assert_eq!(restarted.cloudflare().await?, Some(saved.clone()));
+    assert!(!restarted.cloudflare_available(&headers).await?);
+
+    let stored: CloudflareConfig =
+        serde_json::from_str(&store.config_get("cloudflare").await?.unwrap())?;
+    assert_eq!(stored, saved);
+    Ok(())
+}
+
+/// Stored settings without a field take its default, so they verify the
+/// token, and settings that do not parse fall back to the builder's rather
+/// than breaking sign-in.
+#[tokio::test]
+async fn stored_settings_are_read_safely() -> TestResult {
+    let store = MemoryStore::new();
+    store
+        .config_set(
+            "cloudflare",
+            r#"{"enabled":true,"team_domain":"example.cloudflareaccess.com","audience":"aud","trust_email_header":true}"#,
+        )
+        .await?;
+
+    let lenient = auth(&store, None);
+    let stored = lenient.cloudflare().await?.unwrap();
+    assert!(stored.verify_jwt);
+    assert!(stored.trust_email_header);
+
+    store.config_set("cloudflare", "not json").await?;
+    let fallback = auth(&store, Some(header_only()));
+    assert_eq!(fallback.cloudflare().await?, Some(header_only()));
+
+    let nothing = auth(&store, None);
+    assert_eq!(nothing.cloudflare().await?, None);
     Ok(())
 }
 

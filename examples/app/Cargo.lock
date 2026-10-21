@@ -2812,10 +2812,7 @@ dependencies = [
 name = "watchword-example-frontend"
 version = "0.0.0"
 dependencies = [
- "gloo-net 0.7.0",
  "musli-web",
- "serde",
- "wasm-bindgen-futures",
  "watchword",
  "watchword-example-api",
  "yew",

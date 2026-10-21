@@ -3,8 +3,9 @@
 //!
 //! Simple auth works out of the box: on an empty store the server logs a
 //! registration link for the bootstrap admin. Google and Cloudflare Access
-//! are configured through the environment (and Cloudflare also at runtime,
-//! on the frontend's Settings page). See `--help`.
+//! are configured through the environment. Cloudflare's settings are also
+//! changed at runtime on the frontend's Settings page, which watchword serves
+//! (`/api/auth/cloudflare`) and keeps in the store. See `--help`.
 //!
 //! The frontend keeps a musli-web socket open for the session at
 //! `/api/example/ws`. It carries the app's own API (the `api` crate) and
@@ -16,19 +17,19 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use auth::axum08::{Admin, SignedIn};
+use auth::axum08::SignedIn;
 use auth::musliweb04::{Connection, RequestError};
 use auth::{Auth, BootstrapAdmin, CloudflareConfig, GoogleConfig, MemoryStore};
+use axum::Router;
 use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRef, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::get;
-use axum::{Json, Router};
 use musli_web::ws;
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
@@ -53,7 +54,8 @@ Environment:
       Enable Google sign-in with this OAuth client. Its redirect URL is
       PUBLIC_URL/api/auth/google/redirect; register that with Google.
   CLOUDFLARE_TEAM_DOMAIN, CLOUDFLARE_AUDIENCE
-      Enable Cloudflare Access sign-in, verifying the Access JWT.
+      Enable Cloudflare Access sign-in, verifying the Access JWT, until an
+      admin saves other settings on the Settings page.
   CLOUDFLARE_TRUST_EMAIL_HEADER=1
       Also accept Access's email header (and, without the JWT settings, only
       it: for local testing, never on a server reachable around Access).
@@ -61,13 +63,11 @@ Environment:
       Log filter [default: info]
 ";
 
-/// The app's state: the auth service, the Cloudflare settings the app
-/// stores (here in memory) and applies with `Auth::set_cloudflare`, and what
-/// the app's own `Status` endpoint reports.
+/// The app's state: the auth service, which also keeps the Cloudflare
+/// Access settings, and what the app's own `Status` endpoint reports.
 #[derive(Clone)]
 struct AppState {
     auth: Auth,
-    cloudflare: Arc<Mutex<CloudflareConfig>>,
     started: Instant,
     sockets: Arc<AtomicU32>,
 }
@@ -136,21 +136,26 @@ fn google_config(public_url: &Url) -> Result<Option<GoogleConfig>, String> {
         .map_err(|e| format!("Google sign-in: {e}"))
 }
 
-/// The initial Cloudflare Access settings, from the environment.
-fn cloudflare_config() -> CloudflareConfig {
+/// The Cloudflare Access settings to start with, from the environment, or
+/// `None` when it sets none. watchword uses them until an admin saves
+/// settings, which it keeps in the store.
+fn cloudflare_config() -> Option<CloudflareConfig> {
     let var = |name| std::env::var(name).unwrap_or_default();
     let team_domain = var("CLOUDFLARE_TEAM_DOMAIN");
     let audience = var("CLOUDFLARE_AUDIENCE");
-    let verify_jwt = !team_domain.is_empty() && !audience.is_empty();
     let trust_email_header = matches!(var("CLOUDFLARE_TRUST_EMAIL_HEADER").as_str(), "1" | "true");
 
-    CloudflareConfig {
-        enabled: verify_jwt || trust_email_header,
+    if team_domain.is_empty() && audience.is_empty() && !trust_email_header {
+        return None;
+    }
+
+    Some(CloudflareConfig {
+        enabled: true,
+        verify_jwt: !team_domain.is_empty() && !audience.is_empty(),
         team_domain,
         audience,
         trust_email_header,
-        verify_jwt,
-    }
+    })
 }
 
 #[tokio::main]
@@ -181,36 +186,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(2);
         }
     };
-    let cloudflare = cloudflare_config();
-
-    tracing::info!(
-        "Methods: password; Google {}; Cloudflare Access {}",
-        if google.is_some() {
-            "on"
-        } else {
-            "off (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)"
-        },
-        if cloudflare.enabled {
-            "on"
-        } else {
-            "off (enable it on the Settings page)"
-        },
-    );
+    let google_on = google.is_some();
 
     // The builder loads the session key from the store, creating it on
     // first use, so a persistent store keeps sessions across restarts; in
-    // memory there is nothing to keep.
+    // memory there is nothing to keep. The Cloudflare settings from the
+    // environment apply until an admin saves some on the Settings page,
+    // which watchword keeps in the store.
     let auth = Auth::builder_from_store(MemoryStore::new())
         .await?
         .cookie(auth::CookieConfig::new("example_session"))
         .logins(true)
         .impersonation(args.impersonation)
         .google(google)
-        .cloudflare(Some(cloudflare.clone()))
+        .cloudflare(cloudflare_config())
         // Expired sessions, and links that expired over a week ago, are
         // deleted now and every hour.
         .prune_every(Some(Duration::from_secs(60 * 60)))
         .build();
+
+    // Reading the Cloudflare settings now also logs them at startup, rather
+    // than on the first request that needs them.
+    let cloudflare_on = auth.cloudflare().await?.is_some_and(|c| c.enabled);
+
+    tracing::info!(
+        "Methods: password; Google {}; Cloudflare Access {}",
+        if google_on {
+            "on"
+        } else {
+            "off (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)"
+        },
+        if cloudflare_on {
+            "on"
+        } else {
+            "off (enable it on the Settings page)"
+        },
+    );
 
     let bootstrap = BootstrapAdmin::new(&args.bootstrap_admin).public_url(Some(&public_url));
 
@@ -228,7 +239,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = AppState {
         auth,
-        cloudflare: Arc::new(Mutex::new(cloudflare)),
         started: Instant::now(),
         sockets: Arc::new(AtomicU32::new(0)),
     };
@@ -246,10 +256,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let frontend = ServeDir::new(&args.dist).fallback(ServeFile::new(index));
 
     let app = Router::new()
-        .route(
-            "/api/example/cloudflare",
-            get(get_cloudflare).put(put_cloudflare),
-        )
         .route("/api/example/ws", get(ws))
         .merge(auth::axum08::routes())
         .route(
@@ -273,22 +279,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     Ok(())
-}
-
-/// `GET /api/example/cloudflare`: the stored Cloudflare Access settings.
-async fn get_cloudflare(State(state): State<AppState>, _: Admin) -> Json<CloudflareConfig> {
-    Json(state.cloudflare.lock().unwrap().clone())
-}
-
-/// `PUT /api/example/cloudflare`: stores the settings and applies them.
-async fn put_cloudflare(
-    State(state): State<AppState>,
-    _: Admin,
-    Json(config): Json<CloudflareConfig>,
-) -> Json<CloudflareConfig> {
-    *state.cloudflare.lock().unwrap() = config.clone();
-    state.auth.set_cloudflare(Some(config.clone()));
-    Json(config)
 }
 
 /// `GET /api/example/ws`: the app's musli-web socket, which lives as long

@@ -242,14 +242,15 @@ let auth = Auth::builder_from_store(store).await? // key from the store's `sessi
     .cookie(CookieConfig::new("app_session"))   // default name `session`, `Secure::Auto`
     .logins(true)                               // accept login names, not only emails
     .trusted_proxies(&trusted_proxies)
-    .cloudflare(cloudflare_config)              // feature `cloudflare`; Option, changeable later
+    .cloudflare(cloudflare_config)              // feature `cloudflare`; Option, used while the store has none
     .google(google_config)                      // feature `google`; Option
     .impersonation(true)
     .prune_every(Some(Duration::from_secs(3600)))  // run `prune` now and hourly; default None
     .audit(|event: &AuditEvent| { /* send to the app's audit log */ })  // repeatable
     .build();
 
-auth.set_cloudflare(Option<CloudflareConfig>);  // when an admin changes the settings
+auth.cloudflare().await?;                      // -> Option<CloudflareConfig>, as stored or else as built
+auth.set_cloudflare(&admin, config).await?;    // -> CloudflareConfig as stored; admin; stores and applies
 auth.bootstrap_admin(&BootstrapAdmin::new(name).public_url(public_url)).await?;  // -> Bootstrap
 auth.recovery_link(name).await?;                // -> Link, for the app's own CLI; no actor
 auth.import_user(&new_user).await?;             // -> User, pending, no link; for imports; no actor
@@ -446,7 +447,7 @@ pub trait Store: Send + Sync + 'static {
     fn redeem_token(&self, token: &str, cred: &Credential, session: &Session, now: Timestamp) -> ...bool;
 
     // Settings
-    fn config_get(&self, key: &str) -> ...Option<String>;    // session_key
+    fn config_get(&self, key: &str) -> ...Option<String>;    // session_key; cloudflare (JSON)
     fn config_set(&self, key: &str, value: &str) -> ...;
 }
 
@@ -523,8 +524,17 @@ ignores the app's own tables and columns.
   active users get a session.
 - **Cloudflare Access** (`cloudflare`). `cloudflare::Access` checks the Access
   JWT against the team's keys (with key caching and a rate-limited refetch), or
-  trusts the email header when configured to. `Auth` runs it with runtime
-  reconfiguration (`set_cloudflare`), logs changed settings with a warning when
+  trusts the email header when configured to. `Auth` keeps the settings
+  itself, as JSON under the store's `cloudflare` setting: they are read once,
+  when first needed (`Auth::cloudflare` reads them at startup if the app wants
+  them logged then), and the builder's `cloudflare` settings apply while the
+  store has none. A stored value missing a field takes `CloudflareConfig`'s
+  default for it (`#[serde(default)]`), so it verifies the JWT; one that does
+  not parse is logged as an error and the builder's apply, so a damaged value
+  cannot break the sign-in page. An admin changes them at runtime
+  (`set_cloudflare`, or the routes and socket endpoints below), which stores
+  them with the team domain and audience trimmed and applies them at once. It
+  logs changed settings with a warning when
   they are unsafe, and logs credentials that sign no one in at most once a
   minute. `presents_access` tells whether a request carries Access credentials
   at all. The verified email finds the user, and users are never created.
@@ -646,6 +656,8 @@ the app is served with `into_make_service_with_connect_info::<SocketAddr>()`.
 | `GET /api/auth/me` | signed in | `UserInfo`, with `impersonated_by` when an admin is acting as the user |
 | `POST /api/auth/login` | anyone | `LoginRequest` → `UserInfo` + cookie; throttled |
 | `POST /api/auth/cloudflare` | anyone, feature `cloudflare` | → `UserInfo` + cookie; activates a pending user |
+| `GET /api/auth/cloudflare` | admin, feature `cloudflare` | `CloudflareConfig` as stored, or its default when there is none |
+| `PUT /api/auth/cloudflare` | admin, feature `cloudflare` | `CloudflareConfig` → `CloudflareConfig` as stored; applies it |
 | `GET /api/auth/google`, `/google/register/{token}`, `/google/link` | anyone / anyone / signed in | redirect to Google; 404 unless Google is configured |
 | `GET /api/auth/google/redirect` (`watchword::google::REDIRECT_PATH`; `redirect_url` must use this path, a different one is logged as a warning) | Google | callback; cookie + redirect to `/`, or `/?error=user-not-found` / `/?error=auth-failed` |
 | `POST /api/auth/logout` | anyone | 204, deletes the session, clears the cookie |
@@ -741,11 +753,20 @@ cookies, so the library does not depend on the app's gloo version.
   Its other props are `me`, `refresh: u64` (bump it to refetch when the app
   forwards an `AuthEvent`), and `extra: Callback<UserInfo, Html>` for the app's
   own columns, such as group membership.
-- `<CloudflareSettings value on_change app_name disabled>` is a settings form
-  for Cloudflare Access: setup instructions, the fields, and a warning when the
-  header is trusted without verifying the token. The app stores the value in its
-  own settings and calls `auth.set_cloudflare`. `app_name` overrides the
-  message `watchword-cloudflare-the-app` ("the app") in the instructions.
+- `<AdminCloudflare app_name on_saved>` is the Cloudflare Access settings page
+  for admins. It loads the settings watchword keeps (`GET
+  /api/auth/cloudflare`, or `Cloudflare` over the socket), shows
+  `<CloudflareSettings>`, and saves each change as it is made (`PUT`, or
+  `SetCloudflare`), disabling the form meanwhile and putting the old settings
+  back if the save fails. After a save it refreshes the context, since
+  `AuthConfig::cloudflare` may have changed, and calls `on_saved` with the
+  settings as stored. A 404 says the server is built without Cloudflare
+  Access.
+- `<CloudflareSettings value on_change app_name disabled>` is its form alone,
+  for an app that places the fields in a form of its own: setup instructions,
+  the fields, and a warning when the header is trusted without verifying the
+  token. `app_name` overrides the message `watchword-cloudflare-the-app` ("the
+  app") in the instructions.
 
 ### 2.7 musli-web integration (`musliweb04`)
 
@@ -806,6 +827,8 @@ musli_web::api::define! {
     #[musli(id = 32008)] pub type RevokeLink;    // RevokeLinkRequest { id } -> Result<(), AuthError>; admin
     #[musli(id = 32009)] pub type SignOutUser;   // SignOutUserRequest { id } -> Result<(), AuthError>; admin, sign out everywhere
     #[musli(id = 32010)] pub type RevokeAccess;  // RevokeAccessRequest { id } -> Result<UserInfo, AuthError>; admin
+    #[musli(id = 32011)] pub type Cloudflare;    // CloudflareRequest -> Result<CloudflareConfig, AuthError>; admin
+    #[musli(id = 32012)] pub type SetCloudflare; // CloudflareConfig -> Result<CloudflareConfig, AuthError>; admin
     #[musli(id = 32100)] pub type AuthBroadcast; // event AuthUpdate
 }
 
@@ -818,10 +841,16 @@ pub enum AuthUpdate {
 }
 ```
 
+`Cloudflare` and `SetCloudflare` were added after the first eleven, taking the
+next free ids; the ones before kept theirs. A server without the `cloudflare`
+feature answers an admin's request for them with `AuthError::NotFound`, as it
+has no route for them.
+
 The request bodies are small structs in the module (`MeRequest`,
-`UsersRequest`, `UserUpdate { id, change }`, and a `{ id }` struct per
+`UsersRequest`, `CloudflareRequest`, `UserUpdate { id, change }`, and a `{ id }` struct per
 endpoint that only names its target user, such as `DeleteUserRequest`) or the
-existing wire types (`UserChange`, `PasswordChange`, `NewUser`). One shared
+existing wire types (`UserChange`, `PasswordChange`, `NewUser`,
+`CloudflareConfig`). One shared
 `UserTarget { id }` cannot serve those five endpoints: `define!` implements
 `api::Request` for each request type with its endpoint as `type Endpoint`, so
 a type can be the request of only one endpoint. Every response is
@@ -1326,3 +1355,17 @@ once the release is on crates.io.
     admin changes, is otherwise recorded as the wrong person. Sign-ins and
     sign-outs are left out for now; adding them is a new variant, not a
     breaking change.
+26. **watchword keeps the Cloudflare Access settings.** Every app that
+    offered Access stored the settings itself, served them to an admin page
+    of its own and re-seeded `Auth` on each change, because `Auth` had a
+    setter and nothing else. `Auth` now stores them under one key of the
+    store's settings, which every store already has for `session_key`, and
+    serves them over admin routes, socket endpoints and `<AdminCloudflare>`.
+    The store is read lazily, on first use, rather than in `build`, so
+    `build` stays synchronous and `Auth::builder` (which has no async step)
+    stores them too. The builder's settings are the fallback, not a seed
+    written to the store, so an app's environment-provided settings apply
+    until an admin saves, and a restart with other environment settings does
+    not overwrite what an admin saved. Saving takes the admin as `actor`, per
+    decision 18; reading does not, so an app can read and log them at
+    startup.

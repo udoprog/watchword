@@ -1183,18 +1183,130 @@ mod cloudflare {
         let refused = access(&app, Method::POST, "/api/auth/cloudflare", carol).await;
         assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
 
-        auth.set_cloudflare(Some(header_only()));
+        let put = |config: CloudflareConfig| {
+            let app = app.clone();
+            let admin = admin.clone();
+
+            async move {
+                let body = serde_json::to_value(config).unwrap();
+                let answer = call(
+                    &app,
+                    Method::PUT,
+                    "/api/auth/cloudflare",
+                    Some(&admin),
+                    Some(body),
+                )
+                .await;
+                assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+                serde_json::from_value::<CloudflareConfig>(answer.body).unwrap()
+            }
+        };
+
+        assert_eq!(put(header_only()).await, header_only());
         assert!(available(&app, carol).await);
         let signed_in = access(&app, Method::POST, "/api/auth/cloudflare", carol).await;
         assert_eq!(signed_in.status, StatusCode::OK, "{}", signed_in.body);
 
-        auth.set_cloudflare(Some(CloudflareConfig {
+        put(CloudflareConfig {
             enabled: false,
             ..header_only()
-        }));
+        })
+        .await;
         assert!(!available(&app, carol).await);
         let refused = access(&app, Method::POST, "/api/auth/cloudflare", carol).await;
         assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// The settings routes are for admins: a regular user and a signed-out
+    /// request are refused, and an admin reads the default before anything
+    /// is stored, then what was saved, trimmed. A body without `verify_jwt`
+    /// verifies the token.
+    #[tokio::test]
+    async fn settings_routes() {
+        let auth = auth();
+        let app = router(&auth);
+        let admin = admin(&auth, &app).await;
+        let (_, regular) = regular(&app, &admin, "dave").await;
+        let body = json!({
+            "enabled": true,
+            "team_domain": " example.cloudflareaccess.com ",
+            "audience": "aud",
+        });
+
+        for (cookie, status) in [
+            (None, StatusCode::UNAUTHORIZED),
+            (Some(regular.as_str()), StatusCode::FORBIDDEN),
+        ] {
+            let get = call(&app, Method::GET, "/api/auth/cloudflare", cookie, None).await;
+            assert_eq!(get.status, status, "{}", get.body);
+            let put = call(
+                &app,
+                Method::PUT,
+                "/api/auth/cloudflare",
+                cookie,
+                Some(body.clone()),
+            )
+            .await;
+            assert_eq!(put.status, status, "{}", put.body);
+        }
+
+        assert_eq!(auth.cloudflare().await.unwrap(), None);
+
+        let get = call(
+            &app,
+            Method::GET,
+            "/api/auth/cloudflare",
+            Some(&admin),
+            None,
+        )
+        .await;
+        assert_eq!(get.status, StatusCode::OK, "{}", get.body);
+        let stored: CloudflareConfig = serde_json::from_value(get.body).unwrap();
+        assert_eq!(stored, CloudflareConfig::default());
+
+        let put = call(
+            &app,
+            Method::PUT,
+            "/api/auth/cloudflare",
+            Some(&admin),
+            Some(body),
+        )
+        .await;
+        assert_eq!(put.status, StatusCode::OK, "{}", put.body);
+        let saved: CloudflareConfig = serde_json::from_value(put.body).unwrap();
+        let expected = CloudflareConfig {
+            enabled: true,
+            team_domain: "example.cloudflareaccess.com".to_owned(),
+            audience: "aud".to_owned(),
+            trust_email_header: false,
+            verify_jwt: true,
+        };
+        assert_eq!(saved, expected);
+        assert_eq!(auth.cloudflare().await.unwrap(), Some(expected.clone()));
+
+        let get = call(
+            &app,
+            Method::GET,
+            "/api/auth/cloudflare",
+            Some(&admin),
+            None,
+        )
+        .await;
+        assert_eq!(get.status, StatusCode::OK, "{}", get.body);
+        assert_eq!(
+            serde_json::from_value::<CloudflareConfig>(get.body).unwrap(),
+            expected
+        );
+
+        let malformed = call(
+            &app,
+            Method::PUT,
+            "/api/auth/cloudflare",
+            Some(&admin),
+            Some(json!({ "enabled": "yes" })),
+        )
+        .await;
+        assert_eq!(malformed.status, StatusCode::BAD_REQUEST);
     }
 }
 mod gate;

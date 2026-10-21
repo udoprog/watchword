@@ -1,6 +1,7 @@
 //! The Cloudflare Access settings an [`Auth`](crate::Auth) runs with, which
-//! the app may change at runtime, and the warnings it logs at most once a
-//! minute about credentials that did not sign anyone in.
+//! it keeps in the store and an admin may change at runtime, and the warnings
+//! it logs at most once a minute about credentials that did not sign anyone
+//! in.
 
 use std::borrow::ToOwned;
 use std::collections::HashMap;
@@ -13,9 +14,14 @@ use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use http::HeaderMap;
+use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 
 use super::{Access, Config, EMAIL_HEADER, HttpKeyFetcher, presents_access};
+use crate::store::{DynStore, StoreError};
 use crate::types::CloudflareConfig;
+
+/// The store's setting that holds the Cloudflare Access settings, as JSON.
+pub(crate) const SETTINGS_KEY: &str = "cloudflare";
 
 /// How often the same warning may be logged, so a client retrying every few
 /// seconds does not flood the log.
@@ -23,6 +29,14 @@ const WARN_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Cloudflare Access as the [`Auth`](crate::Auth) service runs it.
 pub(crate) struct Provider {
+    /// The settings to run with while the store has none: those given to
+    /// the builder.
+    initial: Option<CloudflareConfig>,
+    /// Set once the settings were read from the store.
+    loaded: OnceCell<()>,
+    /// Held while settings are stored and applied, so the store and the
+    /// running settings agree when two admins save at once.
+    saving: AsyncMutex<()>,
     /// Shared by every [`Access`] made as the settings change, and made only
     /// once Access is first enabled.
     http: OnceLock<reqwest::Client>,
@@ -33,43 +47,105 @@ pub(crate) struct Provider {
 
 #[derive(Default)]
 struct State {
+    /// The settings as stored or given, enabled or not.
+    settings: Option<CloudflareConfig>,
     /// The settings when enabled, `None` when disabled.
     config: Option<CloudflareConfig>,
     access: Option<Arc<Access>>,
 }
 
 impl Provider {
-    /// A provider with the initial settings, which are logged when given.
-    /// `None` and disabled settings both turn it off.
-    pub(crate) fn new(config: Option<CloudflareConfig>) -> Self {
-        let provider = Self {
+    /// A provider that runs with `initial` until the store has settings of
+    /// its own. Nothing is read or logged until [`load`](Self::load).
+    pub(crate) fn new(initial: Option<CloudflareConfig>) -> Self {
+        Self {
+            initial,
+            loaded: OnceCell::new(),
+            saving: AsyncMutex::new(()),
             http: OnceLock::new(),
             state: RwLock::default(),
             warned: Mutex::default(),
-        };
-
-        if let Some(config) = config {
-            let mut state = provider
-                .state
-                .write()
-                .unwrap_or_else(PoisonError::into_inner);
-            provider.apply(&mut state, Some(config).filter(|c| c.enabled));
         }
-
-        provider
     }
 
-    /// Applies new settings, logging them if they changed.
-    pub(crate) fn set(&self, config: Option<CloudflareConfig>) {
-        let config = config.filter(|c| c.enabled);
+    /// Reads the settings from the store the first time it is called, and
+    /// logs them as they take effect. Stored settings win over the initial
+    /// ones; settings that do not parse are logged as an error and the
+    /// initial ones are used, so a damaged value does not break sign-in.
+    /// A store failure is returned, and the next call tries again.
+    pub(crate) async fn load(&self, store: &dyn DynStore) -> Result<(), StoreError> {
+        self.loaded
+            .get_or_try_init(|| async {
+                let settings = match store.setting(SETTINGS_KEY).await? {
+                    Some(stored) => match serde_json::from_str::<CloudflareConfig>(&stored) {
+                        Ok(settings) => Some(settings),
+                        Err(error) => {
+                            tracing::error!(
+                                "The stored Cloudflare Access settings are malformed, so the initial ones are used until an admin saves them again: {error}"
+                            );
+                            self.initial.clone()
+                        }
+                    },
+                    None => self.initial.clone(),
+                };
+
+                let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+
+                if let Some(settings) = settings {
+                    self.apply(&mut state, settings);
+                }
+
+                Ok::<_, StoreError>(())
+            })
+            .await?;
+
+        Ok(())
+    }
+
+    /// The settings as stored, or as given to the builder while the store
+    /// has none. Call [`load`](Self::load) first.
+    pub(crate) fn settings(&self) -> Option<CloudflareConfig> {
+        self.state
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .settings
+            .clone()
+    }
+
+    /// Stores `settings`, with the team domain and audience trimmed, and
+    /// applies them, logging them if they changed. Returns them as stored.
+    pub(crate) async fn save(
+        &self,
+        store: &dyn DynStore,
+        mut settings: CloudflareConfig,
+    ) -> Result<CloudflareConfig, StoreError> {
+        settings.team_domain = settings.team_domain.trim().to_owned();
+        settings.audience = settings.audience.trim().to_owned();
+
+        let json = serde_json::to_string(&settings)
+            .map_err(|error| StoreError::new(format!("encoding the settings failed: {error}")))?;
+
+        let _saving = self.saving.lock().await;
+        // Loaded first, so a later first load cannot replace what is saved.
+        self.load(store).await?;
+        store.set_setting(SETTINGS_KEY, &json).await?;
+
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
-
-        if state.config != config {
-            self.apply(&mut state, config);
-        }
+        self.apply(&mut state, settings.clone());
+        Ok(settings)
     }
 
-    fn apply(&self, state: &mut State, config: Option<CloudflareConfig>) {
+    /// Runs with `settings`, logging and rebuilding the verifier only when
+    /// what is enabled changed, or on the first settings.
+    fn apply(&self, state: &mut State, settings: CloudflareConfig) {
+        let first = state.settings.is_none();
+        let config = Some(settings.clone()).filter(|c| c.enabled);
+        state.settings = Some(settings);
+
+        if !first && state.config == config {
+            return;
+        }
+
         log_settings(config.as_ref());
 
         state.access = config.as_ref().map(|config| {

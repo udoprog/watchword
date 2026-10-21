@@ -11,11 +11,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use auth::CloudflareConfig;
 use auth::yew023::{
-    AccountPanel, AdminUsers, AuthProvider, CloudflareSettings, UserMenu, UsersQuery, use_auth,
+    AccountPanel, AdminCloudflare, AdminUsers, AuthProvider, UserMenu, UsersQuery, use_auth,
 };
-use gloo_net::http::Request;
 use musli_web::web03::prelude::ws;
 use yew::prelude::*;
 
@@ -207,87 +205,15 @@ fn Home(props: &HomeProps) -> Html {
     }
 }
 
-/// The Cloudflare Access settings, stored by the server in its own state
-/// (`/api/example/cloudflare`), as an app keeps them in its settings.
+/// The Cloudflare Access settings, which watchword loads, stores and applies
+/// itself over `/api/auth/cloudflare`, or over the socket while it is open.
 #[function_component]
 fn Settings() -> Html {
-    let auth = use_auth();
-    let value = use_state(|| None::<CloudflareConfig>);
-    let saving = use_state(|| false);
-    let error = use_state(|| None::<String>);
-
-    {
-        let value = value.clone();
-        let error = error.clone();
-        use_effect_with((), move |()| {
-            wasm_bindgen_futures::spawn_local(async move {
-                match fetch_json(Request::get("/api/example/cloudflare").build()).await {
-                    Ok(config) => value.set(Some(config)),
-                    Err(e) => error.set(Some(e)),
-                }
-            });
-        });
-    }
-
-    let on_change = {
-        let value = value.clone();
-        let saving = saving.clone();
-        let error = error.clone();
-        Callback::from(move |config: CloudflareConfig| {
-            let value = value.clone();
-            let saving = saving.clone();
-            let error = error.clone();
-            let auth = auth.clone();
-            saving.set(true);
-
-            wasm_bindgen_futures::spawn_local(async move {
-                let request = Request::put("/api/example/cloudflare").json(&config);
-
-                match fetch_json(request).await {
-                    Ok(config) => {
-                        value.set(Some(config));
-                        error.set(None);
-                        // The config's `cloudflare` flag may have changed.
-                        auth.refresh();
-                    }
-                    Err(e) => error.set(Some(e)),
-                }
-
-                saving.set(false);
-            });
-        })
-    };
-
     html! {
         <section class="panel wide">
-            if let Some(e) = &*error {
-                <p class="auth-error" role="alert">{e.clone()}</p>
-            }
-            if let Some(config) = &*value {
-                <CloudflareSettings value={config.clone()} {on_change} app_name={TITLE} disabled={*saving} />
-            } else if error.is_none() {
-                <p class="auth-status">{"Loading..."}</p>
-            }
+            <AdminCloudflare app_name={TITLE} />
         </section>
     }
-}
-
-/// Sends `request` and decodes its JSON answer, with errors as text.
-async fn fetch_json<T>(request: Result<Request, gloo_net::Error>) -> Result<T, String>
-where
-    T: serde::de::DeserializeOwned,
-{
-    let response = request
-        .map_err(|e| e.to_string())?
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !response.ok() {
-        return Err(format!("The server answered {}.", response.status()));
-    }
-
-    response.json().await.map_err(|e| e.to_string())
 }
 
 #[derive(Properties, PartialEq)]

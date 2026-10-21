@@ -37,6 +37,7 @@ watchword-error-unreachable-reload = Could not reach the server. Reload to try a
 # What failed, with $error the cause from the watchword-cause- messages.
 watchword-failed-saving = Saving failed: { $error }.
 watchword-failed-loading-users = Loading the users failed: { $error }.
+watchword-failed-loading-cloudflare = Loading the Cloudflare Access settings failed: { $error }.
 watchword-failed-adding-user = Adding the user failed: { $error }.
 watchword-failed-issuing-link = Issuing a link failed: { $error }.
 watchword-failed-revoking-link = Revoking the link failed: { $error }.
@@ -227,6 +228,8 @@ watchword-time-days = { $count ->
 watchword-cloudflare-heading = Cloudflare Access
 # The default name of the app in these messages' $app.
 watchword-cloudflare-the-app = the app
+watchword-cloudflare-loading = Loading the Cloudflare Access settings…
+watchword-cloudflare-unavailable = This server does not offer Cloudflare Access sign-in.
 watchword-cloudflare-intro = Signs people in with their Cloudflare Zero Trust login when { $app } sits behind Cloudflare Access. To set it up:
 watchword-cloudflare-step-protect = In the Zero Trust dashboard, protect { $app } with a self-hosted application under Access → Applications.
 # $host is shown as code.

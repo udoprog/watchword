@@ -11,11 +11,12 @@ use std::vec::Vec;
 
 #[cfg(feature = "musliweb04")]
 use watchword_core::musliweb04::{
-    DeleteUserRequest, IssueLinkRequest, MeRequest, RevokeAccessRequest, RevokeLinkRequest,
-    SignOutUserRequest, UserUpdate, UsersRequest,
+    CloudflareRequest, DeleteUserRequest, IssueLinkRequest, MeRequest, RevokeAccessRequest,
+    RevokeLinkRequest, SignOutUserRequest, UserUpdate, UsersRequest,
 };
 use watchword_core::{
-    CreatedUser, Link, NewUser, PasswordChange, UserChange, UserEntry, UserId, UserInfo,
+    CloudflareConfig, CreatedUser, Link, NewUser, PasswordChange, UserChange, UserEntry, UserId,
+    UserInfo,
 };
 
 use super::http::{self, Error};
@@ -127,6 +128,21 @@ impl Client {
     pub(super) async fn sign_out_user(&self, id: UserId) -> Result<(), Error> {
         over_socket!(self, SignOutUserRequest { id });
         http::sign_out_user(id).await
+    }
+
+    /// Like [`http::cloudflare_settings`].
+    pub(super) async fn cloudflare_settings(&self) -> Result<CloudflareConfig, Error> {
+        over_socket!(self, CloudflareRequest);
+        http::cloudflare_settings().await
+    }
+
+    /// Like [`http::set_cloudflare_settings`].
+    pub(super) async fn set_cloudflare_settings(
+        &self,
+        config: &CloudflareConfig,
+    ) -> Result<CloudflareConfig, Error> {
+        over_socket!(self, config.clone());
+        http::set_cloudflare_settings(config).await
     }
 
     /// Like [`http::revoke_access`].

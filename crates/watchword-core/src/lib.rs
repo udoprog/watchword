@@ -23,7 +23,7 @@
 //! | `alloc` | the wire types that hold strings (`UserInfo`, `LoginRequest`, `CreatedUser`, ...), [`AuthError`] and its `Invalid` reasons, `validate_password` and `normalize_email` |
 //! | `std` *(default)* | `alloc`, and the standard library for the dependencies that have it |
 //! | `musli01` | musli 0.1 `Encode`/`Decode` on the types, so an app can embed them in its own WebSocket messages |
-//! | `musliweb04` | `alloc` + `musli01` + [`musliweb04`]: the account and user-management endpoints and `AuthBroadcast` as musli-web 0.4 API types, with their ids pinned in 32000–32255 |
+//! | `musliweb04` | `alloc` + `musli01` + [`musliweb04`]: the account, user-management and Cloudflare Access settings endpoints and `AuthBroadcast` as musli-web 0.4 API types, with their ids pinned in 32000–32255 |
 //! | `axum08` | `std` + axum 0.8 `IntoResponse` for [`AuthError`], answering with its JSON body and status; watchword's `axum08` feature turns it on (not for wasm) |
 //! | `sqll014` | `std` + sqll 0.14 `BindValue`, `Bind` and `FromColumn` for `UserId` (an integer with the same bits, as watchword's `SqllStore` stores it) and for `Role`, `Access` and `Method` (their names as text), so an app's own statements bind and read them directly; watchword's `sqll014` feature turns it on. It takes sqll with `threadsafe` only; the app names `bundled` or links its own SQLite (not for wasm) |
 //! | `phrasebook01` | `std` + [`phrasebook01`]: `L10N`, watchword's messages (the text of its Yew components) as a [phrasebook] 0.1 catalog, for a tool such as an app's localization checker that needs them without building a frontend; watchword-yew023 re-exports it, and watchword's `phrasebook01` and `yew023` features turn it on |
@@ -507,10 +507,15 @@ pub struct PasswordChange {
 /// [`enabled`], [`team_domain`] and [`audience`] on top of it checks every
 /// request's token.
 ///
+/// A field missing from its JSON takes its value from the [`Default`], so
+/// settings stored or sent without [`verify_jwt`] still verify the token.
+///
 /// [`enabled`]: Self::enabled
+/// [`verify_jwt`]: Self::verify_jwt
 /// [`team_domain`]: Self::team_domain
 /// [`audience`]: Self::audience
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]
 #[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
 pub struct CloudflareConfig {

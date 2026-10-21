@@ -36,15 +36,15 @@
 //! | `alloc` | [`types`] | the wire types (`UserInfo`, `LoginRequest`, `CreatedUser`, ...), `AuthError` and its `Invalid` reasons, `validate_password`, `normalize_email` |
 //! | `std` *(default)* | | `alloc`, and the standard library for the dependencies that have it |
 //! | `musli01` | | musli 0.1 `Encode`/`Decode` on the types |
-//! | `musliweb04` | [`musliweb04`] | for musli-web 0.4: the account and user-management endpoints and the `AuthBroadcast` of live auth changes, as API types an app carries on its own musli-web WebSocket, with their ids pinned in 32000–32255; with `axum08`, `Connection`, which answers those endpoints on one socket and turns `AuthEvent`s into the updates it may see; with `yew023`, `AuthContext::set_socket`, through which the components follow those broadcasts (implies `alloc` and `musli01`) |
+//! | `musliweb04` | [`musliweb04`] | for musli-web 0.4: the account, user-management and Cloudflare Access settings endpoints and the `AuthBroadcast` of live auth changes, as API types an app carries on its own musli-web WebSocket, with their ids pinned in 32000–32255; with `axum08`, `Connection`, which answers those endpoints on one socket and turns `AuthEvent`s into the updates it may see; with `yew023`, `AuthContext::set_socket`, through which the components follow those broadcasts (implies `alloc` and `musli01`) |
 //! | `server` | [`core`], [`store`] | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s and actor-attributed `AuditEvent`s, bootstrap admin) and `Auth::guard` for WebSocket sessions; the `Store` trait and `MemoryStore` (implies `std`) |
-//! | `cloudflare` | [`cloudflare`] | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
+//! | `cloudflare` | [`cloudflare`] | Cloudflare Access JWT verification with a pluggable `KeyFetcher`; `Auth::cloudflare` and `Auth::set_cloudflare`, which keep the settings in the store; with `axum08`, admin routes for them (implies `server`) |
 //! | `google` | [`google`] | Google OAuth: `GoogleConfig::new` for `AuthBuilder::google`; with `axum08`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
 //! | `axum08` | [`axum08`] | for axum 0.8: the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors and `routes()` for the `/api/auth` JSON routes, plus the Cloudflare and Google routes when those features are on (implies `server`) |
 //! | `sqll014` | [`sqll014`] | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA` for a new database, its ordered `MIGRATIONS` (the first tables and every upgrade since) for an app's migration runner, `check_schema` to fail at startup on missing tables or columns, and watchword-core's `sqll014` (sqll's bind and column traits on `UserId`, `Role`, `Access` and `Method`) (implies `server`). It takes sqll with `derive`, `pool`, `typed` and `threadsafe` only; the app names `bundled` or links its own SQLite |
 //! | `test-util` | [`google::fake`] | for an app's tests: `AuthBuilder::google_endpoints`, and with `axum08` `FakeGoogle`, a local fake Google to sign in through offline (implies `google`) |
 //! | `phrasebook01` | [`phrasebook01`] | `L10N`, watchword's messages (the text of the `yew023` components) as a [phrasebook] 0.1 catalog, for a native tool such as an app's localization checker that needs them without building yew, from the [watchword-core] crate (implies `std`) |
-//! | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings`, the `http` client and `L10N`, the components' messages as a [phrasebook] catalog, from the [watchword-yew023] crate (implies `std` and `phrasebook01`) |
+//! | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `AdminCloudflare`, `CloudflareSettings`, the `http` client and `L10N`, the components' messages as a [phrasebook] catalog, from the [watchword-yew023] crate (implies `std` and `phrasebook01`) |
 //!
 //! The most-used names that do not depend on a versioned feature are
 //! re-exported at the crate root.
@@ -89,8 +89,8 @@
 //! is on when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set, with the
 //! OAuth client's redirect URL at `PUBLIC_URL/api/auth/google/redirect`
 //! (`--public-url`, by default `http://` plus the bind address). Cloudflare Access
-//! is configured on the app's Settings page, or from `CLOUDFLARE_TEAM_DOMAIN` and
-//! `CLOUDFLARE_AUDIENCE`; `CLOUDFLARE_TRUST_EMAIL_HEADER=1` accepts Access's email
+//! is configured on the app's Settings page, which watchword serves, or from
+//! `CLOUDFLARE_TEAM_DOMAIN` and `CLOUDFLARE_AUDIENCE` until saved there; `CLOUDFLARE_TRUST_EMAIL_HEADER=1` accepts Access's email
 //! header alone, for local testing only. `--help` lists the options.
 //!
 //! trunk builds with the `wasm-bindgen` CLI matching `examples/app/Cargo.lock`,

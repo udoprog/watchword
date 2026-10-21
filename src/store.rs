@@ -319,7 +319,8 @@ pub trait Store: Send + Sync + 'static {
         now: Timestamp,
     ) -> impl Future<Output = Result<bool>> + Send;
 
-    /// The setting `key`, such as `session_key`.
+    /// The setting `key`, such as `session_key`, or `cloudflare`, the Cloudflare
+    /// Access settings as JSON (feature `cloudflare`).
     fn config_get(&self, key: &str) -> impl Future<Output = Result<Option<String>>> + Send;
 
     /// Stores the setting `key`.
@@ -379,6 +380,13 @@ pub(crate) trait DynStore: Send + Sync + 'static {
         session: &'a Session,
         now: Timestamp,
     ) -> BoxFuture<'a, bool>;
+    // Used by the Cloudflare Access settings, which `Auth` stores. Named
+    // apart from `Store::config_get` and `config_set`, which a test with
+    // both traits in scope would otherwise find twice.
+    #[cfg_attr(not(feature = "cloudflare"), allow(dead_code))]
+    fn setting<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<String>>;
+    #[cfg_attr(not(feature = "cloudflare"), allow(dead_code))]
+    fn set_setting<'a>(&'a self, key: &'a str, value: &'a str) -> BoxFuture<'a, ()>;
 }
 
 impl<S> DynStore for S
@@ -494,5 +502,13 @@ where
         now: Timestamp,
     ) -> BoxFuture<'a, bool> {
         Box::pin(Store::redeem_token(self, token, cred, session, now))
+    }
+
+    fn setting<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<String>> {
+        Box::pin(Store::config_get(self, key))
+    }
+
+    fn set_setting<'a>(&'a self, key: &'a str, value: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(Store::config_set(self, key, value))
     }
 }

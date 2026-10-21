@@ -22,8 +22,8 @@ use serde::de::DeserializeOwned;
 use web_sys::RequestCredentials;
 
 use watchword_core::{
-    AuthConfig, AuthError, Link, LoginRequest, NewUser, PasswordChange, RegisterInfo,
-    RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
+    AuthConfig, AuthError, CloudflareConfig, Link, LoginRequest, NewUser, PasswordChange,
+    RegisterInfo, RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
 };
 
 /// Why a request to an `/api/auth` route failed.
@@ -226,6 +226,21 @@ pub async fn stop_impersonating() -> Result<UserInfo, Error> {
     read(post("/api/auth/impersonate/stop").send().await?).await
 }
 
+/// The Cloudflare Access settings, or their default when the server has
+/// none, for admins: `GET /api/auth/cloudflare`. Fails with
+/// [`AuthError::NotFound`] when the server is built without Cloudflare
+/// Access.
+pub async fn cloudflare_settings() -> Result<CloudflareConfig, Error> {
+    read(get("/api/auth/cloudflare").send().await?).await
+}
+
+/// Stores and applies the Cloudflare Access settings, for admins:
+/// `PUT /api/auth/cloudflare`. The answer is the settings as stored, with
+/// the team domain and audience trimmed.
+pub async fn set_cloudflare_settings(config: &CloudflareConfig) -> Result<CloudflareConfig, Error> {
+    read(put("/api/auth/cloudflare").json(config)?.send().await?).await
+}
+
 fn user_path(id: UserId, rest: &str) -> String {
     format!("/api/auth/users/{id}{rest}")
 }
@@ -257,6 +272,10 @@ fn get(url: &str) -> RequestBuilder {
 
 fn post(url: &str) -> RequestBuilder {
     Request::post(url).credentials(RequestCredentials::SameOrigin)
+}
+
+fn put(url: &str) -> RequestBuilder {
+    Request::put(url).credentials(RequestCredentials::SameOrigin)
 }
 
 fn patch(url: &str) -> RequestBuilder {

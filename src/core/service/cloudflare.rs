@@ -12,15 +12,18 @@ use std::vec::Vec;
 
 use http::HeaderMap;
 
-use super::{Actor, AuditEvent, Auth, AuthBuilder, AuthEvent, Result};
+use super::{Actor, AuditEvent, Auth, AuthBuilder, AuthEvent, Result, require_admin};
 use crate::store::{Session, User};
 use crate::types::{Access, AuthError, CloudflareConfig};
 
 impl AuthBuilder {
-    /// The Cloudflare Access settings to start with, which are logged when
-    /// the service is built. `None` and settings that are not `enabled` both
-    /// turn Access sign-in off. Change them later with
-    /// [`Auth::set_cloudflare`]. The default is `None`.
+    /// The Cloudflare Access settings to run with while the store has none,
+    /// such as settings from the app's environment or its earlier storage.
+    /// `None` and settings that are not `enabled` both turn Access sign-in
+    /// off. The default is `None`.
+    ///
+    /// Settings saved with [`Auth::set_cloudflare`] are kept in the store
+    /// and win over these from then on, across restarts.
     #[cfg_attr(watchword_docsrs, doc(cfg(feature = "cloudflare")))]
     pub fn cloudflare(mut self, config: Option<CloudflareConfig>) -> Self {
         self.cloudflare = config;
@@ -29,14 +32,47 @@ impl AuthBuilder {
 }
 
 impl Auth {
-    /// Applies changed Cloudflare Access settings, such as when an admin
-    /// saves them in the app's settings page. `None` and settings that are
-    /// not `enabled` both turn Access sign-in off. Settings that differ from
-    /// the current ones are logged, with a warning when they are unsafe or
-    /// let no one sign in; the same settings again change nothing.
+    /// The Cloudflare Access settings: those kept in the store, or those
+    /// given to [`AuthBuilder::cloudflare`] while the store has none, or
+    /// `None` when neither has any. They are what an admin's settings page
+    /// shows, enabled or not.
+    ///
+    /// The store is read once, the first time the settings are needed, which
+    /// is also when they are logged. To have them logged at startup, call
+    /// this there.
+    ///
+    /// Errors only when the store fails.
     #[cfg_attr(watchword_docsrs, doc(cfg(feature = "cloudflare")))]
-    pub fn set_cloudflare(&self, config: Option<CloudflareConfig>) {
-        self.inner.cloudflare.set(config);
+    pub async fn cloudflare(&self) -> Result<Option<CloudflareConfig>> {
+        let provider = &self.inner.cloudflare;
+        provider.load(self.store()).await?;
+        Ok(provider.settings())
+    }
+
+    /// Stores the Cloudflare Access settings, under the store's `cloudflare`
+    /// setting, and applies them, such as when an admin saves them on the
+    /// settings page. Returns them as stored, with the team domain and the
+    /// audience trimmed.
+    ///
+    /// Settings that are not `enabled` turn Access sign-in off. Settings
+    /// that differ from the current ones are logged, with a warning when
+    /// they are unsafe or let no one sign in; the same settings again change
+    /// nothing.
+    ///
+    /// Admins only: [`AuthError::Forbidden`] unless `actor` is an active
+    /// admin. An app moving settings it kept itself onto watchword passes
+    /// them to [`AuthBuilder::cloudflare`], where they apply until an admin
+    /// saves settings here.
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "cloudflare")))]
+    pub async fn set_cloudflare(
+        &self,
+        actor: &User,
+        config: CloudflareConfig,
+    ) -> Result<CloudflareConfig> {
+        require_admin(actor)?;
+        let config = self.inner.cloudflare.save(self.store(), config).await?;
+        tracing::info!(user = %actor.id, "Cloudflare Access settings saved");
+        Ok(config)
     }
 
     /// Whether the request carries Cloudflare Access credentials that sign in
@@ -100,6 +136,7 @@ impl Auth {
     /// with the vouched-for email who is not revoked.
     async fn cloudflare_user(&self, headers: &HeaderMap) -> Result<Option<User>> {
         let provider = &self.inner.cloudflare;
+        provider.load(self.store()).await?;
 
         let Some(email) = provider.email(headers).await else {
             return Ok(None);

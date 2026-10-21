@@ -4,15 +4,17 @@ use musli_web04::api::{EncodeBody, Id, MessageId};
 use musli_web04::ws::{Incoming, Outgoing};
 
 use super::{
-    AuthUpdate, DeleteUserRequest, IssueLinkRequest, MeRequest, Request, RequestError,
-    RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, Updates, UserUpdate, UsersRequest,
+    AuthUpdate, CloudflareRequest, DeleteUserRequest, IssueLinkRequest, MeRequest, Request,
+    RequestError, RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, Updates, UserUpdate,
+    UsersRequest,
 };
 use crate::Auth;
 use crate::axum08::SignedIn;
 use crate::core::{AuthEvent, Error, Result};
 use crate::store::{Session, User};
 use crate::types::{
-    Access, AuthError, CreatedUser, Invalid, NewUser, PasswordChange, UserChange, UserId,
+    Access, AuthError, CloudflareConfig, CreatedUser, Invalid, NewUser, PasswordChange, UserChange,
+    UserId,
 };
 
 /// watchword's side of one musli-web WebSocket, signed in with one session.
@@ -243,6 +245,8 @@ impl Connection {
     /// operation as its HTTP route, with that user as the actor: the admin
     /// endpoints answer [`AuthError::Forbidden`] unless the user is an admin
     /// now, and the operations enforce the rest of their rules themselves.
+    /// Without the `cloudflare` feature, the Cloudflare settings endpoints
+    /// answer an admin with [`AuthError::NotFound`].
     ///
     /// The response is the endpoint's `Result<T, AuthError>`, so a refused
     /// request gets the same [`AuthError`] as over HTTP. A body that does not
@@ -421,8 +425,61 @@ impl Connection {
 
                 respond(outgoing, response.await)
             }
+            Request::Cloudflare => {
+                let Some(CloudflareRequest) = incoming.read() else {
+                    return Ok(false);
+                };
+
+                let response = async {
+                    self.require_admin().await?;
+                    self.cloudflare().await
+                };
+
+                respond(outgoing, response.await)
+            }
+            Request::SetCloudflare => {
+                let Some(config) = incoming.read::<CloudflareConfig>() else {
+                    return Ok(false);
+                };
+
+                let response = async {
+                    let admin = self.require_admin().await?;
+                    self.set_cloudflare(&admin, config).await
+                };
+
+                respond(outgoing, response.await)
+            }
             Request::Unknown(_) => Ok(false),
         }
+    }
+
+    /// The Cloudflare Access settings, or their default when there are
+    /// none, as `GET /api/auth/cloudflare` answers.
+    #[cfg(feature = "cloudflare")]
+    async fn cloudflare(&self) -> Result<CloudflareConfig> {
+        Ok(self.auth.cloudflare().await?.unwrap_or_default())
+    }
+
+    /// Without the `cloudflare` feature there are no settings, as there is
+    /// no route for them.
+    #[cfg(not(feature = "cloudflare"))]
+    async fn cloudflare(&self) -> Result<CloudflareConfig> {
+        Err(AuthError::NotFound.into())
+    }
+
+    /// Stores and applies the settings, as `PUT /api/auth/cloudflare` does.
+    #[cfg(feature = "cloudflare")]
+    async fn set_cloudflare(
+        &self,
+        admin: &User,
+        config: CloudflareConfig,
+    ) -> Result<CloudflareConfig> {
+        self.auth.set_cloudflare(admin, config).await
+    }
+
+    #[cfg(not(feature = "cloudflare"))]
+    async fn set_cloudflare(&self, _: &User, _: CloudflareConfig) -> Result<CloudflareConfig> {
+        Err(AuthError::NotFound.into())
     }
 
     /// The id of the user this connection signed in as, as its upgrade

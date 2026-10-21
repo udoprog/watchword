@@ -28,6 +28,8 @@ use crate::types::{
 /// | `GET /api/auth/me` | signed in | [`UserInfo`], with [`impersonated_by`](UserInfo::impersonated_by) when an admin is acting as the user |
 /// | `POST /api/auth/login` | anyone | [`LoginRequest`] → [`UserInfo`] + cookie; throttled |
 /// | `POST /api/auth/cloudflare` | anyone, feature `cloudflare` | [`UserInfo`] + cookie for the user the request's Access credentials vouch for; activates a pending user |
+/// | `GET /api/auth/cloudflare` | admin, feature `cloudflare` | the [`CloudflareConfig`](crate::types::CloudflareConfig) of [`Auth::cloudflare`], or its default when there is none |
+/// | `PUT /api/auth/cloudflare` | admin, feature `cloudflare` | [`CloudflareConfig`](crate::types::CloudflareConfig) → the settings as stored by [`Auth::set_cloudflare`] |
 /// | `POST /api/auth/logout` | anyone | 204; ends the session and clears the cookie |
 /// | `GET /api/auth/register/{token}` | anyone | [`RegisterInfo`]; 404 unknown, 410 used or expired |
 /// | `POST /api/auth/register/{token}` | anyone | [`RegisterRequest`] → [`UserInfo`] + cookie; ends the user's other sessions |
@@ -87,7 +89,12 @@ where
         .route("/api/auth/impersonate/stop", post(stop_impersonating));
 
     #[cfg(feature = "cloudflare")]
-    let router = router.route("/api/auth/cloudflare", post(cloudflare));
+    let router = router.route(
+        "/api/auth/cloudflare",
+        post(cloudflare)
+            .get(cloudflare_settings)
+            .put(set_cloudflare_settings),
+    );
     // Feature `google`: `GET /api/auth/google`, `/google/register/{token}`,
     // `/google/link` and the callback; see `super::google`.
     #[cfg(feature = "google")]
@@ -214,6 +221,23 @@ async fn cloudflare_available(_: &Auth, _: &HeaderMap) -> Result<bool, Error> {
 async fn cloudflare(State(auth): State<Auth>, headers: HeaderMap) -> Result<Response, Error> {
     let (user, session) = auth.sign_in_cloudflare(&headers).await?;
     Ok(signed_in(&auth, &headers, &user, &session))
+}
+
+#[cfg(feature = "cloudflare")]
+async fn cloudflare_settings(
+    State(auth): State<Auth>,
+    _: Admin,
+) -> Result<Json<crate::types::CloudflareConfig>, Error> {
+    Ok(Json(auth.cloudflare().await?.unwrap_or_default()))
+}
+
+#[cfg(feature = "cloudflare")]
+async fn set_cloudflare_settings(
+    State(auth): State<Auth>,
+    Admin(admin): Admin,
+    Body(config): Body<crate::types::CloudflareConfig>,
+) -> Result<Json<crate::types::CloudflareConfig>, Error> {
+    Ok(Json(auth.set_cloudflare(&admin.user, config).await?))
 }
 
 async fn me(

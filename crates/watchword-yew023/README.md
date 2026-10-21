@@ -69,8 +69,10 @@ fn App() -> Html {
 Inside the provider, [`UserMenu`] gives the signed-in user Account, Users
 (for admins), Sign out, and a way back while an admin impersonates them.
 [`AccountPanel`] is the user's own account, [`AdminUsers`] manages users
-for admins, and [`CloudflareSettings`] edits the Cloudflare Access
-settings an app stores. They talk to the server through [`http`].
+for admins, and [`AdminCloudflare`] is the Cloudflare Access settings
+page for admins, which loads and saves the settings watchword keeps.
+[`CloudflareSettings`] is its form alone, for an app that stores the
+settings itself. They talk to the server through [`http`].
 
 <br>
 
@@ -186,6 +188,7 @@ are:
 | `auth-confirm` | an inline confirmation, with `auth-confirm-no` and `auth-confirm-yes` |
 | `auth-pages` | the paging row: `auth-previous`, `auth-page-number` and `auth-next` |
 | `auth-hidden` | text for screen readers only, which the app should hide visually |
+| `auth-admin-cloudflare` | the outermost `<section>` of [`AdminCloudflare`], around its message and [`CloudflareSettings`] |
 | `auth-cloudflare-settings` | the outermost `<section>` of [`CloudflareSettings`] |
 | `auth-instructions` | the Cloudflare setup instructions |
 | `auth-toggle` | a field with a checkbox |
@@ -209,6 +212,7 @@ order:
 ```
 
 [`AccountPanel`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AccountPanel.html
+[`AdminCloudflare`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AdminCloudflare.html
 [`AdminUsers`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AdminUsers.html
 [`AuthContext`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html
 [`AuthContext::set_socket`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html#method.set_socket

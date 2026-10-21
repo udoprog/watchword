@@ -25,6 +25,8 @@
 //! | [`RevokeLink`] | 32008 | [`RevokeLinkRequest`] | `()` |
 //! | [`SignOutUser`] | 32009 | [`SignOutUserRequest`] | `()` |
 //! | [`RevokeAccess`] | 32010 | [`RevokeAccessRequest`] | [`UserInfo`] |
+//! | [`Cloudflare`] | 32011 | [`CloudflareRequest`] | [`CloudflareConfig`] |
+//! | [`SetCloudflare`] | 32012 | [`CloudflareConfig`] | [`CloudflareConfig`] |
 //!
 //! [`AuthBroadcast`] (32100) carries [`AuthUpdate`]s.
 //!
@@ -35,7 +37,8 @@ use alloc::vec::Vec;
 use musli_core01::{Decode, Encode};
 
 use crate::{
-    AuthError, CreatedUser, Link, NewUser, PasswordChange, UserChange, UserEntry, UserId, UserInfo,
+    AuthError, CloudflareConfig, CreatedUser, Link, NewUser, PasswordChange, UserChange, UserEntry,
+    UserId, UserInfo,
 };
 
 /// The first id of the band watchword owns.
@@ -161,6 +164,26 @@ musli_web::api::define! {
         type Response<'de> = Result<UserInfo, AuthError>;
     }
 
+    /// The Cloudflare Access settings, as stored, or the [`Default`] when
+    /// none are. Admins only. Like `GET /api/auth/cloudflare`.
+    #[musli(id = 32011)]
+    pub type Cloudflare;
+
+    impl Endpoint for Cloudflare {
+        impl Request for CloudflareRequest;
+        type Response<'de> = Result<CloudflareConfig, AuthError>;
+    }
+
+    /// Stores and applies the Cloudflare Access settings, answering with
+    /// them as stored. Admins only. Like `PUT /api/auth/cloudflare`.
+    #[musli(id = 32012)]
+    pub type SetCloudflare;
+
+    impl Endpoint for SetCloudflare {
+        impl Request for CloudflareConfig;
+        type Response<'de> = Result<CloudflareConfig, AuthError>;
+    }
+
     /// The live auth changes a connection may see, as [`AuthUpdate`]s.
     #[musli(id = 32100)]
     pub type AuthBroadcast;
@@ -199,6 +222,11 @@ pub struct MeRequest;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
 #[musli(crate = musli_core01)]
 pub struct UsersRequest;
+
+/// The request of [`Cloudflare`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
+#[musli(crate = musli_core01)]
+pub struct CloudflareRequest;
 
 /// The request of [`UpdateUser`]: the change to make to the user `id`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]

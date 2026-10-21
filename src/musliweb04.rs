@@ -25,6 +25,8 @@
 //! | [`RevokeLink`] | 32008 | [`RevokeLinkRequest`] | `()` |
 //! | [`SignOutUser`] | 32009 | [`SignOutUserRequest`] | `()` |
 //! | [`RevokeAccess`] | 32010 | [`RevokeAccessRequest`] | [`UserInfo`] |
+//! | [`Cloudflare`] | 32011 | [`CloudflareRequest`] | [`CloudflareConfig`] |
+//! | [`SetCloudflare`] | 32012 | [`CloudflareConfig`] | [`CloudflareConfig`] |
 //!
 //! [`AuthBroadcast`] (32100) carries [`AuthUpdate`]s.
 //!
@@ -51,6 +53,7 @@
 //! [`NewUser`]: crate::NewUser
 //! [`CreatedUser`]: crate::CreatedUser
 //! [`Link`]: crate::Link
+//! [`CloudflareConfig`]: crate::CloudflareConfig
 //! [musli-web]: https://docs.rs/musli-web
 
 #[doc(inline)]
