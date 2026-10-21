@@ -35,7 +35,9 @@
 //! routes, and turns each [`AuthEvent`](crate::AuthEvent) into the
 //! [`AuthUpdate`] that socket may see. Its `signed_in` and `require_admin`
 //! gate the app's own requests on that socket with the same checks and
-//! [`AuthError`]s as watchword's.
+//! [`AuthError`]s as watchword's. A request that fails answers the client
+//! with a `RequestError`, which shows a refusal and hides an internal
+//! failure's cause.
 //!
 //! The design is in `docs/design.md`, section 2.7.
 //!
@@ -56,8 +58,15 @@ pub use watchword_core::musliweb04::*;
 mod connection;
 
 #[cfg(feature = "axum08")]
+mod error;
+
+#[cfg(feature = "axum08")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "axum08")))]
 pub use self::connection::Connection;
+
+#[cfg(feature = "axum08")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "axum08")))]
+pub use self::error::RequestError;
 
 #[cfg(all(test, feature = "axum08"))]
 mod tests;

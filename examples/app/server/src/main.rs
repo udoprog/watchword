@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use auth::axum08::{Admin, SignedIn};
-use auth::musliweb04::Connection;
+use auth::musliweb04::{Connection, RequestError};
 use auth::{Auth, BootstrapAdmin, CloudflareConfig, GoogleConfig, MemoryStore};
 use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRef, State};
@@ -399,7 +399,7 @@ struct Handler {
 
 impl ws::Handler for Handler {
     type Id = api::Request;
-    type Response = auth::core::Result<bool>;
+    type Response = Result<bool, RequestError>;
 
     async fn handle(
         &self,
@@ -418,7 +418,15 @@ impl ws::Handler for Handler {
                 // upgrade is refused (`conn.require_admin()` for an admin-only
                 // request). A refusal is `Error::Auth`, which musli-web sends
                 // as the request's error; the guard closes the socket next.
-                self.conn.signed_in().await?;
+                // Any other failure is the app's to log: the client is only
+                // told `internal error`.
+                if let Err(error) = self.conn.signed_in().await {
+                    if error.auth_error().is_none() {
+                        tracing::error!("Status request failed: {error}");
+                    }
+
+                    return Err(error.into());
+                }
 
                 outgoing.write(api::StatusResponse {
                     uptime: self.state.started.elapsed().as_secs(),
@@ -429,7 +437,8 @@ impl ws::Handler for Handler {
             }
             // Every id the app's API does not know: watchword answers its
             // own and returns `Ok(false)` for the rest, which musli-web
-            // reports to the client as an unknown request.
+            // reports to the client as an unknown request. `handle` has
+            // already logged a failure, so it is not logged again here.
             api::Request::Unknown(id) => self.conn.handle(id, incoming, outgoing).await,
         }
     }

@@ -5,7 +5,7 @@
 use std::borrow::ToOwned;
 use std::future::Future;
 use std::net::SocketAddr;
-use std::string::String;
+use std::string::{String, ToString};
 use std::time::Duration;
 use std::vec::Vec;
 
@@ -26,7 +26,8 @@ use super::super::{
 };
 use super::{PASSWORD, auth, pending, root, user};
 use crate::axum08::SignedIn;
-use crate::musliweb04::Connection;
+use crate::musliweb04::{Connection, RequestError};
+use crate::store::StoreError;
 use crate::types::{
     AuthError, Conflict, Invalid, NewUser, PasswordChange, Role, UserChange, UserEntry, UserId,
     UserInfo,
@@ -51,11 +52,33 @@ mod app {
     #[derive(Debug, Encode, Decode)]
     pub struct PingRequest;
 
+    #[derive(Debug, Encode, Decode)]
+    pub struct BrokenRequest;
+
+    #[derive(Debug, Encode, Decode)]
+    pub struct RefusedRequest;
+
     musli_web::api::define! {
         pub type Ping;
 
         impl Endpoint for Ping {
             impl Request for PingRequest;
+            type Response<'de> = u32;
+        }
+
+        /// Fails as the store failing would.
+        pub type Broken;
+
+        impl Endpoint for Broken {
+            impl Request for BrokenRequest;
+            type Response<'de> = u32;
+        }
+
+        /// Refused as an admin-only request is for a regular user.
+        pub type Refused;
+
+        impl Endpoint for Refused {
+            impl Request for RefusedRequest;
             type Response<'de> = u32;
         }
     }
@@ -111,7 +134,7 @@ struct Handler {
 
 impl ws::Handler for Handler {
     type Id = app::Request;
-    type Response = crate::core::Result<bool>;
+    type Response = Result<bool, RequestError>;
 
     async fn handle(
         &self,
@@ -127,6 +150,20 @@ impl ws::Handler for Handler {
 
                 outgoing.write(7u32);
                 Ok(true)
+            }
+            app::Request::Broken => {
+                let Some(app::BrokenRequest) = incoming.read() else {
+                    return Ok(false);
+                };
+
+                Err(StoreError::new("the disk is full").into())
+            }
+            app::Request::Refused => {
+                let Some(app::RefusedRequest) = incoming.read() else {
+                    return Ok(false);
+                };
+
+                Err(AuthError::Forbidden.into())
             }
             app::Request::Unknown(id) => self.conn.handle(id, incoming, outgoing).await,
         }
@@ -292,6 +329,43 @@ async fn delegates_by_id() {
     // The socket is still usable.
     let me: UserInfo = client.send(MeRequest).await.unwrap();
     assert_eq!(me, root.user.info());
+}
+
+/// A `RequestError` shows only a refusal, and keeps the error it holds as
+/// its source, where `find_auth_error` finds the refusal.
+#[test]
+fn request_errors_keep_their_error() {
+    let error = RequestError::from(StoreError::new("the disk is full"));
+    assert_eq!(error.to_string(), "internal error");
+    assert_eq!(error.auth_error(), None);
+    assert_eq!(
+        error.error().to_string(),
+        "storage failed: the disk is full"
+    );
+
+    let error = RequestError::from(AuthError::Forbidden);
+    assert_eq!(error.to_string(), AuthError::Forbidden.to_string());
+    assert_eq!(
+        crate::core::Error::find_auth_error(&error),
+        Some(&AuthError::Forbidden)
+    );
+}
+
+/// A `RequestError` answers the client with a refusal's message, and with
+/// only `internal error` for an internal failure, whose cause stays on the
+/// server.
+#[tokio::test]
+async fn request_errors_hide_internal_causes() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let server = Server::new(&auth).await;
+    let client = server.client(&root).await;
+
+    let error = client.fail(app::BrokenRequest).await;
+    assert_eq!(error, "internal error");
+
+    let error = client.fail(app::RefusedRequest).await;
+    assert_eq!(error, AuthError::Forbidden.to_string());
 }
 
 /// Each endpoint runs its operation for the connection's user.

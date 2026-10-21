@@ -284,7 +284,15 @@ write the cookie and the client's address for a framework integration.
 
 Operations fail with `core::Error`: either an `AuthError` to answer the request
 with (`Error::auth_error`), or an internal failure (store, hashing, a blocking
-task).
+task). An internal failure's message carries its cause (`storage failed:
+database is locked`), so a log line with `{error}` says what failed, and its
+`source` continues below that cause, so a chain printer does not repeat it. The
+message is for logs only: the HTTP integration answers `internal error`, and
+the socket's `RequestError` does too. An app that has carried the error into
+its own type through `?` (an `anyhow::Error`, say) classifies it with
+`Error::find_auth_error(&*error)`, which looks through the source chain for an
+`AuthError`, bare or as `Error::Auth`; downcasting to `AuthError` alone misses
+the wrapped one and turns a refusal into an internal failure.
 
 ```rust
 /// Sent whenever auth state changes, for open sockets and live admin views.
@@ -736,7 +744,7 @@ musli-web's server side (`ws::Handler`, `Incoming`, `Outgoing`) needs its
 let conn = watchword::musliweb04::Connection::new(auth.clone(), &signed_in);
 
 // In the app's Handler::handle, in the arm for ids its own API does not know:
-api::Request::Unknown(id) => conn.handle(id, incoming, outgoing).await,   // -> Result<bool, core::Error>
+api::Request::Unknown(id) => conn.handle(id, incoming, outgoing).await,   // -> Result<bool, RequestError>
 
 // In the app's connection loop, next to guard.ended():
 event = events.recv() => {
@@ -804,8 +812,14 @@ so `UpdateUser` on oneself is refused for a regular user over both
 transports; `UpdateAccount` refuses a role change with `RoleNotChangeable` as
 its route does. A body that does not decode also gives `Ok(false)`, and
 musli-web answers the request with the decode error. An internal failure is
-logged and returned as the `Err`, whose message (such as `storage failed`)
-musli-web sends as the request error.
+logged by `handle`, at error level with its cause, and returned as the `Err`:
+a `musliweb04::RequestError`, the app handler's error type, whose message
+musli-web sends as the request error. It shows a refusal as its `AuthError`
+and an internal failure as just `internal error`, so a cause never reaches
+the client. The app's own requests convert into it with `?` (from
+`core::Error`, `AuthError` or `StoreError`); the app logs their internal
+failures itself, and does not log again what `handle` returns, which is
+already logged.
 
 #### Frontend: the components' socket transport (`musliweb04` + `yew023`)
 

@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 use std::borrow::ToOwned;
 use std::boxed::Box;
+use std::error::Error as StdError;
+use std::fmt;
 use std::net::IpAddr;
 use std::string::String;
 use std::string::ToString;
@@ -101,29 +103,136 @@ pub enum AuthEvent {
 
 /// The error of an [`Auth`] operation: either an [`AuthError`] to answer
 /// the request with, or an internal failure.
-#[derive(Debug, thiserror::Error)]
+///
+/// Classify one with [`auth_error`](Error::auth_error). Once it has passed
+/// through `?` into an app's own error, such as an `anyhow::Error`, use
+/// [`find_auth_error`](Error::find_auth_error) on that error rather than
+/// downcasting it to [`AuthError`], which misses a refusal wrapped as
+/// [`Error::Auth`] and so answers a `Forbidden` as an internal failure.
+///
+/// An internal failure's message carries its cause, such as `storage failed:
+/// database is locked`, so logging it with `{error}` says what went wrong.
+/// Its [`source`](StdError::source) continues below that cause, so
+/// a chain printer such as `anyhow`'s `{:#}` does not repeat it. The message
+/// is for logs: answer the client with something generic, as the `axum08`
+/// integration and the musliweb04 `Connection` do.
+#[derive(Debug)]
 pub enum Error {
     /// The request is refused, as the [`AuthError`] says.
-    #[error(transparent)]
-    Auth(#[from] AuthError),
+    Auth(AuthError),
     /// The store failed.
-    #[error("storage failed")]
-    Store(#[from] StoreError),
+    Store(StoreError),
     /// Hashing a password failed.
-    #[error(transparent)]
-    Password(#[from] PasswordError),
+    Password(PasswordError),
     /// A blocking task, such as hashing, panicked or was cancelled.
-    #[error("a blocking task failed")]
-    Task(#[from] tokio::task::JoinError),
+    Task(tokio::task::JoinError),
 }
 
 impl Error {
     /// The [`AuthError`] to answer with, or `None` for an internal failure.
+    ///
+    /// This is how to tell a refusal, which the client should see, from an
+    /// internal failure, which it should not.
     pub fn auth_error(&self) -> Option<&AuthError> {
         match self {
             Error::Auth(error) => Some(error),
             _ => None,
         }
+    }
+
+    /// The [`AuthError`] somewhere in `error`'s chain of
+    /// [`source`](StdError::source)s, whether bare or as an [`Error::Auth`],
+    /// or `None` when the chain holds no refusal.
+    ///
+    /// For an app's own error that a watchword [`Error`] reached through
+    /// `?`. With `anyhow`, pass `&*error`; an app error type that wraps
+    /// [`Error`] has to name it as its [`source`](StdError::source).
+    ///
+    /// ```
+    /// use watchword::AuthError;
+    /// use watchword::core::Error;
+    ///
+    /// #[derive(Debug)]
+    /// struct AppError(Error);
+    ///
+    /// impl std::fmt::Display for AppError {
+    ///     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    ///         f.write_str("the request failed")
+    ///     }
+    /// }
+    ///
+    /// impl std::error::Error for AppError {
+    ///     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+    ///         Some(&self.0)
+    ///     }
+    /// }
+    ///
+    /// let error = AppError(Error::from(AuthError::Forbidden));
+    /// assert_eq!(Error::find_auth_error(&error), Some(&AuthError::Forbidden));
+    ///
+    /// let error = AppError(Error::from(watchword::store::StoreError::new("disk full")));
+    /// assert_eq!(Error::find_auth_error(&error), None);
+    /// ```
+    pub fn find_auth_error<'a>(mut error: &'a (dyn StdError + 'static)) -> Option<&'a AuthError> {
+        loop {
+            if let Some(error) = error.downcast_ref::<Error>() {
+                return error.auth_error();
+            }
+
+            if let Some(error) = error.downcast_ref::<AuthError>() {
+                return Some(error);
+            }
+
+            error = error.source()?;
+        }
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Auth(error) => error.fmt(f),
+            Error::Store(error) => write!(f, "storage failed: {error}"),
+            Error::Password(error) => error.fmt(f),
+            Error::Task(error) => write!(f, "a blocking task failed: {error}"),
+        }
+    }
+}
+
+impl StdError for Error {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        // Each message already includes the wrapped error's, so the chain
+        // continues with what is below it.
+        match self {
+            Error::Auth(error) => error.source(),
+            Error::Store(error) => error.source(),
+            Error::Password(error) => error.source(),
+            Error::Task(error) => error.source(),
+        }
+    }
+}
+
+impl From<AuthError> for Error {
+    fn from(error: AuthError) -> Self {
+        Error::Auth(error)
+    }
+}
+
+impl From<StoreError> for Error {
+    fn from(error: StoreError) -> Self {
+        Error::Store(error)
+    }
+}
+
+impl From<PasswordError> for Error {
+    fn from(error: PasswordError) -> Self {
+        Error::Password(error)
+    }
+}
+
+impl From<tokio::task::JoinError> for Error {
+    fn from(error: tokio::task::JoinError) -> Self {
+        Error::Task(error)
     }
 }
 

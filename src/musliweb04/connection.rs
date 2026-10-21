@@ -4,8 +4,8 @@ use musli_web04::api::{EncodeBody, Id, MessageId};
 use musli_web04::ws::{Incoming, Outgoing};
 
 use super::{
-    AuthUpdate, DeleteUserRequest, IssueLinkRequest, MeRequest, Request, RevokeAccessRequest,
-    RevokeLinkRequest, SignOutUserRequest, UserUpdate, UsersRequest,
+    AuthUpdate, DeleteUserRequest, IssueLinkRequest, MeRequest, Request, RequestError,
+    RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, UserUpdate, UsersRequest,
 };
 use crate::Auth;
 use crate::axum08::SignedIn;
@@ -63,7 +63,7 @@ use crate::types::{
 /// # mod api { pub enum Request { Unknown(musli_web::api::MessageId) } }
 /// # extern crate musli_web04 as musli_web;
 /// use musli_web::ws;
-/// use watchword::musliweb04::Connection;
+/// use watchword::musliweb04::{Connection, RequestError};
 ///
 /// #[derive(Clone)]
 /// struct Handler {
@@ -76,7 +76,7 @@ use crate::types::{
 ///         id: api::Request,
 ///         incoming: &mut ws::Incoming<'_>,
 ///         outgoing: &mut ws::Outgoing<'_>,
-///     ) -> watchword::core::Result<bool> {
+///     ) -> Result<bool, RequestError> {
 ///         match id {
 ///             // ... the app's own requests
 ///             api::Request::Unknown(id) => self.conn.handle(id, incoming, outgoing).await,
@@ -90,15 +90,17 @@ use crate::types::{
 /// [`require_admin`](Connection::require_admin), which re-read the session
 /// for each request and refuse with the same [`AuthError`] as the HTTP
 /// extractors. A refusal is [`Error::Auth`]; any other error is the store
-/// failing:
+/// failing. The app's own requests fail with a [`RequestError`] as well,
+/// converted with `?`, and the app logs their internal failures, which
+/// `handle` never sees:
 ///
 /// ```no_run
 /// # extern crate musli_web04 as musli_web;
 /// use musli_web::ws;
 /// use watchword::core::Error;
-/// use watchword::musliweb04::Connection;
+/// use watchword::musliweb04::{Connection, RequestError};
 ///
-/// async fn stats(conn: &Connection, outgoing: &mut ws::Outgoing<'_>) -> watchword::core::Result<bool> {
+/// async fn stats(conn: &Connection, outgoing: &mut ws::Outgoing<'_>) -> Result<bool, RequestError> {
 ///     let admin = match conn.require_admin().await {
 ///         Ok(admin) => admin,
 ///         Err(Error::Auth(error)) => {
@@ -106,7 +108,10 @@ use crate::types::{
 ///             # let _ = error;
 ///             return Ok(true);
 ///         }
-///         Err(error) => return Err(error),
+///         Err(error) => {
+///             tracing::error!("stats failed: {error}");
+///             return Err(error.into());
+///         }
 ///     };
 ///
 ///     // ... answer with what only `admin` may see.
@@ -229,15 +234,16 @@ impl Connection {
     /// request gets the same [`AuthError`] as over HTTP. A body that does not
     /// decode is reported to the client by musli-web, as a request error.
     ///
-    /// Errors when the store fails or hashing a password does: the error is
-    /// logged, and musli-web answers the request with its message (such as
-    /// `storage failed`), the analogue of an HTTP 500.
+    /// Errors when the store fails or hashing a password does. The error is
+    /// logged here, at error level with its cause, so the app does not log
+    /// it again; musli-web answers the request with the [`RequestError`]'s
+    /// generic message, `internal error`, the analogue of an HTTP 500.
     pub async fn handle(
         &self,
         id: MessageId,
         incoming: &mut Incoming<'_>,
         outgoing: &mut Outgoing<'_>,
-    ) -> Result<bool> {
+    ) -> Result<bool, RequestError> {
         let result = self
             .dispatch(Request::from_id(id), incoming, outgoing)
             .await;
@@ -246,7 +252,7 @@ impl Connection {
             tracing::error!(error = ?error, "auth: socket request {id} failed: {error}");
         }
 
-        result
+        Ok(result?)
     }
 
     async fn dispatch(

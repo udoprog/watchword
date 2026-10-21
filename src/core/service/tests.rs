@@ -165,3 +165,22 @@ async fn a_concurrent_revocation_refuses_a_password_change()
     assert_eq!(user.password_hash, None);
     Ok(())
 }
+
+/// An internal failure's message carries its cause once: in the message,
+/// not again in its source.
+#[test]
+fn internal_errors_show_their_cause() {
+    let error = Error::from(StoreError::new("the disk is full"));
+    assert_eq!(error.to_string(), "storage failed: the disk is full");
+    assert!(StdError::source(&error).is_none());
+    assert_eq!(error.auth_error(), None);
+    assert_eq!(Error::find_auth_error(&error), None);
+
+    let error = Error::from(AuthError::Forbidden);
+    assert_eq!(error.to_string(), AuthError::Forbidden.to_string());
+    assert_eq!(Error::find_auth_error(&error), Some(&AuthError::Forbidden));
+    assert_eq!(
+        Error::find_auth_error(&AuthError::Gone),
+        Some(&AuthError::Gone)
+    );
+}
