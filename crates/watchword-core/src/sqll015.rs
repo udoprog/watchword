@@ -1,7 +1,7 @@
-//! sqll 0.14 `BindValue`, `Bind` and `FromColumn` for [`UserId`], [`Role`],
+//! sqll 0.15 `BindValue`, `Bind` and `FromColumn` for [`UserId`], [`Role`],
 //! [`Access`] and [`Method`].
 
-use sqll014::{Bind, BindValue, Code, Error, FromColumn, Index, Result, Statement, ty};
+use sqll015::{Bind, BindValue, Code, Error, FromColumn, Index, Result, Statement, ty};
 
 use crate::{Access, Method, Role, UserId};
 
@@ -11,7 +11,7 @@ mod tests;
 /// Binds as an SQLite integer with the same bits, as watchword's `SqllStore`
 /// stores ids: every id binds, and one beyond `i64::MAX` binds as a negative
 /// integer that no stored user has.
-#[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll014")))]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll015")))]
 impl BindValue for UserId {
     #[inline]
     fn bind_value(&self, stmt: &mut Statement, index: Index) -> Result<()> {
@@ -20,7 +20,7 @@ impl BindValue for UserId {
 }
 
 /// Binds as the statement's only parameter, as [`BindValue`] does.
-#[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll014")))]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll015")))]
 impl Bind for UserId {
     const COUNT: usize = 1;
 
@@ -31,7 +31,7 @@ impl Bind for UserId {
 }
 
 /// Reads an integer column with the same bits, the reverse of [`BindValue`].
-#[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll014")))]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll015")))]
 impl FromColumn<'_> for UserId {
     type Type = ty::Integer;
 
@@ -45,7 +45,7 @@ impl FromColumn<'_> for UserId {
 macro_rules! named {
     ($ty:ident, $what:literal) => {
         #[doc = concat!("Binds the ", $what, "'s name, [`", stringify!($ty), "::as_str`], as text.")]
-        #[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll014")))]
+        #[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll015")))]
         impl BindValue for $ty {
             #[inline]
             fn bind_value(&self, stmt: &mut Statement, index: Index) -> Result<()> {
@@ -54,7 +54,7 @@ macro_rules! named {
         }
 
         /// Binds as the statement's only parameter, as [`BindValue`] does.
-        #[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll014")))]
+        #[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll015")))]
         impl Bind for $ty {
             const COUNT: usize = 1;
 
@@ -66,7 +66,7 @@ macro_rules! named {
 
         #[doc = concat!("Reads a text column holding the ", $what, "'s name, failing with")]
         #[doc = concat!("[`Code::MISMATCH`] on a name that is not one.")]
-        #[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll014")))]
+        #[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll015")))]
         impl<'stmt> FromColumn<'stmt> for $ty {
             type Type = ty::Text;
 

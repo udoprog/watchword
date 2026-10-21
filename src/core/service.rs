@@ -119,7 +119,7 @@ pub enum AuthEvent {
 /// Its [`source`](StdError::source) continues below that cause, so
 /// a chain printer such as `anyhow`'s `{:#}` does not repeat it. The message
 /// is for logs: answer the client with something generic, as the `axum08`
-/// integration and the musliweb04 `Connection` do.
+/// integration and the musliweb05 `Connection` do.
 #[derive(Debug)]
 pub enum Error {
     /// The request is refused, as the [`AuthError`] says.

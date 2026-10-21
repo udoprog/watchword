@@ -12,12 +12,12 @@ client for watchword's `/api/auth` routes. Built for
 
 Apps take it through watchword's `yew023` feature, as `watchword::yew023`,
 so a frontend needs only one dependency. A frontend that talks to its
-server over a [musli-web] 0.4 WebSocket also takes `musliweb04`, so the
+server over a [musli-web] 0.4 WebSocket also takes `musliweb05`, so the
 components use that socket (see [below](#with-a-musli-web-socket)):
 
 ```toml
 [dependencies]
-watchword = { version = "0.2", features = ["yew023", "musliweb04"] }
+watchword = { version = "0.3", features = ["yew023", "musliweb05"] }
 ```
 
 It is a crate of its own because yew's macros expand to `::yew::` paths, so
@@ -37,7 +37,7 @@ watchword's.
 |---|---|
 | `std` *(default)* | everything here |
 | `alloc` | nothing yet beyond watchword-core's `alloc` |
-| `musliweb04` | `std` + [`AuthContext::set_socket`]: the components follow a [musli-web] 0.4 socket's broadcasts and send their requests over it; [`AuthContext::on_update`] and `use_auth_update` pass the broadcasts on to the app |
+| `musliweb05` | `std` + [`AuthContext::set_socket`]: the components follow a [musli-web] 0.4 socket's broadcasts and send their requests over it; [`AuthContext::on_update`] and `use_auth_update` pass the broadcasts on to the app |
 
 <br>
 
@@ -120,7 +120,7 @@ these as they happen. An app that acts on an update itself, such as
 reloading its own data when the user's role changes, listens with
 [`AuthContext::on_update`] or `use_auth_update`. On the server, the
 app's own authorization of a socket's requests follows the session's
-guard too: watchword's `musliweb04::Connection::require_admin` reads the
+guard too: watchword's `musliweb05::Connection::require_admin` reads the
 role as stored now, and the `SessionGuard` (`user`, `watch_user`) the role
 as last seen, so the server needs no event mirroring of its own either.
 
@@ -128,7 +128,7 @@ as last seen, so the server needs no event mirroring of its own either.
 
 ## With a musli-web socket
 
-With the `musliweb04` feature (watchword's `musliweb04` and `yew023`
+With the `musliweb05` feature (watchword's `musliweb05` and `yew023`
 together), an app that talks to its server over a [musli-web] 0.4
 WebSocket hands its handle to the context once the socket is open inside
 [`AuthProvider`]:

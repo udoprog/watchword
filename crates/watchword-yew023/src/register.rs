@@ -1,6 +1,6 @@
 use std::string::String;
 
-use phrasebook01::Phrases;
+use phrasebook02::Phrases;
 use yew::platform::spawn_local;
 use yew::prelude::*;
 

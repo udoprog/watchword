@@ -177,7 +177,7 @@ fn invalid_unknown_json() {
 /// upgrade-safe formats too (musli-web's default is `wire`), and the value
 /// after it still decodes. `storage` and `packed` cannot skip an unknown
 /// value, so they need the same model on both ends.
-#[cfg(feature = "musli01")]
+#[cfg(feature = "musli02")]
 #[test]
 fn invalid_unknown_musli() {
     /// `Invalid` as a newer version might have it.
@@ -405,7 +405,7 @@ fn created_user_json() {
     );
 }
 
-#[cfg(feature = "musli01")]
+#[cfg(feature = "musli02")]
 #[test]
 fn musli_round_trip() {
     fn round_trip<T>(value: T)
@@ -451,12 +451,12 @@ fn musli_round_trip() {
     }
 }
 
-#[cfg(feature = "musliweb04")]
-mod musliweb04 {
-    use musli_web04::api::{Id, MessageId};
+#[cfg(feature = "musliweb05")]
+mod musliweb05 {
+    use musli_web05::api::{Id, MessageId};
 
     use super::*;
-    use crate::musliweb04::*;
+    use crate::musliweb05::*;
 
     /// The ids are part of the wire format: a released id never changes
     /// meaning.

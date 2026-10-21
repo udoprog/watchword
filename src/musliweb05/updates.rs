@@ -19,7 +19,7 @@ use crate::core::{AuthEvent, SessionGuard};
 ///
 /// ```no_run
 /// # async fn session_socket(
-/// #     conn: watchword::musliweb04::Connection,
+/// #     conn: watchword::musliweb05::Connection,
 /// #     connect: impl std::future::Future<Output = Result<(), std::io::Error>>,
 /// # ) {
 /// // Before negotiating, so nothing broadcast meanwhile is missed.
@@ -41,7 +41,7 @@ use crate::core::{AuthEvent, SessionGuard};
 ///             };
 ///
 ///             // if server.broadcast(update).is_err() { break; }
-///             # let _: watchword::musliweb04::AuthUpdate = update;
+///             # let _: watchword::musliweb05::AuthUpdate = update;
 ///         }
 ///         // ... result = server.run() => break,
 ///     }

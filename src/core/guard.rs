@@ -93,7 +93,7 @@ impl Auth {
 /// That role is current as of the last event or store re-check (on lag and
 /// every 5 minutes), so it may lag a change made by another process. Where
 /// a stale role must not let a request through, use [`Auth::session`], or
-/// `musliweb04::Connection::require_admin` on a musli-web socket, which read
+/// `musliweb05::Connection::require_admin` on a musli-web socket, which read
 /// the store.
 pub struct SessionGuard {
     ended: Mutex<watch::Receiver<bool>>,

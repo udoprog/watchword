@@ -1,6 +1,6 @@
 //! How the components make the requests that can use the app's socket.
 //!
-//! With the `musliweb04` feature and a socket handed over with
+//! With the `musliweb05` feature and a socket handed over with
 //! [`AuthContext::set_socket`](super::AuthContext::set_socket), each request
 //! goes over the socket while it is open, and over [`http`] otherwise, so a
 //! request made while the socket reconnects still works. The operations that
@@ -9,8 +9,8 @@
 
 use std::vec::Vec;
 
-#[cfg(feature = "musliweb04")]
-use watchword_core::musliweb04::{
+#[cfg(feature = "musliweb05")]
+use watchword_core::musliweb05::{
     CloudflareRequest, DeleteUserRequest, IssueLinkRequest, MeRequest, RevokeAccessRequest,
     RevokeLinkRequest, SignOutUserRequest, UserUpdate, UsersRequest,
 };
@@ -20,14 +20,14 @@ use watchword_core::{
 };
 
 use super::http::{self, Error};
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 use super::socket::SocketHandle;
 
 /// Sends `$body` over the client's socket and returns its answer, if the
 /// socket took it; otherwise carries on to the HTTP request after it.
 macro_rules! over_socket {
     ($client:expr, $body:expr) => {
-        #[cfg(feature = "musliweb04")]
+        #[cfg(feature = "musliweb05")]
         {
             if let Some(socket) = &$client.socket {
                 if let Some(result) = socket.request($body).await {
@@ -42,7 +42,7 @@ macro_rules! over_socket {
 /// one is handed over and open, HTTP otherwise.
 #[derive(Clone, Default)]
 pub(super) struct Client {
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     pub(super) socket: Option<SocketHandle>,
 }
 
@@ -51,7 +51,7 @@ impl Client {
     /// impersonating, the socket still speaks for the session its upgrade
     /// carried: requests go over HTTP until it reconnects.
     pub(super) fn session_replaced(&self) {
-        #[cfg(feature = "musliweb04")]
+        #[cfg(feature = "musliweb05")]
         if let Some(socket) = &self.socket {
             socket.mark_stale();
         }
@@ -147,7 +147,7 @@ impl Client {
 
     /// Like [`http::revoke_access`].
     pub(super) async fn revoke_access(&self, id: UserId) -> Result<(), Error> {
-        #[cfg(feature = "musliweb04")]
+        #[cfg(feature = "musliweb05")]
         if let Some(socket) = &self.socket {
             let request = socket.request::<_, UserInfo>(RevokeAccessRequest { id });
 

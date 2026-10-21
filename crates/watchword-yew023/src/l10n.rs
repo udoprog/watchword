@@ -6,12 +6,12 @@ use std::rc::Rc;
 use std::string::String;
 use std::string::ToString;
 
-use phrasebook01::yew023::or_catalog;
-use phrasebook01::{Args, Phrases, args};
+use phrasebook02::yew023::or_catalog;
+use phrasebook02::{Args, Phrases, args};
 use yew::prelude::*;
 
 use super::http::Error;
-use watchword_core::phrasebook01::L10N;
+use watchword_core::phrasebook02::L10N;
 use watchword_core::{AuthError, Conflict, Invalid, Role};
 
 /// The provided handle backed by [`L10N`], or `L10N` alone.

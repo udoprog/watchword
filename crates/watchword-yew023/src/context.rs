@@ -1,20 +1,20 @@
 use core::ops::Deref;
 use std::rc::Rc;
 
-#[cfg(feature = "musliweb04")]
-use musli_web04::web03::prelude::ws;
+#[cfg(feature = "musliweb05")]
+use musli_web05::web03::prelude::ws;
 use yew::context::ContextHandle;
 use yew::prelude::*;
 
-#[cfg(feature = "musliweb04")]
-use watchword_core::musliweb04::AuthUpdate;
+#[cfg(feature = "musliweb05")]
+use watchword_core::musliweb05::AuthUpdate;
 use watchword_core::{AuthConfig, UserInfo};
 
 use super::client::Client;
 use super::listener::Listener;
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 use super::listener::Subscribers;
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 use super::socket::SocketHandle;
 use super::users::{Users, UsersStore};
 
@@ -24,7 +24,7 @@ use super::users::{Users, UsersStore};
 ///
 /// The provider gives a new context whenever the user or the config
 /// changes, such as when an admin changes the user's role elsewhere and the
-/// server broadcasts it (feature `musliweb04`), so a component that reads
+/// server broadcasts it (feature `musliweb05`), so a component that reads
 /// the context through [`use_auth`], [`use_is_admin`] or [`AuthSubscription`]
 /// renders again with it. An app does not need to forward watchword's
 /// events into its own broadcasts for that: see also
@@ -41,14 +41,14 @@ pub struct AuthContext {
     pub(super) set_user: Callback<UserInfo>,
     pub(super) check_session: Callback<()>,
     /// The app's socket, from [`AuthContext::set_socket`].
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     pub(super) socket: Option<SocketHandle>,
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     pub(super) set_socket: Callback<Option<ws::Handle>>,
     /// The users list shared inside the provider.
     pub(super) users: UsersStore,
     /// The app's listeners for the socket's updates.
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     pub(super) updates: Subscribers<AuthUpdate>,
 }
 
@@ -66,7 +66,7 @@ impl AuthContext {
 
     /// Fetches the user and the config again, such as after the app learns
     /// that the user changed. With a socket from
-    /// [`set_socket`](AuthContext::set_socket) (feature `musliweb04`), the
+    /// [`set_socket`](AuthContext::set_socket) (feature `musliweb05`), the
     /// user is asked for over it while it is open. A 401 shows the sign-in
     /// page with the provider's `signed_out_notice`; other failures keep what
     /// is shown.
@@ -84,7 +84,7 @@ impl AuthContext {
 
     /// Asks the server whether the session is still live, such as when the
     /// app learns that it may have ended. With a socket from
-    /// [`set_socket`](AuthContext::set_socket) (feature `musliweb04`), this
+    /// [`set_socket`](AuthContext::set_socket) (feature `musliweb05`), this
     /// runs by itself when the socket closes. A 401 shows the sign-in page with the provider's
     /// `signed_out_notice`; other failures, such as the server being down,
     /// keep the user signed in. A check while one is in flight is dropped.
@@ -98,8 +98,8 @@ impl AuthContext {
     /// exists; passing the same handle again does nothing.
     ///
     /// With a socket, the components follow the server's
-    /// [`AuthBroadcast`](watchword_core::musliweb04::AuthBroadcast): an
-    /// [`AuthUpdate::Me`](watchword_core::musliweb04::AuthUpdate::Me)
+    /// [`AuthBroadcast`](watchword_core::musliweb05::AuthBroadcast): an
+    /// [`AuthUpdate::Me`](watchword_core::musliweb05::AuthUpdate::Me)
     /// replaces [`user`](AuthContext::user), and
     /// [`AdminUsers`](super::AdminUsers) applies the user-list updates in
     /// place.
@@ -132,8 +132,8 @@ impl AuthContext {
     /// let auth = use_auth();
     /// auth.set_socket(Some(service.handle().clone()));
     /// ```
-    #[cfg(feature = "musliweb04")]
-    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb04")))]
+    #[cfg(feature = "musliweb05")]
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb05")))]
     pub fn set_socket(&self, socket: Option<ws::Handle>) {
         self.set_socket.emit(socket);
     }
@@ -199,8 +199,8 @@ impl AuthContext {
     ///
     /// An update for the session before impersonating or stopping it, which
     /// the provider ignores, is not passed on.
-    #[cfg(feature = "musliweb04")]
-    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb04")))]
+    #[cfg(feature = "musliweb05")]
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb05")))]
     pub fn on_update(&self, callback: Callback<AuthUpdate>) -> Listener {
         self.updates.subscribe(callback)
     }
@@ -209,7 +209,7 @@ impl AuthContext {
     /// one is handed over, and HTTP.
     pub(super) fn client(&self) -> Client {
         Client {
-            #[cfg(feature = "musliweb04")]
+            #[cfg(feature = "musliweb05")]
             socket: self.socket.clone(),
         }
     }
@@ -251,8 +251,8 @@ pub fn use_is_admin() -> bool {
 /// # Panics
 ///
 /// Panics outside an [`AuthProvider`](super::AuthProvider).
-#[cfg(feature = "musliweb04")]
-#[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb04")))]
+#[cfg(feature = "musliweb05")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb05")))]
 #[hook]
 pub fn use_auth_update<F>(f: F)
 where

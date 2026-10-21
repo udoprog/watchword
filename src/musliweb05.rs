@@ -30,9 +30,9 @@
 //!
 //! [`AuthBroadcast`] (32100) carries [`AuthUpdate`]s.
 //!
-//! The types are those of `watchword_core::musliweb04`, which an app's
+//! The types are those of `watchword_core::musliweb05`, which an app's
 //! wasm-safe `api` crate can use. With `axum08` as well, the server side is
-//! here too: a `Connection` (`musliweb04` and `axum08`) answers the
+//! here too: a `Connection` (`musliweb05` and `axum08`) answers the
 //! endpoints' requests on one socket, running the same operations as the HTTP
 //! routes, and turns each [`AuthEvent`](crate::AuthEvent) into the
 //! [`AuthUpdate`] that socket may see. Its `updates` are the socket loop's
@@ -68,7 +68,7 @@
 //! [musli-web]: https://docs.rs/musli-web
 
 #[doc(inline)]
-pub use watchword_core::musliweb04::*;
+pub use watchword_core::musliweb05::*;
 
 #[cfg(feature = "axum08")]
 mod connection;

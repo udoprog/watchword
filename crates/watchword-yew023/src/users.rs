@@ -7,8 +7,8 @@ use std::vec::Vec;
 
 use yew::prelude::*;
 
-#[cfg(feature = "musliweb04")]
-use watchword_core::musliweb04::AuthUpdate;
+#[cfg(feature = "musliweb05")]
+use watchword_core::musliweb05::AuthUpdate;
 use watchword_core::{Link, UserEntry, UserId};
 
 use super::client::Client;
@@ -31,7 +31,7 @@ use super::listener::{Listener, Slots};
 /// is kept current: by what [`AdminUsers`](super::AdminUsers) changes, and,
 /// with a socket handed to
 /// [`AuthContext::set_socket`](super::AuthContext::set_socket) (feature
-/// `musliweb04`), by the server's `AuthBroadcast`, fetching it again when a
+/// `musliweb05`), by the server's `AuthBroadcast`, fetching it again when a
 /// broadcast cannot say enough, such as after `Resync`. Without a socket, an
 /// app that learns of a change made elsewhere calls
 /// [`reload`](Users::reload). It is also fetched again, or dropped, when the
@@ -187,7 +187,7 @@ impl UsersStore {
     }
 
     /// Fetches the list with the client the store has then.
-    #[cfg_attr(not(feature = "musliweb04"), allow(dead_code))]
+    #[cfg_attr(not(feature = "musliweb05"), allow(dead_code))]
     pub(super) fn set_client(&self, client: Client) {
         self.inner.borrow_mut().client = client;
     }
@@ -265,7 +265,7 @@ impl UsersStore {
     /// Applies an update from the server to the list, fetching it again when
     /// the update cannot say enough. A list still loading comes with the
     /// change; a failed one is fetched again by [`Users::reload`].
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     pub(super) fn apply(&self, update: AuthUpdate) {
         // The provider's.
         if matches!(update, AuthUpdate::Me(..)) {
@@ -355,7 +355,7 @@ impl UsersStore {
 /// sign-in method changed (registering and revoking access use up the
 /// links), any change to a user not in the list, and updates the server
 /// missed (`Resync`).
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 pub(super) fn apply_update(users: &mut Vec<UserEntry>, update: AuthUpdate) -> bool {
     match update {
         // The provider's.

@@ -34,7 +34,7 @@
 
 use alloc::vec::Vec;
 
-use musli_core01::{Decode, Encode};
+use musli_core02::{Decode, Encode};
 
 use crate::{
     AuthError, CloudflareConfig, CreatedUser, Link, NewUser, PasswordChange, UserChange, UserEntry,
@@ -195,7 +195,7 @@ musli_web::api::define! {
 
 /// A live auth change, the event of [`AuthBroadcast`].
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[musli(crate = musli_core01)]
+#[musli(crate = musli_core02)]
 pub enum AuthUpdate {
     /// The connection's own user changed: role, login, email or credential.
     /// Set as [`Me`] answers, so an impersonated session keeps its marker.
@@ -215,22 +215,22 @@ pub enum AuthUpdate {
 
 /// The request of [`Me`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
-#[musli(crate = musli_core01)]
+#[musli(crate = musli_core02)]
 pub struct MeRequest;
 
 /// The request of [`Users`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
-#[musli(crate = musli_core01)]
+#[musli(crate = musli_core02)]
 pub struct UsersRequest;
 
 /// The request of [`Cloudflare`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
-#[musli(crate = musli_core01)]
+#[musli(crate = musli_core02)]
 pub struct CloudflareRequest;
 
 /// The request of [`UpdateUser`]: the change to make to the user `id`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[musli(crate = musli_core01)]
+#[musli(crate = musli_core02)]
 pub struct UserUpdate {
     /// The user to change.
     pub id: UserId,
@@ -244,7 +244,7 @@ macro_rules! user_requests {
         $(
             #[doc = concat!("The request of [`", stringify!($endpoint), "`]: the user it acts on.")]
             #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-            #[musli(crate = musli_core01)]
+            #[musli(crate = musli_core02)]
             pub struct $name {
                 /// The user.
                 pub id: UserId,

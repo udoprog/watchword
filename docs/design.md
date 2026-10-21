@@ -31,12 +31,12 @@ musli-web-macros):
   `normalize_email`). Safe for wasm32, and `no_std`: with neither `std` (on
   by default) nor `alloc` it has only the plain types (`UserId`, `Role`,
   `Access`, `Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN`), and
-  `alloc` adds those holding strings. Its `musli01` feature adds musli's
-  derives, its `musliweb04` feature the musli-web API types of 2.7, and its
-  `axum08` feature `IntoResponse` for `AuthError`, and its `sqll014` feature
-  sqll 0.14's `BindValue`, `Bind` and `FromColumn` for `UserId`, `Role`,
+  `alloc` adds those holding strings. Its `musli02` feature adds musli's
+  derives, its `musliweb05` feature the musli-web API types of 2.7, and its
+  `axum08` feature `IntoResponse` for `AuthError`, and its `sqll015` feature
+  sqll 0.15's `BindValue`, `Bind` and `FromColumn` for `UserId`, `Role`,
   `Access` and `Method` (Rust's orphan rule keeps these impls in the crate
-  defining the types). Neither `axum08` nor `sqll014` is for wasm32.
+  defining the types). Neither `axum08` nor `sqll015` is for wasm32.
 - **watchword-yew023**: everything for yew 0.23 (components, context,
   `use_auth`, the HTTP client and browser helpers). It depends on yew under the
   key `yew`, because yew's macros (`html!`, `#[function_component]`,
@@ -84,22 +84,22 @@ Two things follow from the rule:
 jiff 0.2 is in the API through the types' `Timestamp` fields and is not
 versioned: that would mean restructuring the types.
 
-phrasebook 0.1 is in the API through `L10N`, a `phrasebook::Catalog`, and the
+phrasebook 0.2 is in the API through `L10N`, a `phrasebook::Catalog`, and the
 `Phrases` context the components read, so its dependency key, feature and
-module are `phrasebook01`. The catalog (`L10N` and `locales/en-US.ftl`) lives
-in watchword-core as `watchword_core::phrasebook01::L10N`, behind its
-`phrasebook01` feature, so a native tool that needs only the messages (army's
+module are `phrasebook02`. The catalog (`L10N` and `locales/en-US.ftl`) lives
+in watchword-core as `watchword_core::phrasebook02::L10N`, behind its
+`phrasebook02` feature, so a native tool that needs only the messages (army's
 `check-l10n`, which checks an app's `.ftl` against the ids of the catalogs it
 takes) gets them without building yew, gloo-net, web-sys and
 wasm-bindgen-futures. A feature on watchword-core rather than a
 `watchword-l10n` crate: the catalog is a static and a `.ftl` file with no
 dependency but phrasebook, core is already released in lockstep and taken by
 every frontend, and a fourth crate would add a lockstep release and a docs.rs
-page for one item. The feature implies `std`, since phrasebook 0.1 has no
+page for one item. The feature implies `std`, since phrasebook 0.2 has no
 `no_std` support (no `std`/`alloc` features of its own). watchword's
-`phrasebook01` feature re-exports the module as `watchword::phrasebook01`;
+`phrasebook02` feature re-exports the module as `watchword::phrasebook02`;
 `yew023` implies it. In watchword-yew023 phrasebook is not optional (every
-component's text goes through it), so it turns on `watchword-core/phrasebook01`
+component's text goes through it), so it turns on `watchword-core/phrasebook02`
 with its `std` feature and re-exports `L10N` at its root, where it has always
 been: a later phrasebook would come with a yew of its own, hence with a new
 `watchword-yew0NN` crate anyway, while watchword-core would add a
@@ -121,19 +121,19 @@ without its default features, so the time zone databases it does not need for
 | *(none)* | `types` (watchword-core): `UserId`, `Role`, `Access`, `Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN` | serde, jiff (no time zones), thiserror, all without default features |
 | `alloc` | the rest of `types`: the wire types, `AuthError`, `validate_password`, `normalize_email` | their `alloc` |
 | `std` *(default)* | `alloc`, and std for the dependencies (and watchword-yew023) | their `std` |
-| `musli01` | `Encode`/`Decode` on the types, so an app can embed them in its own WebSocket messages | musli-core 0.1 |
+| `musli02` | `Encode`/`Decode` on the types, so an app can embed them in its own WebSocket messages | musli-core 0.2 |
 | `server` | `std` + `core` (hashing, ids, cookies, the `Auth` service, throttle, events, bootstrap, `SessionGuard`) and `store` (`Store`, `MemoryStore`) | base64, bcrypt, cookie, hmac, http, rand, sha2, tokio (rt, sync, time), tracing |
 | `cloudflare` | `server` + the Cloudflare Access provider | aws-lc-rs, reqwest, serde_json |
 | `google` | `server` + the Google OAuth provider (`GoogleConfig`) | reqwest, serde_json, url, lru |
 | `axum08` | `server` + extractors and `routes()` for axum 0.8 | axum 0.8 |
-| `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, its `SCHEMA`, `MIGRATIONS` and `check_schema`, and watchword-core's `sqll014`: the sqll column traits on `UserId` (an integer with the same bits), `Role`, `Access` and `Method` (their names) | sqll 0.14 (`derive`, `pool`, `typed`, `threadsafe`; no default features, the app picks `bundled`) |
-| `phrasebook01` | `std` + `watchword::phrasebook01` (watchword-core's): `L10N`, the components' messages as a phrasebook catalog, without yew, for native tools such as an l10n checker | phrasebook 0.1 (no features) |
-| `yew023` | `std` + `phrasebook01` + watchword-yew023: components, context, hook, HTTP client, and `L10N` re-exported | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.1 (`yew023`) |
+| `sqll015` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.15 pool, its `SCHEMA`, `MIGRATIONS` and `check_schema`, and watchword-core's `sqll015`: the sqll column traits on `UserId` (an integer with the same bits), `Role`, `Access` and `Method` (their names) | sqll 0.15 (`derive`, `pool`, `typed`, `threadsafe`; no default features, the app picks `bundled`) |
+| `phrasebook02` | `std` + `watchword::phrasebook02` (watchword-core's): `L10N`, the components' messages as a phrasebook catalog, without yew, for native tools such as an l10n checker | phrasebook 0.2 (no features) |
+| `yew023` | `std` + `phrasebook02` + watchword-yew023: components, context, hook, HTTP client, and `L10N` re-exported | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.2 (`yew023`) |
 | `test-util` | `server` + for apps' tests: `Auth::test_user` and `Auth::test_session` (2.2), the store conformance suite as `store_suite!` (2.3); with `google` also `AuthBuilder::google_endpoints`, and with `google` and `axum08` `google::fake::FakeGoogle` (2.4) | nothing more |
-| `musliweb04` *(2.7)* | `alloc` + `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
+| `musliweb05` *(2.7)* | `alloc` + `musli02` + `watchword::musliweb05`: the auth endpoints and broadcast as musli-web 0.5 API types; with `axum08` also `musliweb05::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.5 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
 
 The modules are `watchword::{types, core, store, cloudflare, google, axum08,
-sqll014, musliweb04, phrasebook01, yew023}`, and the most-used names that need no versioned feature are
+sqll015, musliweb05, phrasebook02, yew023}`, and the most-used names that need no versioned feature are
 re-exported at the root.
 
 ## 2. API
@@ -478,7 +478,7 @@ pub enum Credential { Password(String /* hash */), Google { sub: String, email: 
 Store failures are a `StoreError`, which boxes any error.
 
 The library ships `MemoryStore`, used by its own tests and the example app, and,
-behind `sqll014`, `SqllStore`. The crate's store conformance suite, the
+behind `sqll015`, `SqllStore`. The crate's store conformance suite, the
 tests of `Auth`'s rules that depend on what a store keeps, runs against both.
 With `test-util` it is public as `watchword::store_suite!(expr)`, which
 defines one `#[test]` per test, each over a fresh store from `expr`
@@ -489,7 +489,7 @@ watchword's sign-in and user-management behaviour; the functions it calls
 are hidden, and new tests arrive in minor releases.
 
 `SqllStore` works on a sqll `Pool`. It exports its statement collections,
-`watchword::sqll014::Read` and `watchword::sqll014::Write`. An app nests these
+`watchword::sqll015::Read` and `watchword::sqll015::Write`. An app nests these
 in its own pool's collections with `#[sql(statements)]` and implements `AsMut`
 to reach them, so auth shares the app's single write connection;
 `SqllStore::new(pool)` then takes the app's `Arc<Pool<R, W>>`. A store over a
@@ -503,7 +503,7 @@ when it opens, so the schema must be in place first. The schema:
 | `auth_tokens` | `id` TEXT PRIMARY KEY, `user_id` → users, `kind` TEXT (`registration`/`reset`), `expires_at` and `used_at` INTEGER ms |
 | `config` | `key` TEXT PRIMARY KEY, `value` TEXT |
 
-`watchword::sqll014::SCHEMA` creates the tables in a new database. An app keeps
+`watchword::sqll015::SCHEMA` creates the tables in a new database. An app keeps
 its own columns on `users` (with defaults, since the store inserts only its
 own) and its own tables referencing `users (id)`; the store reads and writes
 only its own columns. An app's SQL may read the store's columns (they change
@@ -515,7 +515,7 @@ enable foreign keys.
 The tables ship in two forms that end up the same, so apps stop copying SQL
 out of watchword by hand:
 
-- `watchword::sqll014::MIGRATIONS: &[(&str, &str)]`, ordered `(id, sql)`
+- `watchword::sqll015::MIGRATIONS: &[(&str, &str)]`, ordered `(id, sql)`
   pairs: `watchword-0001-tables` (the tables as first released, frozen), then
   each change since (`watchword-0002-sessions-impersonator`, an `ALTER TABLE`
   adding `sessions.impersonator_id`). Ids are stable and prefixed so they sit
@@ -524,14 +524,14 @@ out of watchword by hand:
   exports plain data and depends on no runner: an app hands the pairs to a
   runner, or splices them into its own list, leaving out the ids its own
   migrations already did (a copied base schema did `watchword-0001-tables`).
-  The SQL lives in `src/sqll014/migrations/`.
+  The SQL lives in `src/sqll015/migrations/`.
 - `SCHEMA`, what all migrations add up to, for creating a new database in one
   step (a runner's fresh schema). Rerunning it changes nothing and adds no
   columns, so it does not upgrade. A test checks that `SCHEMA` and
   `MIGRATIONS` produce the same tables, indexes and foreign keys.
 
-`watchword::sqll014::check_schema(&Connection)` checks that every table and
-column the store uses exists, and fails with a `sqll014::Error` naming each
+`watchword::sqll015::check_schema(&Connection)` checks that every table and
+column the store uses exists, and fails with a `sqll015::Error` naming each
 one missing and the migration that adds it, so an app run on a stale database
 fails at startup (at the end of its pool's write setup) with a readable error
 rather than when a statement fails to prepare. It checks names only, and
@@ -722,7 +722,7 @@ Their text goes through phrasebook (decision 21). Every string, including the
 messages for errors and `Invalid` reasons (phrased from their codes, not from
 `Display`), is a message in `crates/watchword-core/locales/en-US.ftl` under
 the `watchword-` prefix, shipped as `pub static L10N: phrasebook::Catalog` in
-watchword-core's `phrasebook01` module (see 1.2) and re-exported here.
+watchword-core's `phrasebook02` module (see 1.2) and re-exported here.
 Each function component reads `or_catalog(use_context::<Phrases>(), &L10N)`;
 the struct components (`AuthProvider`, `AdminUsers`) subscribe to the same
 context and keep the handle. So without a provider, or with an app phrasebook
@@ -776,7 +776,7 @@ cookies, so the library does not depend on the app's gloo version.
   - `use_users() -> Users` and `AuthContext::subscribe_users(callback) ->
     (Users, Listener)` give the users list shared with `<AdminUsers>`
     (below);
-  - with `musliweb04`, `AuthContext::on_update(callback) -> Listener` and
+  - with `musliweb05`, `AuthContext::on_update(callback) -> Listener` and
     `use_auth_update(f)` pass on each `AuthUpdate` the socket brings, after
     the provider and the shared list applied it, except the stale socket's
     `Me`/`Resync` the provider ignores.
@@ -837,9 +837,9 @@ cookies, so the library does not depend on the app's gloo version.
   token. `app_name` overrides the message `watchword-cloudflare-the-app` ("the
   app") in the instructions.
 
-### 2.7 musli-web integration (`musliweb04`)
+### 2.7 musli-web integration (`musliweb05`)
 
-*Status: built are the types (`watchword::musliweb04`), the server's
+*Status: built are the types (`watchword::musliweb05`), the server's
 `Connection` (`new`, `update`, `lagged`, `handle`, `handles`, the
 accessors `signed_in`, `require_admin`, `user_id` and `session_id`, and
 `updates`, the socket loop's auth arm as an `Updates`), and the components
@@ -853,7 +853,7 @@ can carry watchword's account and user-management operations, and its live
 updates, on that same connection. The HTTP routes of 2.5 stay; this is a
 second transport for the operations that can use it, not a replacement.
 
-#### What musli-web 0.4 gives and constrains
+#### What musli-web 0.5 gives and constrains
 
 - `musli_web::define! { ... }` turns each `pub type X;` with an `impl
   Endpoint for X` or `impl Broadcast for X` into a type with a `const ID:
@@ -874,14 +874,14 @@ second transport for the operations that can use it, not a replacement.
   requests and broadcasts of any number of `define!` lists, as long as the ids
   differ. It reconnects by itself, with backoff.
 
-#### Types: `watchword::musliweb04` (feature `musliweb04`)
+#### Types: `watchword::musliweb05` (feature `musliweb05`)
 
 The definitions live in watchword-core, which is wasm-safe and is what an
 app's shared `api` crate already depends on (through `watchword` with
-`musli01`). watchword-core depends on musli-web under the versioned key
-`musli-web04` (`default-features = false, features = ["api"]`) and makes the
-macro's paths resolve with `extern crate musli_web04 as musli_web;` at its
-root, under the feature. The module is re-exported as `watchword::musliweb04`.
+`musli02`). watchword-core depends on musli-web under the versioned key
+`musli-web05` (`default-features = false, features = ["api"]`) and makes the
+macro's paths resolve with `extern crate musli_web05 as musli_web;` at its
+root, under the feature. The module is re-exported as `watchword::musliweb05`.
 
 ```rust
 musli_web::api::define! {
@@ -940,18 +940,18 @@ makes a clash a matter of an app defining over 31 999 types.
 
 The app's `api` crate does not list watchword's types in its own `define!`
 (musli-web has no syntax for that): they are a second list on the same
-connection. The app takes `watchword` with `musliweb04` in its `api` crate
+connection. The app takes `watchword` with `musliweb05` in its `api` crate
 and may re-export the module.
 
-#### Server: `watchword::musliweb04::Connection` (`musliweb04` + `axum08`)
+#### Server: `watchword::musliweb05::Connection` (`musliweb05` + `axum08`)
 
 musli-web's server side (`ws::Handler`, `Incoming`, `Outgoing`) needs its
 `ws` feature, which builds on axum 0.8, so the handler exists when both
-`musliweb04` and `axum08` are on (`musli-web04?/ws` is enabled by `axum08`).
+`musliweb05` and `axum08` are on (`musli-web05?/ws` is enabled by `axum08`).
 
 ```rust
 // At upgrade, from the `SignedIn` the app's /ws route already extracts:
-let conn = watchword::musliweb04::Connection::new(auth.clone(), &signed_in);
+let conn = watchword::musliweb05::Connection::new(auth.clone(), &signed_in);
 
 // In the app's Handler::handle, in the arm for ids its own API does not know:
 api::Request::Unknown(id) => conn.handle(id, incoming, outgoing).await,   // -> Result<bool, RequestError>
@@ -1047,7 +1047,7 @@ transports; `UpdateAccount` refuses a role change with `RoleNotChangeable` as
 its route does. A body that does not decode also gives `Ok(false)`, and
 musli-web answers the request with the decode error. An internal failure is
 logged by `handle`, at error level with its cause, and returned as the `Err`:
-a `musliweb04::RequestError`, the app handler's error type, whose message
+a `musliweb05::RequestError`, the app handler's error type, whose message
 musli-web sends as the request error. It shows a refusal as its `AuthError`
 and an internal failure as just `internal error`, so a cause never reaches
 the client. The app's own requests convert into it with `?` (from
@@ -1055,7 +1055,7 @@ the client. The app's own requests convert into it with `?` (from
 failures itself, and does not log again what `handle` returns, which is
 already logged.
 
-#### Frontend: the components' socket transport (`musliweb04` + `yew023`)
+#### Frontend: the components' socket transport (`musliweb05` + `yew023`)
 
 The `/ws` upgrade needs a session, so an app opens its socket inside
 `<AuthProvider>`, after sign-in. It hands the handle to watchword once:
@@ -1079,8 +1079,8 @@ replaces the user as for `Me` and the list is fetched again. Every update is
 then passed to the app's `on_update` listeners. `http::Error`
 gains a variant for a socket request error.
 
-As built: watchword-yew023 has a `musliweb04` feature, which watchword's
-`musliweb04` turns on with `yew023`. `set_socket` with the handle already set
+As built: watchword-yew023 has a `musliweb05` feature, which watchword's
+`musliweb05` turns on with `yew023`. `set_socket` with the handle already set
 does nothing, and the socket is forgotten whenever the provider leaves the
 signed-in state, so the next sign-in hands over its own.
 
@@ -1149,7 +1149,7 @@ dropping the server, which closes the socket, once `next` gives `None`. The fron
 `set_socket`, which then checks the session whenever the socket closes;
 musli-web reconnects by itself while the session lives.
 
-watchword-yew023 takes musli-web under `musli-web04` with `web03`; it calls
+watchword-yew023 takes musli-web under `musli-web05` with `web03`; it calls
 no musli-web macros, so it needs no alias.
 
 #### What stays HTTP, and why
@@ -1341,8 +1341,8 @@ once the release is on crates.io.
 19. **musli-web is a versioned dependency, aliased for its macro.** musli-web
     0.4 is not 1.0 and appears in the API (`Handle`, `Incoming`, the
     generated types), so the feature, dependency key and module are
-    `musliweb04`/`musli-web04`/`musliweb04` (1.2). `define!` expands to
-    `::musli_web::` paths, which `extern crate musli_web04 as musli_web;` in
+    `musliweb05`/`musli-web05`/`musliweb05` (1.2). `define!` expands to
+    `::musli_web::` paths, which `extern crate musli_web05 as musli_web;` in
     watchword-core satisfies without giving up the versioned key. That alias
     is crate-wide, so a later `musliweb05` cannot sit beside it in the same
     crate; when that comes, one of the two moves into a crate of its own

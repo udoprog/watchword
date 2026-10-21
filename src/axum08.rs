@@ -73,7 +73,7 @@
 //! signed-in user and [`Admin`] for an admin, both read from the store on
 //! every request. On a WebSocket, which outlives roles and sessions, its own
 //! requests are gated per request instead: on a musli-web socket with
-//! `musliweb04::Connection::signed_in` and `Connection::require_admin`,
+//! `musliweb05::Connection::signed_in` and `Connection::require_admin`,
 //! which answer as these extractors do, or, for the role as last seen
 //! without a store read, with the socket's
 //! [`SessionGuard::user`](crate::core::SessionGuard::user) and

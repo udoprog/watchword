@@ -1,10 +1,10 @@
 use std::rc::Rc;
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 use std::time::Duration;
 
-#[cfg(feature = "musliweb04")]
-use musli_web04::web03::prelude::ws;
-use phrasebook01::Phrases;
+#[cfg(feature = "musliweb05")]
+use musli_web05::web03::prelude::ws;
+use phrasebook02::Phrases;
 use yew::context::ContextHandle;
 use yew::prelude::*;
 
@@ -13,15 +13,15 @@ use super::client::Client;
 use super::context::AuthContext;
 use super::http::{self, Error};
 use super::l10n;
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 use super::listener::Subscribers;
 use super::register::Register;
 use super::sign_in::SignIn;
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 use super::socket::{Socket, SocketHandle};
 use super::users::UsersStore;
-#[cfg(feature = "musliweb04")]
-use watchword_core::musliweb04::AuthUpdate;
+#[cfg(feature = "musliweb05")]
+use watchword_core::musliweb05::AuthUpdate;
 use watchword_core::{AuthConfig, UserInfo};
 
 /// The properties of [`AuthProvider`].
@@ -68,17 +68,17 @@ pub struct AuthProviderProps {
 /// leaves the page and comes back to the same `next` (checked again by the
 /// server), or else to the page it left.
 ///
-/// With the `musliweb04` feature and a socket handed over with
+/// With the `musliweb05` feature and a socket handed over with
 /// [`AuthContext::set_socket`], it also follows the server's
-/// [`AuthUpdate::Me`](watchword_core::musliweb04::AuthUpdate::Me) (and the
-/// user [`Resync`](watchword_core::musliweb04::AuthUpdate::Resync) carries),
+/// [`AuthUpdate::Me`](watchword_core::musliweb05::AuthUpdate::Me) (and the
+/// user [`Resync`](watchword_core::musliweb05::AuthUpdate::Resync) carries),
 /// so a change to the user made elsewhere, such as an admin changing their
 /// role, shows at once. It passes each update on to the app's
 /// [`AuthContext::on_update`] listeners, and the user-list updates to the
 /// shared [`Users`](super::Users).
 ///
 /// Its text, and that of the pages it shows, comes from the
-/// [`Phrases`](phrasebook01::Phrases) the app provides around it, falling
+/// [`Phrases`](phrasebook02::Phrases) the app provides around it, falling
 /// back to watchword's English (see [`L10N`](super::L10N)).
 pub struct AuthProvider {
     state: State,
@@ -94,22 +94,22 @@ pub struct AuthProvider {
     set_user: Callback<UserInfo>,
     check_session: Callback<()>,
     retry: Callback<MouseEvent>,
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     socket: Socket,
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     set_socket: Callback<Option<ws::Handle>>,
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     on_update: Callback<AuthUpdate>,
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     on_socket_state: Callback<bool>,
     /// Counts the socket's changes, so that a [`Msg::SocketClosed`] from
     /// before the latest one is ignored.
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     socket_watch: u64,
     /// The users list the children share.
     users: UsersStore,
     /// The app's listeners for the socket's updates.
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     updates: Subscribers<AuthUpdate>,
 }
 
@@ -117,7 +117,7 @@ pub struct AuthProvider {
 /// musli-web retries the socket with backoff up to a few seconds, and the
 /// browser does not say why an upgrade failed, so a socket refused for an
 /// ended session only shows as one that does not open.
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 const CLOSED_SOCKET_CHECK: Duration = Duration::from_secs(10);
 
 enum State {
@@ -150,16 +150,16 @@ pub enum Msg {
     SetUser(UserInfo),
     CheckSession,
     Checked(Result<UserInfo, Error>),
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     SetSocket(Option<ws::Handle>),
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     Update(AuthUpdate),
     /// The socket opened (`true`) or closed (`false`).
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     SocketState(bool),
     /// The socket has stayed closed for [`CLOSED_SOCKET_CHECK`] since the
     /// [`socket_watch`](AuthProvider::socket_watch) this carries.
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     SocketClosed(u64),
     Phrases(Phrases),
 }
@@ -189,18 +189,18 @@ impl Component for AuthProvider {
             set_user: link.callback(Msg::SetUser),
             check_session: check_session.clone(),
             retry: link.callback(|_| Msg::Load),
-            #[cfg(feature = "musliweb04")]
+            #[cfg(feature = "musliweb05")]
             socket: Socket::default(),
-            #[cfg(feature = "musliweb04")]
+            #[cfg(feature = "musliweb05")]
             set_socket: link.callback(Msg::SetSocket),
-            #[cfg(feature = "musliweb04")]
+            #[cfg(feature = "musliweb05")]
             on_update: link.callback(Msg::Update),
-            #[cfg(feature = "musliweb04")]
+            #[cfg(feature = "musliweb05")]
             on_socket_state: link.callback(Msg::SocketState),
-            #[cfg(feature = "musliweb04")]
+            #[cfg(feature = "musliweb05")]
             socket_watch: 0,
             users: UsersStore::new(Client::default(), check_session),
-            #[cfg(feature = "musliweb04")]
+            #[cfg(feature = "musliweb05")]
             updates: Subscribers::default(),
         }
     }
@@ -307,7 +307,7 @@ impl Component for AuthProvider {
                 self.checking = false;
                 self.session_answer(me);
             }
-            #[cfg(feature = "musliweb04")]
+            #[cfg(feature = "musliweb05")]
             Msg::SetSocket(handle) => {
                 if !matches!(self.state, State::SignedIn(..)) {
                     return false;
@@ -333,7 +333,7 @@ impl Component for AuthProvider {
 
                 return changed;
             }
-            #[cfg(feature = "musliweb04")]
+            #[cfg(feature = "musliweb05")]
             Msg::SocketState(open) => {
                 // Only the current socket's changes count.
                 if !matches!(self.state, State::SignedIn(..))
@@ -354,7 +354,7 @@ impl Component for AuthProvider {
 
                 return false;
             }
-            #[cfg(feature = "musliweb04")]
+            #[cfg(feature = "musliweb05")]
             Msg::SocketClosed(watch) => {
                 if watch != self.socket_watch
                     || !matches!(self.state, State::SignedIn(..))
@@ -367,7 +367,7 @@ impl Component for AuthProvider {
                 self.watch_closed_socket(ctx);
                 return false;
             }
-            #[cfg(feature = "musliweb04")]
+            #[cfg(feature = "musliweb05")]
             Msg::Update(update) => {
                 if !matches!(self.state, State::SignedIn(..)) {
                     return false;
@@ -417,7 +417,7 @@ impl Component for AuthProvider {
 
         // The socket belongs to the session: the app's own, inside the
         // children, closes with it, and a new sign-in opens another.
-        #[cfg(feature = "musliweb04")]
+        #[cfg(feature = "musliweb05")]
         if self.socket.handle().is_some() {
             self.socket = Socket::default();
             self.users.set_client(self.client());
@@ -488,12 +488,12 @@ impl Component for AuthProvider {
                     refresh: self.refresh.clone(),
                     set_user: self.set_user.clone(),
                     check_session: self.check_session.clone(),
-                    #[cfg(feature = "musliweb04")]
+                    #[cfg(feature = "musliweb05")]
                     socket: self.socket.handle().cloned(),
-                    #[cfg(feature = "musliweb04")]
+                    #[cfg(feature = "musliweb05")]
                     set_socket: self.set_socket.clone(),
                     users: self.users.clone(),
-                    #[cfg(feature = "musliweb04")]
+                    #[cfg(feature = "musliweb05")]
                     updates: self.updates.clone(),
                 };
 
@@ -522,7 +522,7 @@ impl AuthProvider {
 
     /// Sends [`Msg::SocketClosed`] after [`CLOSED_SOCKET_CHECK`], for the
     /// current [`socket_watch`](Self::socket_watch).
-    #[cfg(feature = "musliweb04")]
+    #[cfg(feature = "musliweb05")]
     fn watch_closed_socket(&self, ctx: &Context<Self>) {
         let watch = self.socket_watch;
 
@@ -535,7 +535,7 @@ impl AuthProvider {
     /// The transport for the requests that can use the socket.
     fn client(&self) -> Client {
         Client {
-            #[cfg(feature = "musliweb04")]
+            #[cfg(feature = "musliweb05")]
             socket: self.socket.handle().cloned(),
         }
     }

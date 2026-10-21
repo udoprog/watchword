@@ -34,29 +34,29 @@ jobs:
       with:
         components: clippy
     - run: cargo clippy --all-targets --no-default-features -- -D warnings
-    - run: cargo clippy --all-targets --no-default-features --features musli01 -- -D warnings
-    - run: cargo clippy --all-targets --no-default-features --features musliweb04 -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features musli02 -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features musliweb05 -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features server -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features cloudflare -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features google -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features axum08 -- -D warnings
-    - run: cargo clippy --all-targets --no-default-features --features musliweb04,axum08 -- -D warnings
-    - run: cargo clippy --all-targets --no-default-features --features sqll014 -- -D warnings
-    - run: cargo clippy --all-targets --no-default-features --features phrasebook01 -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features musliweb05,axum08 -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features sqll015 -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features phrasebook02 -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features yew023 -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features test-util -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features test-util,google -- -D warnings
     - run: cargo clippy --all-targets --all-features -- -D warnings
     - run: cargo clippy -p watchword-core --all-targets --no-default-features -- -D warnings
-    - run: cargo clippy -p watchword-core --all-targets --no-default-features --features musli01 -- -D warnings
-    - run: cargo clippy -p watchword-core --all-targets --no-default-features --features musliweb04 -- -D warnings
+    - run: cargo clippy -p watchword-core --all-targets --no-default-features --features musli02 -- -D warnings
+    - run: cargo clippy -p watchword-core --all-targets --no-default-features --features musliweb05 -- -D warnings
     - run: cargo clippy -p watchword-core --all-targets --no-default-features --features axum08 -- -D warnings
-    - run: cargo clippy -p watchword-core --all-targets --no-default-features --features phrasebook01 -- -D warnings
+    - run: cargo clippy -p watchword-core --all-targets --no-default-features --features phrasebook02 -- -D warnings
     - run: cargo check -p watchword-core --no-default-features
     - run: cargo check -p watchword-core --no-default-features --features alloc
     - run: cargo check --no-default-features --features alloc
     - run: cargo clippy -p watchword-yew023 --all-targets -- -D warnings
-    - run: cargo clippy -p watchword-yew023 --all-targets --features musliweb04 -- -D warnings
+    - run: cargo clippy -p watchword-yew023 --all-targets --features musliweb05 -- -D warnings
 
   wasm:
     runs-on: ubuntu-latest
@@ -67,15 +67,15 @@ jobs:
         targets: wasm32-unknown-unknown
         components: clippy
     - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew023
-    - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew023,musli01
-    - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew023,musliweb04
+    - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew023,musli02
+    - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew023,musliweb05
     - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features
     - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features alloc
-    - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features musli01
-    - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features musliweb04
-    - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features phrasebook01
+    - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features musli02
+    - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features musliweb05
+    - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features phrasebook02
     - run: cargo clippy -p watchword-yew023 --target wasm32-unknown-unknown -- -D warnings
-    - run: cargo clippy -p watchword-yew023 --target wasm32-unknown-unknown --features musliweb04 -- -D warnings
+    - run: cargo clippy -p watchword-yew023 --target wasm32-unknown-unknown --features musliweb05 -- -D warnings
 
   docs:
     runs-on: ubuntu-latest

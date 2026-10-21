@@ -1,11 +1,11 @@
 //! [`SqllStore`], a [`Store`] over SQLite through
-//! [sqll](https://docs.rs/sqll/0.14) 0.14 (the `sqll014` feature).
+//! [sqll](https://docs.rs/sqll/0.14) 0.14 (the `sqll015` feature).
 //!
 //! The store works over four tables with a fixed set of columns, created by
 //! [`SCHEMA`] in a new database:
 //!
 //! ```sql
-#![doc = include_str!("sqll014/schema.sql")]
+#![doc = include_str!("sqll015/schema.sql")]
 //! ```
 //!
 //! An app keeps its own columns on `users` (with defaults, since the store
@@ -24,7 +24,7 @@
 //!
 //! # Sharing the app's pool
 //!
-//! The store runs its statements on a [`sqll014::Pool`]. An app with its own
+//! The store runs its statements on a [`sqll015::Pool`]. An app with its own
 //! pool nests [`Read`] and [`Write`] in its statement collections and gives
 //! the store access to them through [`AsMut`], so that auth and the app share
 //! one write connection:
@@ -34,17 +34,17 @@
 //! #[sql(read_only)]
 //! struct AppRead {
 //!     #[sql(statements)]
-//!     auth: watchword::sqll014::Read,
+//!     auth: watchword::sqll015::Read,
 //!     // the app's own statements
 //! }
 //!
-//! impl AsMut<watchword::sqll014::Read> for AppRead {
-//!     fn as_mut(&mut self) -> &mut watchword::sqll014::Read {
+//! impl AsMut<watchword::sqll015::Read> for AppRead {
+//!     fn as_mut(&mut self) -> &mut watchword::sqll015::Read {
 //!         &mut self.auth
 //!     }
 //! }
 //!
-//! // ...and the same for `AppWrite` with `watchword::sqll014::Write`.
+//! // ...and the same for `AppWrite` with `watchword::sqll015::Write`.
 //!
 //! let pool: Arc<Pool<AppRead, AppWrite>> = /* the app's pool */;
 //! let store = SqllStore::new(pool.clone());
@@ -80,11 +80,11 @@
 //! letting a statement fail to prepare:
 //!
 //! ```
-//! use sqll014::{Connection, OpenOptions, PoolBuilder};
-//! use watchword::sqll014::{MIGRATIONS, Read, SqllStore, Write, check_schema};
+//! use sqll015::{Connection, OpenOptions, PoolBuilder};
+//! use watchword::sqll015::{MIGRATIONS, Read, SqllStore, Write, check_schema};
 //!
 //! /// Applies the migrations `c` has not recorded, each in one transaction.
-//! fn migrate(c: &Connection, migrations: &[(&str, &str)]) -> sqll014::Result<()> {
+//! fn migrate(c: &Connection, migrations: &[(&str, &str)]) -> sqll015::Result<()> {
 //!     c.execute(
 //!         "CREATE TABLE IF NOT EXISTS migrations \
 //!          (id TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
@@ -148,7 +148,7 @@
 //! `watchword-0002-sessions-impersonator`.
 //!
 //! ```
-//! use watchword::sqll014::MIGRATIONS;
+//! use watchword::sqll015::MIGRATIONS;
 //!
 //! /// Ids of watchword's migrations this app's own migrations already did.
 //! const DONE: &[&str] = &["watchword-0001-tables", "watchword-0002-sessions-impersonator"];
@@ -177,7 +177,7 @@ use std::sync::Arc;
 use std::vec::Vec;
 
 use jiff::Timestamp;
-use sqll014::{IsReadOnly, Pool, Row, Statements, TypedStatement};
+use sqll015::{IsReadOnly, Pool, Row, Statements, TypedStatement};
 use tokio::task::spawn_blocking;
 
 use crate::store::{Credential, Result, Session, Store, StoreError, Token, TokenKind, User};
@@ -191,7 +191,7 @@ mod tests;
 /// running it again changes nothing, and it does not upgrade tables made by an
 /// earlier release. See [creating and upgrading the
 /// tables](self#creating-and-upgrading-the-tables).
-pub const SCHEMA: &str = include_str!("sqll014/schema.sql");
+pub const SCHEMA: &str = include_str!("sqll015/schema.sql");
 
 /// The store's migrations, in the order to apply them, as `(id, sql)` pairs:
 /// the tables as first released, then each change to them since. Ids are
@@ -208,11 +208,11 @@ pub const SCHEMA: &str = include_str!("sqll014/schema.sql");
 pub const MIGRATIONS: &[(&str, &str)] = &[
     (
         "watchword-0001-tables",
-        include_str!("sqll014/migrations/0001-tables.sql"),
+        include_str!("sqll015/migrations/0001-tables.sql"),
     ),
     (
         "watchword-0002-sessions-impersonator",
-        include_str!("sqll014/migrations/0002-sessions-impersonator.sql"),
+        include_str!("sqll015/migrations/0002-sessions-impersonator.sql"),
     ),
 ];
 
@@ -273,9 +273,9 @@ const COLUMNS: &[(&str, Columns)] = &[
 ///
 /// # Errors
 ///
-/// Fails with a [`sqll014::Error`] whose message lists what is missing, or
+/// Fails with a [`sqll015::Error`] whose message lists what is missing, or
 /// with the error of reading the database's schema.
-pub fn check_schema(c: &sqll014::Connection) -> sqll014::Result<()> {
+pub fn check_schema(c: &sqll015::Connection) -> sqll015::Result<()> {
     let mut stmt = c.prepare("SELECT name FROM pragma_table_info(?)")?;
     let mut missing = Vec::new();
 
@@ -309,13 +309,13 @@ pub fn check_schema(c: &sqll014::Connection) -> sqll014::Result<()> {
         return Ok(());
     }
 
-    Err(sqll014::Error::custom(format_args!(
-        "watchword's tables lack {}; apply sqll014::MIGRATIONS",
+    Err(sqll015::Error::custom(format_args!(
+        "watchword's tables lack {}; apply sqll015::MIGRATIONS",
         missing.join(", ")
     )))
 }
 
-/// A [`Store`] over SQLite, on a [`sqll014::Pool`] whose read and write
+/// A [`Store`] over SQLite, on a [`sqll015::Pool`] whose read and write
 /// statement collections contain [`Read`] and [`Write`]. See the [module
 /// documentation](self) for the schema and for sharing an app's pool.
 ///
@@ -377,7 +377,7 @@ where
 /// The store's read statements, to nest in an app's read-only statement
 /// collection with `#[sql(statements)]`.
 #[derive(Statements)]
-#[sql(crate = sqll014)]
+#[sql(crate = sqll015)]
 #[sql(read_only)]
 pub struct Read {
     #[sql = "SELECT id, login, email, role, access, method, password_hash, google_sub, created_at"]
@@ -411,7 +411,7 @@ pub struct Read {
 /// The store's write statements, to nest in an app's write statement
 /// collection with `#[sql(statements)]`. They include [`Read`].
 #[derive(Statements)]
-#[sql(crate = sqll014)]
+#[sql(crate = sqll015)]
 pub struct Write {
     #[sql(statements)]
     read: Read,
@@ -553,7 +553,7 @@ impl Write {
 
         let result = match panic::catch_unwind(AssertUnwindSafe(|| f(self))) {
             Ok(Ok(value)) => match self.commit.execute(()) {
-                Ok(()) => return Ok(value),
+                Ok(_) => return Ok(value),
                 Err(e) => Err(e.into()),
             },
             Ok(Err(e)) => Err(e),
@@ -630,7 +630,7 @@ where
             let mut users = Vec::new();
             let mut stmt = r.users.bind((millis(now),))?;
 
-            while let Some(row) = stmt.next()? {
+            while let Some(row) = stmt.next().transpose()? {
                 let (user, link) = row.split();
                 users.push((User::try_from(user)?, link.map(timestamp).transpose()?));
             }
@@ -929,15 +929,15 @@ where
     }
 }
 
-impl From<sqll014::Error> for StoreError {
+impl From<sqll015::Error> for StoreError {
     #[inline]
-    fn from(error: sqll014::Error) -> Self {
+    fn from(error: sqll015::Error) -> Self {
         StoreError::new(error)
     }
 }
 
 #[derive(Row)]
-#[sql(crate = sqll014)]
+#[sql(crate = sqll015)]
 struct UserRow {
     id: UserId,
     login: Option<String>,
@@ -970,7 +970,7 @@ impl TryFrom<UserRow> for User {
 
 /// A [`UserRow`] with the expiry of the user's live link.
 #[derive(Row)]
-#[sql(crate = sqll014)]
+#[sql(crate = sqll015)]
 struct UserLinkRow {
     id: UserId,
     login: Option<String>,
@@ -1003,7 +1003,7 @@ impl UserLinkRow {
 }
 
 #[derive(Row)]
-#[sql(crate = sqll014)]
+#[sql(crate = sqll015)]
 struct SessionRow {
     id: String,
     user_id: UserId,
@@ -1027,7 +1027,7 @@ impl TryFrom<SessionRow> for Session {
 }
 
 #[derive(Row)]
-#[sql(crate = sqll014)]
+#[sql(crate = sqll015)]
 struct TokenRow {
     id: String,
     user_id: UserId,

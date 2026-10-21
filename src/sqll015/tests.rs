@@ -2,7 +2,7 @@ use std::string::{String, ToString};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::vec::Vec;
 
-use sqll014::{Connection, OpenOptions, PoolBuilder};
+use sqll015::{Connection, OpenOptions, PoolBuilder};
 
 use super::*;
 use crate::core::{Auth, generate_session_key, new_session_id};
@@ -23,7 +23,7 @@ fn scratch_uri() -> String {
 
 fn options() -> OpenOptions {
     let mut options = OpenOptions::new();
-    options.uri().no_mutex().create();
+    options.uri().create();
     options
 }
 
@@ -44,7 +44,7 @@ fn store(uri: &str, create: bool) -> SqllStore {
                 c.execute(SCHEMA)?;
             }
 
-            Ok(())
+            Ok::<_, sqll015::Error>(())
         })
         .with_read_setup(|c| c.execute("PRAGMA foreign_keys = ON"))
         .open(uri)
@@ -55,7 +55,7 @@ fn store(uri: &str, create: bool) -> SqllStore {
 
 /// Runs `sql` as a migration: in one transaction, which a failure rolls
 /// back, as a migration runner would.
-fn migrate(c: &Connection, sql: &str) -> sqll014::Result<()> {
+fn migrate(c: &Connection, sql: &str) -> sqll015::Result<()> {
     c.execute("BEGIN IMMEDIATE")?;
 
     let result = c.execute(sql).and_then(|()| c.execute("COMMIT"));
@@ -169,7 +169,7 @@ fn describe(c: &Connection) -> Vec<String> {
 }
 
 /// Runs every migration, each once, as a runner would on a new database.
-fn migrate_all(c: &Connection) -> sqll014::Result<()> {
+fn migrate_all(c: &Connection) -> sqll015::Result<()> {
     for (_, sql) in MIGRATIONS {
         migrate(c, sql)?;
     }
@@ -239,7 +239,7 @@ fn check_schema_names_what_is_missing() -> TestResult {
     assert_eq!(
         error,
         "watchword's tables lack column `sessions.impersonator_id` \
-         (added by `watchword-0002-sessions-impersonator`); apply sqll014::MIGRATIONS"
+         (added by `watchword-0002-sessions-impersonator`); apply sqll015::MIGRATIONS"
     );
 
     migrate(&old, MIGRATIONS[1].1)?;
@@ -306,16 +306,16 @@ async fn timestamps_are_stored_as_integer_milliseconds() -> TestResult {
 
 /// An app's read statements with the store's nested, as the module
 /// documentation shows.
-#[derive(sqll014::Statements)]
-#[sql(crate = sqll014)]
+#[derive(sqll015::Statements)]
+#[sql(crate = sqll015)]
 #[sql(read_only)]
 struct AppRead {
     #[sql(statements)]
     auth: Read,
     #[sql = "SELECT login FROM users WHERE login LIKE ? ORDER BY login"]
-    logins_like: sqll014::TypedStatement<(String,), String>,
+    logins_like: sqll015::TypedStatement<(String,), String>,
     #[sql = "SELECT login FROM users ORDER BY login LIMIT ?"]
-    first_logins: sqll014::TypedStatement<(i64,), String>,
+    first_logins: sqll015::TypedStatement<(i64,), String>,
 }
 
 impl AsMut<Read> for AppRead {
@@ -325,15 +325,15 @@ impl AsMut<Read> for AppRead {
 }
 
 /// The write side of [`AppRead`].
-#[derive(sqll014::Statements)]
-#[sql(crate = sqll014)]
+#[derive(sqll015::Statements)]
+#[sql(crate = sqll015)]
 struct AppWrite {
     #[sql(statements)]
     auth: Write,
     #[sql = "SELECT login FROM users WHERE login LIKE ? ORDER BY login"]
-    logins_like: sqll014::TypedStatement<(String,), String>,
+    logins_like: sqll015::TypedStatement<(String,), String>,
     #[sql = "SELECT login FROM users ORDER BY login LIMIT ?"]
-    first_logins: sqll014::TypedStatement<(i64,), String>,
+    first_logins: sqll015::TypedStatement<(i64,), String>,
 }
 
 impl AsMut<Write> for AppWrite {
@@ -342,14 +342,14 @@ impl AsMut<Write> for AppWrite {
     }
 }
 
-fn logins<I: sqll014::Bind>(
-    stmt: &mut sqll014::TypedStatement<I, String>,
-    bind: impl sqll014::Bind,
-) -> sqll014::Result<Vec<String>> {
+fn logins<I: sqll015::Bind>(
+    stmt: &mut sqll015::TypedStatement<I, String>,
+    bind: impl sqll015::Bind,
+) -> sqll015::Result<Vec<String>> {
     let mut stmt = stmt.bind(bind)?;
     let mut out = Vec::new();
 
-    while let Some(login) = stmt.next()? {
+    while let Some(login) = stmt.next().transpose()? {
         out.push(login);
     }
 

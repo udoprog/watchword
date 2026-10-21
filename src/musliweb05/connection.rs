@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use musli_web04::api::{EncodeBody, Id, MessageId};
-use musli_web04::ws::{Incoming, Outgoing};
+use musli_web05::api::{EncodeBody, Id, MessageId};
+use musli_web05::ws::{Incoming, Outgoing};
 
 use super::{
     AuthUpdate, CloudflareRequest, DeleteUserRequest, IssueLinkRequest, MeRequest, Request,
@@ -25,7 +25,7 @@ use crate::types::{
 ///
 /// ```no_run
 /// # async fn ws(auth: watchword::Auth, signed_in: watchword::axum08::SignedIn) {
-/// use watchword::musliweb04::{AuthUpdate, Connection};
+/// use watchword::musliweb05::{AuthUpdate, Connection};
 ///
 /// let conn = Connection::new(auth.clone(), &signed_in);
 /// let mut updates = conn.updates();
@@ -58,9 +58,9 @@ use crate::types::{
 ///
 /// ```no_run
 /// # mod api { pub enum Request { Unknown(musli_web::api::MessageId) } }
-/// # extern crate musli_web04 as musli_web;
+/// # extern crate musli_web05 as musli_web;
 /// use musli_web::ws;
-/// use watchword::musliweb04::{Connection, RequestError};
+/// use watchword::musliweb05::{Connection, RequestError};
 ///
 /// #[derive(Clone)]
 /// struct Handler {
@@ -92,10 +92,10 @@ use crate::types::{
 /// `handle` never sees:
 ///
 /// ```no_run
-/// # extern crate musli_web04 as musli_web;
+/// # extern crate musli_web05 as musli_web;
 /// use musli_web::ws;
 /// use watchword::core::Error;
-/// use watchword::musliweb04::{Connection, RequestError};
+/// use watchword::musliweb05::{Connection, RequestError};
 ///
 /// async fn stats(conn: &Connection, outgoing: &mut ws::Outgoing<'_>) -> Result<bool, RequestError> {
 ///     let admin = match conn.require_admin().await {

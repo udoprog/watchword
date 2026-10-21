@@ -6,7 +6,7 @@
 //!
 //! [phrasebook]: https://docs.rs/phrasebook
 
-use phrasebook01::{Catalog, Lang, Source};
+use phrasebook02::{Catalog, Lang, Source};
 
 /// watchword's messages, in English, with every id under the `watchword-`
 /// prefix.
@@ -32,7 +32,7 @@ use phrasebook01::{Catalog, Lang, Source};
 ///     .language(Lang::EN_US, "English")
 ///     .language(SV_SE, "Svenska")
 ///     .catalog(&APP)
-///     .catalog(&watchword::phrasebook01::L10N)
+///     .catalog(&watchword::phrasebook02::L10N)
 ///     .build();
 /// ```
 ///
@@ -52,7 +52,7 @@ pub static L10N: Catalog = Catalog::new(
 
 #[cfg(test)]
 mod tests {
-    use phrasebook01::check;
+    use phrasebook02::check;
 
     use super::L10N;
 

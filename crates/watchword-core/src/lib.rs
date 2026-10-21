@@ -15,22 +15,22 @@
 //! ## Features
 //!
 //! The crate is `no_std`, and safe to build for `wasm32-unknown-unknown` with
-//! any feature but `axum08` and `sqll014`. Only `std` is on by default.
+//! any feature but `axum08` and `sqll015`. Only `std` is on by default.
 //!
 //! | Feature | What it provides |
 //! |---|---|
 //! | *(none)* | `UserId`, `Role`, `Access`, `Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN` and `is_same_origin_path`, the rule a `?next=` is followed by |
 //! | `alloc` | the wire types that hold strings (`UserInfo`, `LoginRequest`, `CreatedUser`, ...), [`AuthError`] and its `Invalid` reasons, `validate_password` and `normalize_email` |
 //! | `std` *(default)* | `alloc`, and the standard library for the dependencies that have it |
-//! | `musli01` | musli 0.1 `Encode`/`Decode` on the types, so an app can embed them in its own WebSocket messages |
-//! | `musliweb04` | `alloc` + `musli01` + [`musliweb04`]: the account, user-management and Cloudflare Access settings endpoints and `AuthBroadcast` as musli-web 0.4 API types, with their ids pinned in 32000–32255 |
+//! | `musli02` | musli 0.2 `Encode`/`Decode` on the types, so an app can embed them in its own WebSocket messages |
+//! | `musliweb05` | `alloc` + `musli02` + [`musliweb05`]: the account, user-management and Cloudflare Access settings endpoints and `AuthBroadcast` as musli-web 0.5 API types, with their ids pinned in 32000–32255 |
 //! | `axum08` | `std` + axum 0.8 `IntoResponse` for [`AuthError`], answering with its JSON body and status; watchword's `axum08` feature turns it on (not for wasm) |
-//! | `sqll014` | `std` + sqll 0.14 `BindValue`, `Bind` and `FromColumn` for `UserId` (an integer with the same bits, as watchword's `SqllStore` stores it) and for `Role`, `Access` and `Method` (their names as text), so an app's own statements bind and read them directly; watchword's `sqll014` feature turns it on. It takes sqll with `threadsafe` only; the app names `bundled` or links its own SQLite (not for wasm) |
-//! | `phrasebook01` | `std` + [`phrasebook01`]: `L10N`, watchword's messages (the text of its Yew components) as a [phrasebook] 0.1 catalog, for a tool such as an app's localization checker that needs them without building a frontend; watchword-yew023 re-exports it, and watchword's `phrasebook01` and `yew023` features turn it on |
+//! | `sqll015` | `std` + sqll 0.15 `BindValue`, `Bind` and `FromColumn` for `UserId` (an integer with the same bits, as watchword's `SqllStore` stores it) and for `Role`, `Access` and `Method` (their names as text), so an app's own statements bind and read them directly; watchword's `sqll015` feature turns it on. It takes sqll with `threadsafe` only; the app names `bundled` or links its own SQLite (not for wasm) |
+//! | `phrasebook02` | `std` + [`phrasebook02`]: `L10N`, watchword's messages (the text of its Yew components) as a [phrasebook] 0.1 catalog, for a tool such as an app's localization checker that needs them without building a frontend; watchword-yew023 re-exports it, and watchword's `phrasebook02` and `yew023` features turn it on |
 //!
 //! [`AuthError`]: https://docs.rs/watchword-core/latest/watchword_core/enum.AuthError.html
-//! [`musliweb04`]: https://docs.rs/watchword-core/latest/watchword_core/musliweb04/index.html
-//! [`phrasebook01`]: https://docs.rs/watchword-core/latest/watchword_core/phrasebook01/index.html
+//! [`musliweb05`]: https://docs.rs/watchword-core/latest/watchword_core/musliweb05/index.html
+//! [`phrasebook02`]: https://docs.rs/watchword-core/latest/watchword_core/phrasebook02/index.html
 //! [phrasebook]: https://docs.rs/phrasebook
 //! [watchword]: https://docs.rs/watchword
 
@@ -56,26 +56,26 @@ use alloc::string::String;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "musli01")]
-use musli_core01::{Decode, Encode};
+#[cfg(feature = "musli02")]
+use musli_core02::{Decode, Encode};
 
 // `define!` expands to `::musli_web::` paths.
-#[cfg(feature = "musliweb04")]
-extern crate musli_web04 as musli_web;
+#[cfg(feature = "musliweb05")]
+extern crate musli_web05 as musli_web;
 
 #[cfg(feature = "axum08")]
 mod axum08;
 
-#[cfg(feature = "sqll014")]
-mod sqll014;
+#[cfg(feature = "sqll015")]
+mod sqll015;
 
-#[cfg(feature = "musliweb04")]
-#[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb04")))]
-pub mod musliweb04;
+#[cfg(feature = "musliweb05")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb05")))]
+pub mod musliweb05;
 
-#[cfg(feature = "phrasebook01")]
-#[cfg_attr(watchword_docsrs, doc(cfg(feature = "phrasebook01")))]
-pub mod phrasebook01;
+#[cfg(feature = "phrasebook02")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "phrasebook02")))]
+pub mod phrasebook02;
 
 #[cfg(all(test, feature = "alloc"))]
 mod tests;
@@ -134,14 +134,14 @@ pub fn is_same_origin_path(path: &str) -> bool {
 
 /// A user's id. Apps convert to and from their own `u64` ids with [`new`]
 /// and [`get`] or `From`, and to and from signed integers with `TryFrom`,
-/// which fails on a value out of the other's range. With the `sqll014`
+/// which fails on a value out of the other's range. With the `sqll015`
 /// feature it binds and reads as a sqll column directly.
 ///
 /// [`new`]: UserId::new
 /// [`get`]: UserId::get
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01, transparent))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02, transparent))]
 #[serde(transparent)]
 pub struct UserId(pub u64);
 
@@ -245,8 +245,8 @@ macro_rules! names {
 
 /// A user's role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     /// Manages users, and whatever else the app reserves for admins.
@@ -259,8 +259,8 @@ names!(Role, UnknownRole, "role", Admin => "admin", Regular => "regular");
 
 /// A user's account state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 #[serde(rename_all = "lowercase")]
 pub enum Access {
     /// Created but not yet registered. Signs in only through Cloudflare
@@ -277,8 +277,8 @@ names!(Access, UnknownAccess, "access state", Pending => "pending", Active => "a
 /// The credential a user has stored. A user has exactly one, and can switch
 /// between them. Cloudflare Access is not a stored credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 #[serde(rename_all = "lowercase")]
 pub enum Method {
     /// A password (which a pending user may not have set yet).
@@ -293,8 +293,8 @@ names!(Method, UnknownMethod, "sign-in method", Password => "password", Google =
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// What the frontend and the admin pages see of a user.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct UserInfo {
     /// The user's id.
     pub id: UserId,
@@ -311,7 +311,7 @@ pub struct UserInfo {
     /// Whether a password is set.
     pub has_password: bool,
     /// When the user was created.
-    #[cfg_attr(feature = "musli01", musli(with = self::musli_timestamp))]
+    #[cfg_attr(feature = "musli02", musli(with = self::musli_timestamp))]
     pub created_at: Timestamp,
     /// The admin acting as this user, when this is the signed-in user of a
     /// session an admin created by impersonating them. Only the answers about
@@ -326,8 +326,8 @@ pub struct UserInfo {
 /// The admin behind an impersonated session; see
 /// [`UserInfo::impersonated_by`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct Impersonator {
     /// The admin's id.
     pub id: UserId,
@@ -355,14 +355,14 @@ impl UserInfo {
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// A user in the admin list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct UserEntry {
     /// The user.
     pub user: UserInfo,
     /// When the user's live registration or reset link expires, if there is
     /// one.
-    #[cfg_attr(feature = "musli01", musli(with = self::musli_timestamp::option))]
+    #[cfg_attr(feature = "musli02", musli(with = self::musli_timestamp::option))]
     pub link_expires_at: Option<Timestamp>,
 }
 
@@ -373,8 +373,8 @@ pub struct UserEntry {
 ///
 /// Its JSON form is `{"entry": UserEntry, "link": Link}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct CreatedUser {
     /// The new user.
     pub entry: UserEntry,
@@ -384,8 +384,8 @@ pub struct CreatedUser {
 
 /// What the sign-in page offers, from `GET /api/auth/config`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct AuthConfig {
     /// Password sign-in is offered.
     pub password: bool,
@@ -401,8 +401,8 @@ pub struct AuthConfig {
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// The body of `POST /api/auth/login`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct LoginRequest {
     /// A login name or an email.
     pub login: String,
@@ -415,8 +415,8 @@ pub struct LoginRequest {
 /// What a registration or reset link is for, from
 /// `GET /api/auth/register/{token}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct RegisterInfo {
     /// The user's login name, if any.
     pub login: Option<String>,
@@ -430,8 +430,8 @@ pub struct RegisterInfo {
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// The body of `POST /api/auth/register/{token}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct RegisterRequest {
     /// The new password.
     pub password: String,
@@ -441,13 +441,13 @@ pub struct RegisterRequest {
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// A registration or reset link's token, shown once when issued.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct Link {
     /// The token, for the frontend route `/register/{token}`.
     pub token: String,
     /// When the link stops working.
-    #[cfg_attr(feature = "musli01", musli(with = self::musli_timestamp))]
+    #[cfg_attr(feature = "musli02", musli(with = self::musli_timestamp))]
     pub expires_at: Timestamp,
 }
 
@@ -474,8 +474,8 @@ impl Link {
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// A user to create. At least one of `login` and `email` is required.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct NewUser {
     /// The login name.
     pub login: Option<String>,
@@ -490,8 +490,8 @@ pub struct NewUser {
 /// A change to a user. `None` leaves a field as it is; `Some(None)` clears an
 /// optional one.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct UserChange {
     /// The new login name.
     #[serde(
@@ -516,8 +516,8 @@ pub struct UserChange {
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// The body of `POST /api/auth/account/password`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct PasswordChange {
     /// The current password, required when one is set.
     pub old_password: Option<String>,
@@ -544,8 +544,8 @@ pub struct PasswordChange {
 /// [`audience`]: Self::audience
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 pub struct CloudflareConfig {
     /// Signing in through Cloudflare Access is enabled. Off by default.
     pub enabled: bool,
@@ -588,8 +588,8 @@ impl Default for CloudflareConfig {
 /// response, such as `{"error":"conflict","detail":"email"}` or
 /// `{"error":"invalid","detail":{"reason":"password_too_short","min":8}}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 #[serde(tag = "error", content = "detail", rename_all = "snake_case")]
 pub enum AuthError {
     /// Not signed in, or the credentials are wrong (401).
@@ -644,8 +644,8 @@ impl AuthError {
 /// does not know, sent by a newer server, decodes as [`Invalid::Unknown`],
 /// so an older frontend still shows that the request was refused.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 #[serde(tag = "reason", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Invalid {
@@ -692,14 +692,14 @@ pub enum Invalid {
     /// position.
     #[error("The request is invalid.")]
     #[serde(other)]
-    #[cfg_attr(feature = "musli01", musli(default))]
+    #[cfg_attr(feature = "musli02", musli(default))]
     Unknown,
 }
 
 /// Which unique field a change conflicts on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "musli01", derive(Encode, Decode))]
-#[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
 #[serde(rename_all = "lowercase")]
 pub enum Conflict {
     /// The login name is taken.
@@ -745,10 +745,10 @@ mod double_option {
 
 /// musli for [`Timestamp`], as its RFC 3339 string, the same form as its serde
 /// encoding.
-#[cfg(all(feature = "musli01", feature = "alloc"))]
+#[cfg(all(feature = "musli02", feature = "alloc"))]
 mod musli_timestamp {
     use jiff::Timestamp;
-    use musli_core01::{Context, Decoder, Encoder};
+    use musli_core02::{Context, Decoder, Encoder};
 
     pub fn encode<E>(value: &Timestamp, encoder: E) -> Result<(), E::Error>
     where
@@ -767,7 +767,7 @@ mod musli_timestamp {
 
     pub mod option {
         use jiff::Timestamp;
-        use musli_core01::{Decoder, Encoder};
+        use musli_core02::{Decoder, Encoder};
 
         pub fn encode<E>(value: &Option<Timestamp>, encoder: E) -> Result<(), E::Error>
         where

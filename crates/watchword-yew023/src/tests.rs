@@ -4,7 +4,7 @@ use std::string::ToString;
 use std::vec::Vec;
 
 use jiff::Timestamp;
-use phrasebook01::{Catalog, Lang, Phrasebook, Phrases, Source, check};
+use phrasebook02::{Catalog, Lang, Phrasebook, Phrases, Source, check};
 
 use super::account::account_change;
 use super::admin_users::{link_url, matches_filter, page_bounds, relative_time};
@@ -18,7 +18,7 @@ use super::l10n::{self, error_message, split_around};
 use super::provider::replace_user;
 use super::sign_in::query_error_message;
 use super::user_menu::{impersonation_banner, stop_error_message};
-use watchword_core::phrasebook01::L10N;
+use watchword_core::phrasebook02::L10N;
 use watchword_core::{
     Access, AuthError, CloudflareConfig, Conflict, Impersonator, Invalid, Link, Method, Role,
     UserChange, UserEntry, UserId, UserInfo,
@@ -583,11 +583,11 @@ fn replacing_the_user_keeps_the_impersonation() {
     assert_eq!(replace_user(&current, admin.clone()), admin);
 }
 
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 #[test]
 fn broadcasts_apply_to_the_users_list() {
     use super::users::apply_update;
-    use watchword_core::musliweb04::AuthUpdate;
+    use watchword_core::musliweb05::AuthUpdate;
 
     let expires = Timestamp::UNIX_EPOCH;
 

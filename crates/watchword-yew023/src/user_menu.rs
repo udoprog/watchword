@@ -2,7 +2,7 @@ use std::borrow::ToOwned;
 use std::string::String;
 use std::string::ToString;
 
-use phrasebook01::{Phrases, args};
+use phrasebook02::{Phrases, args};
 use yew::platform::spawn_local;
 use yew::prelude::*;
 

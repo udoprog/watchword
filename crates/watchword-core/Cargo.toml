@@ -1,6 +1,6 @@
 [package]
 name = "watchword-core"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
 description = "The types watchword's server and frontends share: users, roles, the wire types of its routes, and AuthError."
@@ -19,17 +19,17 @@ all-features = true
 rustdoc-args = ["--cfg", "watchword_docsrs"]
 
 # Builds for wasm32-unknown-unknown with any feature but `axum08` and
-# `sqll014`, and with `--no-default-features` without `std` or `alloc`.
+# `sqll015`, and with `--no-default-features` without `std` or `alloc`.
 [features]
 default = ["std"]
-std = ["alloc", "serde/std", "jiff/std", "thiserror/std", "musli-core01?/std", "musli-web04?/std"]
-alloc = ["serde/alloc", "jiff/alloc", "musli-core01?/alloc", "musli-web04?/alloc"]
-musli01 = ["dep:musli-core01"]
-musliweb04 = ["alloc", "musli01", "dep:musli-web04"]
+std = ["alloc", "serde/std", "jiff/std", "thiserror/std", "musli-core02?/std", "musli-web05?/std"]
+alloc = ["serde/alloc", "jiff/alloc", "musli-core02?/alloc", "musli-web05?/alloc"]
+musli02 = ["dep:musli-core02"]
+musliweb05 = ["alloc", "musli02", "dep:musli-web05"]
 axum08 = ["std", "dep:axum08"]
-sqll014 = ["std", "dep:sqll014"]
-# phrasebook 0.1 has no `no_std` support.
-phrasebook01 = ["std", "dep:phrasebook01"]
+sqll015 = ["std", "dep:sqll015"]
+# phrasebook 0.2 has no `no_std` support.
+phrasebook02 = ["std", "dep:phrasebook02"]
 
 # jiff without its time zone databases: only `Timestamp` is used.
 [dependencies]
@@ -37,16 +37,16 @@ jiff = { version = "0.2.37", default-features = false, features = ["serde"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
 thiserror = { version = "2.0.18", default-features = false }
 
-musli-core01 = { package = "musli-core", version = "0.1.7", default-features = false, optional = true }
-musli-web04 = { package = "musli-web", version = "0.4.11", default-features = false, features = ["api"], optional = true }
+musli-core02 = { package = "musli-core", version = "0.2.0", default-features = false, optional = true }
+musli-web05 = { package = "musli-web", version = "0.5.0", default-features = false, features = ["api"], optional = true }
 axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["json"], optional = true }
 # Only its traits. `threadsafe` because sqll-sys builds with nothing but
 # `bundled` without it; the app picks the linking and anything else it needs.
-sqll014 = { package = "sqll", version = "0.14.7", default-features = false, features = ["threadsafe"], optional = true }
+sqll015 = { package = "sqll", version = "0.15.0", default-features = false, features = ["threadsafe"], optional = true }
 # Only `Catalog`; watchword-yew023 adds its `yew023` feature.
-phrasebook01 = { package = "phrasebook", version = "0.1.0", optional = true }
+phrasebook02 = { package = "phrasebook", version = "0.2.0", optional = true }
 
 [dev-dependencies]
-musli = { version = "0.1.9", features = ["storage", "wire", "descriptive"] }
+musli = { version = "0.2.0", features = ["storage", "wire", "descriptive"] }
 serde_json = "1.0.151"
-sqll014 = { package = "sqll", version = "0.14.7", features = ["bundled"] }
+sqll015 = { package = "sqll", version = "0.15.0", features = ["bundled"] }

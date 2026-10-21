@@ -1,9 +1,9 @@
 //! Callbacks the context hands out, and the [`Listener`] that keeps one.
 
 use std::boxed::Box;
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 use std::cell::RefCell;
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 use std::rc::Rc;
 use std::vec::Vec;
 
@@ -76,12 +76,12 @@ impl<T> Slots<T> {
 }
 
 /// Callbacks listening for a `T`, shared by clones. Equal when shared.
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 pub(super) struct Subscribers<T> {
     inner: Rc<RefCell<Slots<T>>>,
 }
 
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 impl<T> Default for Subscribers<T> {
     fn default() -> Self {
         Self {
@@ -90,7 +90,7 @@ impl<T> Default for Subscribers<T> {
     }
 }
 
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 impl<T> Clone for Subscribers<T> {
     fn clone(&self) -> Self {
         Self {
@@ -99,14 +99,14 @@ impl<T> Clone for Subscribers<T> {
     }
 }
 
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 impl<T> PartialEq for Subscribers<T> {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.inner, &other.inner)
     }
 }
 
-#[cfg(feature = "musliweb04")]
+#[cfg(feature = "musliweb05")]
 impl<T> Subscribers<T>
 where
     T: Clone + 'static,

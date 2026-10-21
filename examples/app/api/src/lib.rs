@@ -5,7 +5,7 @@
 //! `AuthBroadcast` are not listed here: musli-web cannot merge two `define!`
 //! lists, so they are a second list on the same socket. The server delegates
 //! the ids this list does not know, `Request::Unknown(id)`, to
-//! `watchword::musliweb04::Connection::handle`.
+//! `watchword::musliweb05::Connection::handle`.
 
 use musli::{Decode, Encode};
 

@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::string::String;
 
-use phrasebook01::Phrases;
+use phrasebook02::Phrases;
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
@@ -29,7 +29,7 @@ pub struct AccountPanelProps {
 /// Changes go to `PATCH /api/auth/account` and
 /// `POST /api/auth/account/password`, and the user they answer with replaces
 /// the one in the [`AuthContext`](super::AuthContext). With a socket handed
-/// to the context (feature `musliweb04`), they go over it while it is open.
+/// to the context (feature `musliweb05`), they go over it while it is open.
 /// The app wraps the
 /// panel in a page or a modal. Use it inside
 /// [`AuthProvider`](super::AuthProvider).

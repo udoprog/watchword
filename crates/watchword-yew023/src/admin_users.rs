@@ -7,7 +7,7 @@ use std::string::ToString;
 use std::vec::Vec;
 
 use jiff::Timestamp;
-use phrasebook01::{Phrases, args};
+use phrasebook02::{Phrases, args};
 use yew::context::ContextHandle;
 use yew::prelude::*;
 
@@ -54,7 +54,7 @@ pub struct AdminUsersProps {
     /// Bump it to fetch the users again, such as when the app learns of a
     /// change made elsewhere; the same as [`Users::reload`]. Not needed once
     /// the app hands its musli-web socket to [`AuthContext::set_socket`]
-    /// (feature `musliweb04`): the list then follows the server's broadcasts
+    /// (feature `musliweb05`): the list then follows the server's broadcasts
     /// itself.
     #[prop_or_default]
     pub refresh: u64,
@@ -102,7 +102,7 @@ pub struct AdminUsersProps {
 /// them again, and sees the changes made here. Outside a provider it keeps a
 /// list of its own.
 ///
-/// With the `musliweb04` feature and a socket handed to
+/// With the `musliweb05` feature and a socket handed to
 /// [`AuthContext::set_socket`], the list follows the server's
 /// `AuthBroadcast`: users created, changed or deleted elsewhere, such as by
 /// another admin, change in the list in place. A broadcast does not carry
@@ -111,7 +111,7 @@ pub struct AdminUsersProps {
 /// changes, which uses up their links. Its requests, except Impersonate, go
 /// over the socket while it is open.
 ///
-/// Its text comes from the [`Phrases`](phrasebook01::Phrases) the app
+/// Its text comes from the [`Phrases`](phrasebook02::Phrases) the app
 /// provides, falling back to watchword's English (see [`L10N`](super::L10N)).
 pub struct AdminUsers {
     /// The list as last told.

@@ -9,12 +9,12 @@ use std::string::String;
 use std::string::ToString;
 use std::task::{Context, Poll, Waker};
 
-use musli_web04::api;
-use musli_web04::web03::prelude::ws;
+use musli_web05::api;
+use musli_web05::web03::prelude::ws;
 use yew::Callback;
 
 use watchword_core::AuthError;
-use watchword_core::musliweb04::{AuthBroadcast, AuthUpdate};
+use watchword_core::musliweb05::{AuthBroadcast, AuthUpdate};
 
 use super::http::Error;
 
@@ -279,11 +279,11 @@ mod tests {
     use std::rc::Rc;
     use std::task::{Context, Poll, Waker};
 
-    use musli_web04::web03::prelude::ws;
+    use musli_web05::web03::prelude::ws;
     use yew::Callback;
 
     use watchword_core::UserInfo;
-    use watchword_core::musliweb04::MeRequest;
+    use watchword_core::musliweb05::MeRequest;
 
     use super::{Answer, Error, Sender, Slot, SocketHandle, decode};
 

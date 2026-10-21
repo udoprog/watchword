@@ -1,6 +1,6 @@
 use std::borrow::ToOwned;
 
-use phrasebook01::{Phrases, args};
+use phrasebook02::{Phrases, args};
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
@@ -52,7 +52,7 @@ enum Message {
 /// without Cloudflare Access is reported as such.
 ///
 /// Use it inside [`AuthProvider`](super::AuthProvider), for an admin. With
-/// the `musliweb04` feature and a socket handed to
+/// the `musliweb05` feature and a socket handed to
 /// [`AuthContext::set_socket`](super::AuthContext::set_socket), its requests
 /// go over the socket while it is open.
 ///

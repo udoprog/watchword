@@ -7,7 +7,7 @@
 //! Each function maps an error status to [`Error::Auth`] when the body is an
 //! [`AuthError`], as every route of watchword's `axum08` feature answers.
 //!
-//! These functions always use HTTP. With the `musliweb04` feature and a socket
+//! These functions always use HTTP. With the `musliweb05` feature and a socket
 //! handed to [`AuthContext::set_socket`](super::AuthContext), the components
 //! send the account and admin operations over the socket instead while it is
 //! open.
@@ -39,7 +39,7 @@ pub enum Error {
     /// A request over the app's musli-web socket failed without an
     /// [`AuthError`]: the server answered with a request error, such as an
     /// internal failure, or the socket closed before the answer. Only with
-    /// the `musliweb04` feature and a socket handed to
+    /// the `musliweb05` feature and a socket handed to
     /// [`AuthContext::set_socket`](super::AuthContext).
     Socket(String),
 }
