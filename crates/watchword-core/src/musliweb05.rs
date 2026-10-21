@@ -2,12 +2,13 @@
 //! as [musli-web] 0.5 API types, so an app can carry them on the musli-web
 //! WebSocket it already has.
 //!
-//! The endpoints and [`AuthBroadcast`] form a `define!` list of their own,
-//! which an app includes in its list (`include watchword_core::musliweb05 as
-//! Auth;`), so one connection carries both and musli-web checks at compile
-//! time that no id is used twice. watchword pins each of its types to an id in
-//! 32000–32255, a band an app's own implicit ids, which count up from 1, never
-//! reach. A released id never changes meaning.
+//! The endpoints and [`AuthBroadcast`] form a `define!` list of their own.
+//! watchword pins each of its types to an id in 32000–32255 ([`FIRST_ID`] to
+//! [`LAST_ID`]), and a released id never changes meaning. The band is a
+//! convention, not something musli-web enforces: an app's own implicit ids
+//! count up from 1 and never reach it, but an app that pins ids of its own
+//! with `#[musli(id = ..)]` can land in it. How such a clash is caught
+//! depends on how the app layers watchword's list on its socket, below.
 //!
 //! A response is the operation's value. A refused request fails with the same
 //! structured [`AuthError`] as over HTTP, sent as musli-web's typed request
@@ -15,6 +16,21 @@
 //! internal failure fails with just the message `internal error`. Each request
 //! body is its own type here, since musli-web ties a request type to one
 //! endpoint.
+//!
+//! # Including watchword's list
+//!
+//! The main way is to include watchword's list in the app's own, with
+//! `include watchword_core::musliweb05 as Auth;` (or `watchword::musliweb05`
+//! from a crate that already depends on `watchword`):
+//!
+//! - The client gets watchword's endpoints through the app's own list type,
+//!   so one socket handle sends both, and watchword-yew023's components
+//!   follow [`AuthBroadcast`] on that same socket.
+//! - The app's `Request` gets an `Auth(musliweb05::Request)` variant, so its
+//!   handler's exhaustive `match` does not compile until it forwards that
+//!   variant (to `watchword::musliweb05::Connection::handle`).
+//! - musli-web checks that no id of the app's list is also one of the
+//!   included list's in plain `const` items, so a clash fails `cargo check`.
 //!
 //! ```
 //! use musli_core02::{Decode, Encode};
@@ -43,6 +59,52 @@
 //! assert_eq!(Request::from_id(Me::ID), Request::Auth(auth::Request::Me));
 //! assert_eq!(Request::from_id(Status::ID), Request::Status);
 //! ```
+//!
+//! # Without including it
+//!
+//! An app whose API crate should not depend on watchword's types keeps the
+//! two lists apart instead, and on the server combines its handler with
+//! watchword's through musli-web's `ws::Handler::or`, which routes each
+//! request to the handler whose list knows its id; the client then sends
+//! watchword's requests by their own types. `Or` refuses two lists that share
+//! an id, but since it is generic that check is only evaluated when the code
+//! constructing it is compiled into a binary, so `cargo check` misses it.
+//! Assert in a `const` item, where the two lists meet, that their [`IdSet`]s
+//! are disjoint, and a clash fails `cargo check` too:
+//!
+//! ```
+//! use musli_web05::api::Id;
+//! use watchword_core::musliweb05 as auth;
+//!
+//! mod api {
+//!     use musli_core02::{Decode, Encode};
+//!
+//!     #[derive(Encode, Decode)]
+//!     #[musli(crate = musli_core02)]
+//!     pub struct StatusRequest;
+//!
+//!     musli_web05::api::define! {
+//!         #![musli(crate = musli_web05)]
+//!
+//!         pub type Status;
+//!
+//!         impl Endpoint for Status {
+//!             impl Request for StatusRequest;
+//!             type Response<'de> = u32;
+//!         }
+//!     }
+//! }
+//!
+//! // The app's ids and watchword's never meet.
+//! const _: () = {
+//!     assert!(api::Request::IDS.is_disjoint(&auth::Request::IDS));
+//!     assert!(api::Event::IDS.is_disjoint(&auth::Event::IDS));
+//! };
+//! ```
+//!
+//! [`IdSet`]: musli_web05::api::IdSet
+//!
+//! # Endpoints
 //!
 //! | Endpoint | Id | Request | Response |
 //! |---|---|---|---|
@@ -76,6 +138,9 @@ use crate::{
 };
 
 /// The first id of the band watchword owns.
+///
+/// The band is a convention: an app that pins its own ids can land in it. See
+/// the [module docs](self) for how a clash is caught.
 pub const FIRST_ID: u16 = 32000;
 
 /// The last id of the band watchword owns.

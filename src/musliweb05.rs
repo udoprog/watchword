@@ -2,13 +2,25 @@
 //! as [musli-web] 0.5 API types, so an app can carry them on the musli-web
 //! WebSocket it already has.
 //!
-//! The endpoints and [`AuthBroadcast`] form a `define!` list of their own,
-//! which an app includes in its list (`include watchword::musliweb05 as
-//! Auth;`, or `watchword_core::musliweb05` from a wasm-safe `api` crate), so
-//! one connection carries both and musli-web checks at compile time that no
-//! id is used twice. watchword pins each of its types to an id in
-//! 32000–32255, a band an app's own implicit ids, which count up from 1,
-//! never reach. A released id never changes meaning.
+//! The endpoints and [`AuthBroadcast`] form a `define!` list of their own.
+//! The main way to carry them is to include that list in the app's own
+//! (`include watchword::musliweb05 as Auth;`, or `watchword_core::musliweb05`
+//! from a wasm-safe `api` crate): the client gets watchword's endpoints
+//! through the app's list type, so one socket handle sends both, the app's
+//! exhaustive `match` on its `Request` does not compile until it forwards
+//! `Request::Auth`, and musli-web checks in `const` items, so under `cargo
+//! check` too, that no id is used twice. An app whose API crate should not
+//! depend on watchword's types combines its handler with watchword's through
+//! `ws::Handler::or` instead, and asserts in a `const` item that the two
+//! lists' `IdSet`s are disjoint, since `Or`'s own check only runs once a
+//! binary is built; both are shown in [watchword_core's
+//! docs](watchword_core::musliweb05).
+//!
+//! watchword pins each of its types to an id in 32000–32255 ([`FIRST_ID`] to
+//! [`LAST_ID`]). A released id never changes meaning. The band is a
+//! convention, not something musli-web enforces: an app's own implicit ids
+//! count up from 1 and never reach it, but an app that pins ids of its own can
+//! land in it, which the checks above catch.
 //!
 //! A response is the operation's value. A refused request fails with the same
 //! structured [`AuthError`] as over HTTP, sent as musli-web's typed request
@@ -38,9 +50,9 @@
 //! wasm-safe `api` crate can use. With `axum08` as well, the server side is
 //! here too: a `Connection` (`musliweb05` and `axum08`) answers the
 //! endpoints' requests on one socket, running the same operations as the HTTP
-//! routes, either from the app's handler (its `handle`, for the requests of
-//! the included list) or combined with it as a `ws::Handler` through
-//! `ws::Handler::or`, and turns each [`AuthEvent`](crate::AuthEvent) into the
+//! routes, called from the app's handler (its `handle`, in the arm of the
+//! included list) or, without the include, combined with it as a
+//! `ws::Handler` through `ws::Handler::or`, and turns each [`AuthEvent`](crate::AuthEvent) into the
 //! [`AuthUpdate`] that socket may see. Its `updates` are the socket loop's
 //! whole auth arm: an `Updates` holds the session's guard and the event
 //! receiver and yields the updates to broadcast until the session ends. Its

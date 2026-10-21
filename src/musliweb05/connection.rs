@@ -56,11 +56,13 @@ use crate::types::{
 /// Ending the socket when its session ends stays the job of
 /// [`Auth::guard`], which [`Updates`] holds: no update is sent for it.
 ///
-/// Cloning a `Connection` is cheap, and it is the [`ws::Handler`] of
-/// watchword's endpoints, so it sits beside the app's own handler. An app
-/// whose `define!` list includes watchword's (`include
-/// watchword::musliweb05 as Auth;`) passes that variant's requests to
-/// [`handle`](Connection::handle):
+/// Cloning a `Connection` is cheap, so it sits beside the app's own handler.
+/// The main way to use it is from an app whose `define!` list includes
+/// watchword's (`include watchword::musliweb05 as Auth;`), which passes that
+/// variant's requests to [`handle`](Connection::handle). The client then gets
+/// watchword's endpoints through the app's list type, so one socket handle
+/// sends both, and the exhaustive `match` below does not compile until it
+/// forwards `api::Request::Auth`:
 ///
 /// ```no_run
 /// # mod api {
@@ -104,9 +106,15 @@ use crate::types::{
 /// }
 /// ```
 ///
-/// An app whose list does not include watchword's combines the two handlers
-/// instead, with [`ws::Handler::or`], which routes each request by the list
-/// that knows its id and fails to build if the lists share one:
+/// The alternative, for an app whose API crate should not depend on
+/// watchword's types, keeps the lists apart: `Connection` is also the
+/// [`ws::Handler`] of watchword's list, which the app combines with its own
+/// through [`ws::Handler::or`], routing each request by the list that knows
+/// its id. `Or` refuses lists that share an id, but being generic that check
+/// only runs once a binary is built, so `cargo check` misses it; a `const`
+/// assertion on the lists' [`IdSet`](musli_web05::api::IdSet)s catches it
+/// earlier. watchword's band, 32000–32255, is a convention, so this matters
+/// for an app that pins ids of its own:
 ///
 /// ```no_run
 /// # mod api {
@@ -128,6 +136,14 @@ use crate::types::{
 /// #     type Response = bool;
 /// #     async fn handle(&self, _: Self::Id, _: &mut musli_web05::ws::Incoming<'_>, _: &mut musli_web05::ws::Outgoing<'_>) -> bool { false }
 /// # }
+/// use musli_web05::api::Id;
+/// use watchword::musliweb05 as auth;
+///
+/// const _: () = {
+///     assert!(api::Request::IDS.is_disjoint(&auth::Request::IDS));
+///     assert!(api::Event::IDS.is_disjoint(&auth::Event::IDS));
+/// };
+///
 /// # async fn run(socket: axum08::extract::ws::WebSocket, conn: watchword::musliweb05::Connection) -> Result<(), musli_web05::ws::Error> {
 /// use musli_web05::ws::Handler;
 ///

@@ -919,14 +919,36 @@ leaves its id unused. The module exports the band as `FIRST_ID` and
 watchword's ids stable whatever order its definitions are in, and the band
 makes a clash a matter of an app defining over 31 999 types; a list cannot
 see the lists that include it, so the band is how watchword stays out of an
-app's way.
+app's way. It is a convention, not something musli-web enforces: an app that
+pins ids of its own can land in it, which `include` reports under `cargo
+check` and `Or` only once a binary is built (see below).
 
 The app's `api` crate includes watchword's list in its own `define!`, as
 `include watchword_core::musliweb05 as Auth;` (or `watchword::musliweb05`),
 taking `watchword-core` (or `watchword`) with `musliweb05`. Its `Request`
 then has an `Auth(musliweb05::Request)` variant and its `Event` an
 `Auth(musliweb05::Event)` one, and a clash with the app's own ids fails the
-build.
+build. This is the main way: the client gets watchword's endpoints through
+the app's list type, so one socket handle sends both; the app's exhaustive
+`match` on its `Request` does not compile until it forwards `Request::Auth`;
+and musli-web checks the include in plain `const` items, so `cargo check`
+reports a clash.
+
+The alternative, for an app whose API crate should not depend on watchword's
+types, keeps the lists apart and combines the handlers with
+`ws::Handler::or`. `Or`'s id check is generic, so it is only evaluated when
+the code constructing it is compiled into a binary; such an app asserts the
+lists disjoint in a `const` item with musli-web's `IdSet`, so `cargo check`
+catches a clash:
+
+```rust
+use musli_web::api::Id;
+
+const _: () = {
+    assert!(api::Request::IDS.is_disjoint(&watchword_core::musliweb05::Request::IDS));
+    assert!(api::Event::IDS.is_disjoint(&watchword_core::musliweb05::Event::IDS));
+};
+```
 
 #### Server: `watchword::musliweb05::Connection` (`musliweb05` + `axum08`)
 
@@ -941,8 +963,9 @@ let conn = watchword::musliweb05::Connection::new(auth.clone(), &signed_in);
 // In the app's Handler::handle, in the arm of the included list:
 api::Request::Auth(request) => conn.handle(request, incoming, outgoing).await,   // -> Result<bool, RequestError>
 
-// Or, for an app whose list does not include watchword's, `Connection` is the
-// ws::Handler of watchword's list, combined with the app's:
+// The alternative, for an app whose list does not include watchword's:
+// `Connection` is the ws::Handler of watchword's list, combined with the
+// app's (with the `IdSet` assertion above):
 let server = musli_web::axum08::server(socket, AppHandler { .. }.or(conn.clone()));
 
 // Before negotiating the socket, the loop's auth arm: the session's guard and
@@ -1318,9 +1341,11 @@ once the release is on crates.io.
     `define!` list from 1, so watchword pins all of its ids explicitly in
     32000–32255, and an app includes watchword's list in its own (musli-web
     0.5's `include`), passing the `Auth` variant's requests to
-    `Connection::handle`, or combines its handler with `Connection` through
-    `ws::Handler::or`. Either way musli-web checks at compile time that no id
-    is used twice. Until 0.3 the app forwarded the ids its own `Request` did
+    `Connection::handle`; an app whose API crate should not depend on
+    watchword's types combines its handler with `Connection` through
+    `ws::Handler::or` instead. Either way musli-web checks at compile time that
+    no id is used twice, though `Or`'s check runs only when a binary is built,
+    so such an app adds a `const` `IdSet` assertion. Until 0.3 the app forwarded the ids its own `Request` did
     not know (`Unknown(id)`), from before musli-web could compose lists; that
     checked nothing. Making apps pin their own ids instead would renumber
     their existing protocols. The band is part of the wire format: a released
