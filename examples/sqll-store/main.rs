@@ -35,9 +35,12 @@
 
 use std::error::Error as StdError;
 use std::sync::Arc;
+use std::time::Duration;
 
 use jiff::Timestamp;
-use sqll::{Migrations, OpenOptions, Pool, PoolBuilder, Row, Statements, TypedStatement};
+use sqll::{
+    JournalMode, Migrations, OpenOptions, Pool, PoolBuilder, Row, Statements, TypedStatement,
+};
 use watchword::store::{self, Credential, Session, Store, StoreError, Token, TokenKind, User};
 use watchword::{
     Access, Auth, BootstrapAdmin, Conflict, Method, NewUser, Role, UserChange, UserId,
@@ -49,7 +52,8 @@ const MIGRATIONS: &[(&str, &str)] = &[("0001-tables", include_str!("migrations/0
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn StdError>> {
-    // A database file, or by default one in memory.
+    // A database file, or by default one in memory, which will do for this
+    // run since it never writes beside a read (see `AppStore::open`).
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| String::from("file:sqll-store?mode=memory&cache=shared"));
@@ -75,14 +79,28 @@ async fn main() -> Result<(), Box<dyn StdError>> {
 #[derive(Clone)]
 pub struct AppStore {
     pool: Arc<Pool<Read, Write>>,
+    /// The directory of a scratch database, removed with the last clone.
+    #[cfg(test)]
+    _scratch: Option<Arc<tempfile::TempDir>>,
 }
 
 impl AppStore {
     /// Opens the database at `path` (a file name or an SQLite URI), creating
     /// and migrating it as needed.
     pub fn open(path: &str) -> Result<Self, Error> {
+        // A pool runs a write beside its reads, as `Auth` does when it prunes
+        // on a timer while requests read. In WAL mode the readers keep
+        // reading while the writer writes, and the busy timeout makes a
+        // connection wait out the moments SQLite still locks the file rather
+        // than fail. An in-memory database has no WAL: with a shared cache a
+        // write beside a read fails at once with `SQLITE_LOCKED`, which no
+        // busy timeout waits out, so the pool needs a file.
         let mut options = OpenOptions::new();
-        options.uri().create();
+        options
+            .uri()
+            .create()
+            .busy_timeout(Duration::from_secs(5))
+            .journal_mode(JournalMode::Wal);
 
         // The pool prepares its statements when it opens, so the write
         // setup migrates the database first. Foreign keys are on, so deleting
@@ -98,6 +116,22 @@ impl AppStore {
 
         Ok(Self {
             pool: Arc::new(pool),
+            #[cfg(test)]
+            _scratch: None,
+        })
+    }
+
+    /// A store over a new database in a temporary directory, removed when
+    /// the last clone of the store is dropped.
+    #[cfg(test)]
+    fn open_scratch() -> Result<Self, Box<dyn StdError>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("store.db");
+        let path = path.to_str().ok_or("temporary path is not UTF-8")?;
+
+        Ok(Self {
+            _scratch: Some(Arc::new(dir)),
+            ..Self::open(path)?
         })
     }
 
@@ -826,27 +860,15 @@ fn timestamp(millis: i64) -> Result<Timestamp, Error> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
     use super::*;
 
-    /// A store over a new in-memory database.
-    fn scratch() -> AppStore {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let uri = format!(
-            "file:sqll-store-{}-{n}?mode=memory&cache=shared",
-            std::process::id()
-        );
-        AppStore::open(&uri).expect("open the store")
-    }
-
-    // watchword's store conformance suite: one test per rule.
-    watchword::store_suite!(scratch());
+    // watchword's store conformance suite: one test per rule, each over a
+    // new database.
+    watchword::store_suite!(AppStore::open_scratch()?);
 
     #[tokio::test]
     async fn fills_the_display_name() -> Result<(), Box<dyn StdError>> {
-        let store = scratch();
+        let store = AppStore::open_scratch()?;
         let new = NewUser {
             login: None,
             email: Some("ada@example.com".into()),

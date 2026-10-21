@@ -22,11 +22,19 @@
 //! ```ignore
 //! #[cfg(test)]
 //! mod store_tests {
-//!     // A fresh, empty store per test, such as one over a new in-memory
-//!     // database.
+//!     // A fresh, empty store per test, such as one over a new database in
+//!     // a temporary directory.
 //!     watchword::store_suite!(crate::AppStore::open_scratch().await?);
 //! }
 //! ```
+//!
+//! `Auth` calls a store from many tasks at once, and
+//! [`prune_every`](crate::AuthBuilder::prune_every) writes while
+//! requests read, so the suite does too: a store must let a write run beside
+//! reads, waiting rather than failing on a lock. Over SQLite that is a
+//! database file in WAL mode with a busy timeout, as in
+//! [`examples/sqll-store`], and not a shared-cache in-memory database, where
+//! a write beside a read fails with `SQLITE_LOCKED`.
 //!
 //! Every method takes the current time from the caller, which keeps tests
 //! deterministic. Emails are passed in already normalized (see

@@ -88,6 +88,8 @@ musli = "0.2.0"
 serde_json = "1.0.151"
 # The sqll-store example, an app's own `Store` over SQLite.
 sqll = { version = "0.15.0", features = ["bundled"] }
+# The sqll-store example's scratch databases.
+tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }
 
