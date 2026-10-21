@@ -600,9 +600,12 @@ cookies, so the library does not depend on the app's gloo version.
 - `use_auth() -> AuthContext` gives `user: Rc<UserInfo>`, `config`,
   `is_admin()`, `sign_out()`, `refresh()`, `set_user(UserInfo)` and
   `check_session()`.
-  - `check_session()` is what the app calls when its socket closes. A 401 there
-    shows `<SignIn>` with the signed-out notice, so a user whose session ended
-    elsewhere finds out instead of facing a dead page.
+  - `check_session()` asks `GET /api/auth/me` whether the session is still
+    live. A 401 there shows `<SignIn>` with the signed-out notice, so a user
+    whose session ended elsewhere finds out instead of facing a dead page.
+    With a socket from `set_socket` the provider calls it itself when the
+    socket closes (see 2.7); an app without one calls it when it suspects the
+    session ended.
 - `<SignIn config on_sign_in notice title>` offers the enabled methods: a
   login/email + password form, "Sign in with Cloudflare" when
   `config.cloudflare` is set, and "Sign in with Google" when `config.google`
@@ -847,7 +850,21 @@ gains a variant for a socket request error.
 As built: watchword-yew023 has a `musliweb04` feature, which watchword's
 `musliweb04` turns on with `yew023`. `set_socket` with the handle already set
 does nothing, and the socket is forgotten whenever the provider leaves the
-signed-in state, so the next sign-in hands over its own. `<AdminUsers>` reads
+signed-in state, so the next sign-in hands over its own.
+
+The provider also follows the socket's state to notice an ended session.
+Browsers do not expose a refused upgrade's status, so a 401 on `/ws` only
+shows as a socket that closes or never opens. The provider runs
+`check_session()` when the socket goes from open to closed, and every 10
+seconds while it stays closed, including when it was handed over closed (the
+provider has just checked the session to show the app, so that first check
+waits). musli-web emits a state change only on open/closed transitions, not
+for each failed reconnect, so the repeated check is a timer rather than a
+count of failures; musli-web itself retries with backoff up to 4 seconds. A
+check while one is in flight is dropped. Apps used to do this themselves and
+disagreed on when (on every close, only after being open, or polling); they
+can drop their own listener, though calling `check_session()` as well only
+checks twice. `<AdminUsers>` reads
 the socket from the context and listens itself. A broadcast carries no link
 state (issuing and revoking a link emit no `AuthEvent`), so `<AdminUsers>`
 applies each update in place and fetches the list again only when it cannot
@@ -896,7 +913,7 @@ socket) and `auth.events()`, broadcasting what `conn.update` returns, and
 what `conn.lagged` returns on a lag (the guard re-checks the session
 itself). The frontend builds the web03
 `Service` once inside `<AuthProvider>`, hands its handle over with
-`set_socket`, and calls `check_session()` whenever the socket closes;
+`set_socket`, which then checks the session whenever the socket closes;
 musli-web reconnects by itself while the session lives.
 
 watchword-yew023 takes musli-web under `musli-web04` with `web03`; it calls
@@ -907,7 +924,7 @@ no musli-web macros, so it needs no alias.
 | Operation | Why it cannot use the socket |
 |---|---|
 | `GET /api/auth/config`, the first `GET /api/auth/me` | `<AuthProvider>` needs them to decide between the sign-in page and the app, before any socket exists; the upgrade requires a session |
-| `check_session()` (`GET /api/auth/me`) | it runs because the socket closed |
+| `check_session()` (`GET /api/auth/me`) | it runs because the socket closed or does not open |
 | `POST /api/auth/login`, `/logout`, `/cloudflare` | they set or clear the `HttpOnly` session cookie, which only an HTTP response can do; there is no socket before sign-in |
 | Cloudflare Access | the credentials are the Access JWT and headers on an HTTP request, checked when signing in (and by `config` for `AuthConfig::cloudflare`) |
 | `GET`/`POST /api/auth/register/{token}` | the user is signed out; registering sets the cookie |

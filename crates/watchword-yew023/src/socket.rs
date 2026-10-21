@@ -28,32 +28,49 @@ pub(super) struct SocketHandle {
 struct Inner {
     handle: ws::Handle,
     stale: Rc<Cell<bool>>,
+    open: Rc<Cell<bool>>,
     _state: ws::StateListener,
 }
 
 impl SocketHandle {
-    pub(super) fn new(handle: ws::Handle) -> Self {
+    /// Follows `handle`'s state, calling `on_state` with whether it is open
+    /// each time that changes.
+    pub(super) fn new(handle: ws::Handle, on_state: Callback<bool>) -> Self {
         let stale = Rc::new(Cell::new(false));
+        let open = Rc::new(Cell::new(false));
 
         // The socket's session is the one its upgrade carried, so once it
         // closes, its reconnect carries the browser's current one.
-        let (_, state) = handle.on_state_change({
+        let (state, listener) = handle.on_state_change({
             let stale = stale.clone();
+            let open = open.clone();
 
             move |state: ws::State| {
                 if !state.is_open() {
                     stale.set(false);
                 }
+
+                if open.replace(state.is_open()) != state.is_open() {
+                    on_state.emit(state.is_open());
+                }
             }
         });
+
+        open.set(state.is_open());
 
         Self {
             inner: Rc::new(Inner {
                 handle,
                 stale,
-                _state: state,
+                open,
+                _state: listener,
             }),
         }
+    }
+
+    /// Whether the socket is open.
+    pub(super) fn is_open(&self) -> bool {
+        self.inner.open.get()
     }
 
     /// The app's handle.
@@ -263,6 +280,7 @@ mod tests {
     use std::task::{Context, Poll, Waker};
 
     use musli_web04::web03::prelude::ws;
+    use yew::Callback;
 
     use watchword_core::UserInfo;
     use watchword_core::musliweb04::MeRequest;
@@ -276,14 +294,20 @@ mod tests {
     #[test]
     fn unsent_request_falls_back() {
         // A handle without a service refuses before sending anything.
-        let socket = SocketHandle::new(ws::Handle::default());
+        let socket = SocketHandle::new(ws::Handle::default(), Callback::noop());
         let answer = poll(socket.request::<_, UserInfo>(MeRequest));
         assert!(matches!(answer, Poll::Ready(None)));
     }
 
     #[test]
+    fn socket_without_service_is_closed() {
+        let socket = SocketHandle::new(ws::Handle::default(), Callback::noop());
+        assert!(!socket.is_open());
+    }
+
+    #[test]
     fn stale_socket_falls_back() {
-        let socket = SocketHandle::new(ws::Handle::default());
+        let socket = SocketHandle::new(ws::Handle::default(), Callback::noop());
         assert!(!socket.is_stale());
 
         socket.clone().mark_stale();

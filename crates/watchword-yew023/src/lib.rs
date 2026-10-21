@@ -88,7 +88,10 @@
 //! users created, changed and deleted by others in place, so the app no
 //! longer bumps its `refresh` prop. The account and admin requests go over
 //! the socket too while it is open, and over HTTP while it reconnects;
-//! signing in and out, registration and impersonation always use HTTP.
+//! signing in and out, registration and impersonation always use HTTP. When
+//! the socket closes, and every 10 seconds while it stays closed, the
+//! provider checks the session over HTTP, so a session that ended, whose
+//! upgrade the server now refuses, shows the sign-in page.
 //!
 //! <br>
 //!

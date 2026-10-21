@@ -3,10 +3,10 @@
 //! Cloudflare Access settings, plus a musli-web socket that lives as long as
 //! the session.
 //!
-//! The socket is the wiring of `docs/design.md` section 2.7, see
-//! [`use_session_socket`]: handed to watchword with `set_socket`, it carries
-//! the components' account and admin requests and the server's
-//! `AuthBroadcast`, beside the app's own API (the `api` crate).
+//! The socket is the wiring of `docs/design.md` section 2.7, opened in
+//! [`App`]: handed to watchword with `set_socket`, it carries the
+//! components' account and admin requests and the server's `AuthBroadcast`,
+//! beside the app's own API (the `api` crate).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -47,7 +47,45 @@ fn App() -> Html {
     let auth = use_auth();
     let page = use_state(|| Page::Home);
     let query = use_state(UsersQuery::default);
-    let socket = use_session_socket();
+    // The app's musli-web socket, `/api/example/ws`, open while signed in
+    // since `App` only renders then.
+    //
+    // - `set_socket` gives watchword the handle once. From then on the
+    //   account panel, the admin page and `refresh()` send their requests
+    //   over it while it is open, and over HTTP while it reconnects.
+    //   `AuthProvider` follows the server's `AuthBroadcast` for the user, and
+    //   `AdminUsers` for its list, so the list needs no `refresh` prop.
+    // - When the socket closes, or stays closed, `AuthProvider` checks the
+    //   session over HTTP: a 401 shows the sign-in page with "Your session
+    //   has ended", which unmounts the app and so drops the socket.
+    //   Otherwise musli-web reconnects by itself, with backoff.
+    // - The socket speaks for the session its upgrade carried. Impersonating,
+    //   and stopping it, replace the session cookie, so the app calls
+    //   `reconnect` then. Until the socket reconnects watchword marks it stale
+    //   and uses HTTP, so the requests are right either way; reconnecting puts
+    //   them, and the live updates, back on the socket.
+    let service = use_memo((), |()| {
+        ws::connect(ws::Connect::location("/api/example/ws"))
+            .close_before_unload()
+            .build()
+    });
+
+    {
+        let auth = auth.clone();
+        let handle = service.handle().clone();
+        use_effect_with((), move |()| auth.set_socket(Some(handle)));
+    }
+
+    // Closes the socket and opens it again, so that its upgrade carries the
+    // current session cookie.
+    let reconnect = {
+        let service = service.clone();
+
+        use_callback((), move |(), _| {
+            service.close();
+            service.open();
+        })
+    };
 
     let go = |to: Page| {
         let page = page.clone();
@@ -67,7 +105,7 @@ fn App() -> Html {
     };
 
     let content = match shown {
-        Page::Home => html! { <Home socket={socket.handle.clone()} /> },
+        Page::Home => html! { <Home socket={service.handle().clone()} /> },
         Page::Account => html! {
             <section class="panel">
                 <AccountPanel />
@@ -80,7 +118,7 @@ fn App() -> Html {
             let on_impersonate = {
                 let auth = auth.clone();
                 let page = page.clone();
-                let reconnect = socket.reconnect.clone();
+                let reconnect = reconnect.clone();
                 Callback::from(move |_| {
                     page.set(Page::Home);
                     reconnect.emit(());
@@ -110,7 +148,7 @@ fn App() -> Html {
     // socket reconnects with it too.
     let on_stop_impersonating = {
         let to_users = go(Page::Users);
-        let reconnect = socket.reconnect.clone();
+        let reconnect = reconnect.clone();
         Callback::from(move |()| {
             reconnect.emit(());
             to_users.emit(());
@@ -250,73 +288,6 @@ where
     }
 
     response.json().await.map_err(|e| e.to_string())
-}
-
-/// The app's musli-web socket, from [`use_session_socket`].
-struct SessionSocket {
-    /// The handle, for the app's own requests.
-    handle: ws::Handle,
-    /// Closes the socket and opens it again, so that its upgrade carries the
-    /// current session cookie.
-    reconnect: Callback<()>,
-}
-
-/// Keeps the app's musli-web socket, `/api/example/ws`, open while signed
-/// in, and hands it to watchword.
-///
-/// - `set_socket` gives watchword the handle once. From then on the account
-///   panel, the admin page and `refresh()` send their requests over it while
-///   it is open, and over HTTP while it reconnects. `AuthProvider` follows
-///   the server's `AuthBroadcast` for the user, and `AdminUsers` for its
-///   list, so the list needs no `refresh` prop.
-/// - When the socket closes the session is checked over HTTP: a 401 shows
-///   the sign-in page with "Your session has ended", which unmounts the app
-///   and so drops the socket. Otherwise musli-web reconnects by itself, with
-///   backoff.
-/// - The socket speaks for the session its upgrade carried. Impersonating,
-///   and stopping it, replace the session cookie, so the app calls
-///   `reconnect` then. Until the socket reconnects watchword marks it stale
-///   and uses HTTP, so the requests are right either way; reconnecting puts
-///   them, and the live updates, back on the socket.
-#[hook]
-fn use_session_socket() -> SessionSocket {
-    let auth = use_auth();
-
-    let service = use_memo((), |()| {
-        ws::connect(ws::Connect::location("/api/example/ws"))
-            .close_before_unload()
-            .build()
-    });
-
-    {
-        let handle = service.handle().clone();
-
-        use_effect_with((), move |()| {
-            auth.set_socket(Some(handle.clone()));
-
-            let (_, listener) = handle.on_state_change(move |state: ws::State| {
-                if !state.is_open() {
-                    auth.check_session();
-                }
-            });
-
-            move || drop(listener)
-        });
-    }
-
-    let reconnect = {
-        let service = service.clone();
-
-        use_callback((), move |(), _| {
-            service.close();
-            service.open();
-        })
-    };
-
-    SessionSocket {
-        handle: service.handle().clone(),
-        reconnect,
-    }
 }
 
 #[derive(Properties, PartialEq)]

@@ -322,7 +322,7 @@ async fn put_cloudflare(
 ///   [`Connection::update`], which passes on what this socket's user may see.
 ///
 /// It closes when the session ends ([`Auth::guard`]), after which the
-/// frontend calls `check_session()` and shows the sign-in page.
+/// frontend's `AuthProvider` checks the session and shows the sign-in page.
 async fn ws(State(state): State<AppState>, user: SignedIn, upgrade: WebSocketUpgrade) -> Response {
     let conn = Connection::new(state.auth.clone(), &user);
     upgrade.on_upgrade(move |socket| session_socket(state, user, conn, socket))

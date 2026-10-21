@@ -62,7 +62,9 @@ impl AuthContext {
     }
 
     /// Asks the server whether the session is still live, such as when the
-    /// app's socket closes. A 401 shows the sign-in page with the provider's
+    /// app learns that it may have ended. With a socket from
+    /// [`set_socket`](AuthContext::set_socket) (feature `musliweb04`), this
+    /// runs by itself when the socket closes. A 401 shows the sign-in page with the provider's
     /// `signed_out_notice`; other failures, such as the server being down,
     /// keep the user signed in. A check while one is in flight is dropped.
     pub fn check_session(&self) {
@@ -91,6 +93,16 @@ impl AuthContext {
     /// impersonating, or stopping it, the socket still speaks for the
     /// session its upgrade carried, so the components use HTTP until it
     /// next closes and reconnects with the new session cookie.
+    ///
+    /// The provider also [checks the session](AuthContext::check_session)
+    /// when the socket closes after being open, and every 10 seconds while
+    /// it stays closed, including when it is handed over closed. Browsers do
+    /// not say why a WebSocket upgrade failed, so an upgrade refused because
+    /// the session ended only shows as a socket that closes or does not
+    /// open; a 401 from the check then shows the sign-in page. The app needs
+    /// no state listener of its own for this, and should take the socket
+    /// back with `None` if it drops it while signed in, since a dropped
+    /// socket stays closed.
     ///
     /// The socket is forgotten when the session ends, so a later sign-in
     /// hands over the new one.
