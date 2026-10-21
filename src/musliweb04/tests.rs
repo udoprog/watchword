@@ -9,7 +9,7 @@ use std::vec::Vec;
 
 use super::{AuthUpdate, Connection};
 use crate::axum08::SignedIn;
-use crate::types::{Impersonator, NewUser, RegisterRequest, Role, UserInfo};
+use crate::types::{AuthError, Impersonator, NewUser, RegisterRequest, Role, UserInfo};
 use crate::{Auth, AuthEvent, BootstrapAdmin, MemoryStore, generate_session_key};
 
 const PASSWORD: &str = "password1";
@@ -355,4 +355,57 @@ async fn a_lag_on_an_ended_session_sends_nothing() {
     let conn = Connection::new(auth.clone(), &root);
     auth.sign_out(&root.session.id).await.unwrap();
     assert_eq!(conn.lagged().await.unwrap(), None);
+}
+
+/// The refusal inside `result`, if it is one; panics on a store failure.
+fn refusal<T: std::fmt::Debug>(result: crate::core::Result<T>) -> Option<AuthError> {
+    match result {
+        Ok(_) => None,
+        Err(crate::core::Error::Auth(error)) => Some(error),
+        Err(error) => panic!("not a refusal: {error:?}"),
+    }
+}
+
+/// The public checks read the stored user per call, as the HTTP extractors
+/// do, so a role change or a sign-out applies to the next one.
+#[tokio::test]
+async fn the_checks_follow_the_stored_user() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let erin = user(&auth, &root, "erin", Role::Regular).await;
+    let conn = Connection::new(auth.clone(), &erin);
+
+    assert_eq!(conn.user_id(), erin.user.id);
+    assert_eq!(conn.session_id(), erin.session.id);
+
+    let (user, session) = conn.signed_in().await.unwrap();
+    assert_eq!(user.id, erin.user.id);
+    assert_eq!(session.id, erin.session.id);
+    assert_eq!(
+        refusal(conn.require_admin().await),
+        Some(AuthError::Forbidden)
+    );
+
+    auth.set_role(&root.user, erin.user.id, Role::Admin)
+        .await
+        .unwrap();
+    assert_eq!(conn.require_admin().await.unwrap().id, erin.user.id);
+
+    auth.set_role(&root.user, erin.user.id, Role::Regular)
+        .await
+        .unwrap();
+    assert_eq!(
+        refusal(conn.require_admin().await),
+        Some(AuthError::Forbidden)
+    );
+
+    auth.sign_out(&erin.session.id).await.unwrap();
+    assert_eq!(
+        refusal(conn.signed_in().await),
+        Some(AuthError::Unauthorized)
+    );
+    assert_eq!(
+        refusal(conn.require_admin().await),
+        Some(AuthError::Unauthorized)
+    );
 }

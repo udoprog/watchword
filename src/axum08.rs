@@ -37,7 +37,17 @@
 //! [`AuthError`](crate::AuthError) and [`core::Error`](crate::core::Error)
 //! implement `IntoResponse`, so an app's own handlers can return them too.
 //!
-//! The design is in `docs/design.md`, section 2.6.
+//! An app gates its own routes with the same extractors: [`SignedIn`] for a
+//! signed-in user and [`Admin`] for an admin, both read from the store on
+//! every request. On a WebSocket, which outlives roles and sessions, its own
+//! requests are gated per request instead: on a musli-web socket with
+//! `musliweb04::Connection::signed_in` and `Connection::require_admin`,
+//! which answer as these extractors do, or, for the role as last seen
+//! without a store read, with the socket's
+//! [`SessionGuard::user`](crate::core::SessionGuard::user) and
+//! [`watch_user`](crate::core::SessionGuard::watch_user).
+//!
+//! The design is in `docs/design.md`, section 2.5.
 
 mod error;
 mod extract;

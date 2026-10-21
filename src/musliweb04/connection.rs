@@ -84,6 +84,41 @@ use crate::types::{
 ///     }
 /// }
 /// ```
+///
+/// The app's own requests check their user the way watchword's do, with
+/// [`signed_in`](Connection::signed_in) and
+/// [`require_admin`](Connection::require_admin), which re-read the session
+/// for each request and refuse with the same [`AuthError`] as the HTTP
+/// extractors. A refusal is [`Error::Auth`]; any other error is the store
+/// failing:
+///
+/// ```no_run
+/// # extern crate musli_web04 as musli_web;
+/// use musli_web::ws;
+/// use watchword::core::Error;
+/// use watchword::musliweb04::Connection;
+///
+/// async fn stats(conn: &Connection, outgoing: &mut ws::Outgoing<'_>) -> watchword::core::Result<bool> {
+///     let admin = match conn.require_admin().await {
+///         Ok(admin) => admin,
+///         Err(Error::Auth(error)) => {
+///             // Answer with the app's own response type, as a refusal.
+///             # let _ = error;
+///             return Ok(true);
+///         }
+///         Err(error) => return Err(error),
+///     };
+///
+///     // ... answer with what only `admin` may see.
+///     # let _ = (admin, outgoing);
+///     Ok(true)
+/// }
+/// ```
+///
+/// A socket loop that only needs the role as last seen, without a store
+/// read, has it from its [`SessionGuard`](crate::core::SessionGuard), which
+/// follows the user's changes: [`user`](crate::core::SessionGuard::user) and
+/// [`watch_user`](crate::core::SessionGuard::watch_user).
 #[derive(Clone)]
 pub struct Connection {
     auth: Auth,
@@ -270,7 +305,7 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.admin().await?;
+                    let admin = self.require_admin().await?;
                     self.auth.users(&admin).await
                 };
 
@@ -282,7 +317,7 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.admin().await?;
+                    let admin = self.require_admin().await?;
                     let (entry, link) = self.auth.create_user(&admin, &new).await?;
                     Ok(CreatedUser { entry, link })
                 };
@@ -295,7 +330,7 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.admin().await?;
+                    let admin = self.require_admin().await?;
                     let user = self.auth.update_user(&admin, id, &change).await?;
                     Ok(user.info())
                 };
@@ -308,7 +343,7 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.admin().await?;
+                    let admin = self.require_admin().await?;
                     self.auth.delete_user(&admin, id).await
                 };
 
@@ -320,7 +355,7 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.admin().await?;
+                    let admin = self.require_admin().await?;
                     self.auth.issue_link(&admin, id).await
                 };
 
@@ -332,7 +367,7 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.admin().await?;
+                    let admin = self.require_admin().await?;
                     self.auth.revoke_link(&admin, id).await
                 };
 
@@ -344,7 +379,7 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.admin().await?;
+                    let admin = self.require_admin().await?;
                     self.auth.sign_out_everywhere(&admin, id).await
                 };
 
@@ -356,7 +391,7 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.admin().await?;
+                    let admin = self.require_admin().await?;
                     let user = self.auth.revoke_access(&admin, id).await?;
                     Ok(user.info())
                 };
@@ -367,20 +402,44 @@ impl Connection {
         }
     }
 
+    /// The id of the user this connection signed in as, as its upgrade
+    /// carried it. For an impersonated session it is the impersonated user.
+    pub fn user_id(&self) -> UserId {
+        self.user
+    }
+
+    /// The id of the session this connection signed in with.
+    pub fn session_id(&self) -> &str {
+        &self.session
+    }
+
     /// The connection's session and its user as stored now, or
     /// [`AuthError::Unauthorized`] once the session has ended, as the
-    /// `SignedIn` extractor answers over HTTP.
-    async fn signed_in(&self) -> Result<(User, Session)> {
+    /// [`SignedIn`] extractor answers over HTTP.
+    ///
+    /// For an app's own socket requests that need a signed-in user: like
+    /// [`handle`](Connection::handle), it reads the session through
+    /// [`Auth::session`] each time, so a request on a socket whose session
+    /// ended a moment ago is refused even before [`Auth::guard`] closes it.
+    /// Errors with [`Error::Auth`] for the refusal and another [`Error`] when
+    /// the store fails, which the app should not report as a refusal.
+    pub async fn signed_in(&self) -> Result<(User, Session)> {
         match self.auth.session(&self.session).await? {
             Some(signed_in) => Ok(signed_in),
             None => Err(AuthError::Unauthorized.into()),
         }
     }
 
-    /// The connection's user, refused with [`AuthError::Forbidden`] unless
-    /// they are an active admin now, as the `Admin` extractor answers over
-    /// HTTP.
-    async fn admin(&self) -> Result<User> {
+    /// The connection's user as stored now, refused with
+    /// [`AuthError::Forbidden`] unless they are an active admin now, and with
+    /// [`AuthError::Unauthorized`] once the session has ended, as the
+    /// [`Admin`](crate::axum08::Admin) extractor answers over HTTP.
+    ///
+    /// For an app's own admin-only socket requests, so the check matches
+    /// watchword's admin endpoints: a demoted or revoked admin is refused on
+    /// the next request. Like [`signed_in`](Connection::signed_in), a store
+    /// failure is an error of its own, not a refusal.
+    pub async fn require_admin(&self) -> Result<User> {
         let (user, _) = self.signed_in().await?;
 
         if user.access != Access::Active || !user.is_admin() {

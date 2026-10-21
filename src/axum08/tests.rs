@@ -903,6 +903,56 @@ async fn guard_follows_user_changes() {
     tokio::time::timeout(WAIT, guard.ended()).await.unwrap();
 }
 
+/// The guard keeps the user as last seen, for a socket's own checks, and
+/// reading it does not consume what `changed` reports.
+#[tokio::test]
+async fn guard_keeps_the_user_as_last_seen() {
+    let auth = auth();
+    let root = signed_in(&auth).await;
+    let (ada, token) = auth
+        .create_user(
+            &root.user,
+            &crate::NewUser {
+                login: Some("ada".to_owned()),
+                email: None,
+                role: Role::Admin,
+            },
+        )
+        .await
+        .unwrap();
+    let request = RegisterRequest {
+        password: PASSWORD.to_owned(),
+    };
+    let (user, session) = auth.register(&token.token, &request).await.unwrap();
+    assert_eq!(user.id, ada.user.id);
+
+    let guard = auth.guard(&user, &session);
+    let watched = guard.watch_user();
+    assert_eq!(guard.user(), user.info());
+    assert!(watched.borrow().is_admin());
+
+    let demoted = auth
+        .set_role(&root.user, ada.user.id, Role::Regular)
+        .await
+        .unwrap();
+
+    let mut follower = watched.clone();
+    tokio::time::timeout(WAIT, follower.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!watched.borrow().is_admin());
+    assert_eq!(guard.user(), demoted.info());
+
+    // `changed` still reports the change.
+    let info = tokio::time::timeout(WAIT, guard.changed()).await.unwrap();
+    assert_eq!(info, demoted.info());
+
+    // The last value outlives the guard.
+    drop(guard);
+    assert_eq!(*watched.borrow(), demoted.info());
+}
+
 #[tokio::test]
 async fn guard_ends_on_delete_and_expiry() {
     let auth = auth();

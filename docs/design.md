@@ -471,6 +471,8 @@ tokio::select! {
     info = guard.changed() => { /* UserInfo: role/email changed, e.g. reload the app's per-user data */ }
     ...
 }
+guard.user()         // UserInfo as last seen, no store read
+guard.watch_user()   // tokio watch::Receiver<UserInfo> of the same, cloneable, for the app's request handler
 ```
 
 `SignedIn` and `Admin` read the user from the store on every request, so a role
@@ -485,6 +487,15 @@ session in the store, so a session deleted by another process still ends the
 socket. A guard on an impersonated session also follows its admin's
 `UserChanged` and `UserDeleted`, so revoking, demoting or deleting the admin
 ends it at once.
+
+The guard keeps the user as last seen (`SessionGuard::user`, and
+`watch_user` for a cloneable `watch::Receiver<UserInfo>`), so a socket can
+gate its own requests on the role without a store lookup per request or per
+broadcast. It is current as of the last event or re-check, so a change made
+in another process may reach it up to 5 minutes late; a check that must not
+let a stale role through reads the store instead (`Auth::session`, or
+`Connection::require_admin` in 2.7). For an impersonated session it is the
+impersonated user, without the `impersonated_by` marker. Decision 23.
 
 The routes are all JSON. Their errors are `AuthError` with the matching status:
 401, 403, 404, 409, 410, 429, or 400 with an `Invalid` reason. A malformed
@@ -590,10 +601,11 @@ cookies, so the library does not depend on the app's gloo version.
 ### 2.7 musli-web integration (`musliweb04`)
 
 *Status: built are the types (`watchword::musliweb04`), the server's
-`Connection` (`new`, `update`, `lagged`, `handle` and `handles`), and the components
+`Connection` (`new`, `update`, `lagged`, `handle`, `handles`, and the
+accessors `signed_in`, `require_admin`, `user_id` and `session_id`), and the components
 following the broadcasts and sending their requests over the socket
 (`AuthContext::set_socket`). `examples/app` is wired this way and is the
-reference for an app. Decisions 13 and 16–20 record why it is shaped this
+reference for an app. Decisions 13, 16–20 and 23 record why it is shaped this
 way.*
 
 An app whose frontend already talks to its server over a musli-web WebSocket
@@ -734,6 +746,20 @@ event = events.recv() => {
   sees nothing of the missed events but their own user, so a `Me` covers
   them; an admin's page may also show the user list, which it fetches again
   on `Resync`. The guard re-checks the session itself on lag.
+
+The app's own requests on the socket are gated with the same checks:
+
+```rust
+conn.signed_in().await?       // -> (User, Session) as stored now; AuthError::Unauthorized once the session ended
+conn.require_admin().await?   // -> User; AuthError::Forbidden unless an admin now (as the `Admin` extractor)
+conn.user_id()                // UserId the upgrade carried (the impersonated user for an impersonated session)
+conn.session_id()             // &str
+```
+
+Both async accessors re-read the session through `Auth::session`, as
+`handle` does for watchword's endpoints, and return `core::Error`: a refusal
+is `Error::Auth(AuthError)`, and anything else is the store failing, which
+an app must not answer as "not an admin". `handle` uses them itself.
 
 An app that hand-writes a combined `api::Id` instead of delegating its
 `Unknown` arm can do so; `Connection::handles(id)` (or `is_watchword_id`, from
@@ -1055,3 +1081,17 @@ once the release is on crates.io.
     variant, so the two wire formats agree. The alternative, a variant
     carrying the raw code and parameters, would need a hand-written
     deserializer per format for a message nobody can translate.
+23. **Apps gate their own socket requests with watchword's checks.** Every
+    app with a socket also has requests of its own that need a signed-in
+    user or an admin, and each re-implemented what `Connection` did
+    privately: a copied session wrapper, a store lookup per check that
+    answered "forbidden" when the store failed, or an admin flag kept by
+    hand and re-queried after a lag. `Connection::signed_in` and
+    `require_admin` are now public, with the same refusals as the HTTP
+    extractors and the store failure kept apart from them, and the guard
+    exposes the user it already follows (`user`, `watch_user`) for a check
+    that may use the role as last seen. The store-reading pair is the safe
+    default; the guard's copy saves a lookup where a few minutes' staleness
+    across processes is acceptable. A `watch::Receiver` is handed out
+    rather than a wrapper type: tokio is already in the API through
+    `Auth::events`, and it is what the guard holds.

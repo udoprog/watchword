@@ -404,6 +404,13 @@ impl ws::Handler for Handler {
                     return Ok(false);
                 };
 
+                // The app's own requests are gated as watchword's are: the
+                // session is read again, so one that has ended since the
+                // upgrade is refused (`conn.require_admin()` for an admin-only
+                // request). A refusal is `Error::Auth`, which musli-web sends
+                // as the request's error; the guard closes the socket next.
+                self.conn.signed_in().await?;
+
                 outgoing.write(api::StatusResponse {
                     uptime: self.state.started.elapsed().as_secs(),
                     sockets: self.state.sockets.load(Ordering::Relaxed),

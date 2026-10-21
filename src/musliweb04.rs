@@ -33,7 +33,9 @@
 //! here too: a `Connection` (`musliweb04` and `axum08`) answers the
 //! endpoints' requests on one socket, running the same operations as the HTTP
 //! routes, and turns each [`AuthEvent`](crate::AuthEvent) into the
-//! [`AuthUpdate`] that socket may see.
+//! [`AuthUpdate`] that socket may see. Its `signed_in` and `require_admin`
+//! gate the app's own requests on that socket with the same checks and
+//! [`AuthError`]s as watchword's.
 //!
 //! The design is in `docs/design.md`, section 2.7.
 //!

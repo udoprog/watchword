@@ -44,6 +44,7 @@ impl Auth {
     pub fn guard(&self, user: &User, session: &Session) -> SessionGuard {
         let (ended_tx, ended) = watch::channel(false);
         let (changed_tx, changed) = watch::channel(user.info());
+        let current = changed.clone();
 
         let watcher = Watcher {
             auth: self.clone(),
@@ -60,6 +61,7 @@ impl Auth {
         SessionGuard {
             ended: Mutex::new(ended),
             changed: Mutex::new(changed),
+            current,
             task: tokio::spawn(watcher.run()),
         }
     }
@@ -67,11 +69,36 @@ impl Auth {
 
 /// Resolves when a WebSocket's session ends; see [`Auth::guard`].
 ///
-/// Both methods take `&self` and are cancel-safe, so they can share one
-/// `tokio::select!`.
+/// [`ended`](SessionGuard::ended) and [`changed`](SessionGuard::changed)
+/// take `&self` and are cancel-safe, so they can share one `tokio::select!`.
+///
+/// The guard also keeps the session's user as last seen, which
+/// [`user`](SessionGuard::user) and [`watch_user`](SessionGuard::watch_user)
+/// read without a store lookup, so a socket can gate its own requests on the
+/// user's role:
+///
+/// ```no_run
+/// # async fn ws(auth: watchword::Auth, user: watchword::store::User, session: watchword::store::Session) {
+/// let guard = auth.guard(&user, &session);
+///
+/// // Cloneable, for the app's request handler.
+/// let user = guard.watch_user();
+///
+/// if user.borrow().is_admin() {
+///     // ... answer an admin-only request.
+/// }
+/// # }
+/// ```
+///
+/// That role is current as of the last event or store re-check (on lag and
+/// every 5 minutes), so it may lag a change made by another process. Where
+/// a stale role must not let a request through, use [`Auth::session`], or
+/// `musliweb04::Connection::require_admin` on a musli-web socket, which read
+/// the store.
 pub struct SessionGuard {
     ended: Mutex<watch::Receiver<bool>>,
     changed: Mutex<watch::Receiver<UserInfo>>,
+    current: watch::Receiver<UserInfo>,
     task: JoinHandle<()>,
 }
 
@@ -98,6 +125,25 @@ impl SessionGuard {
         }
 
         changed.borrow_and_update().clone()
+    }
+
+    /// The session's user as last seen: as loaded when the guard was made,
+    /// then as each change [`changed`](SessionGuard::changed) reports left
+    /// it. Once the session has ended it is the user as they were last seen
+    /// before. For an impersonated session it is the impersonated user,
+    /// without the [`impersonated_by`](UserInfo::impersonated_by) marker.
+    pub fn user(&self) -> UserInfo {
+        self.current.borrow().clone()
+    }
+
+    /// A receiver of the session's user, as [`user`](SessionGuard::user)
+    /// gives it, for code outside the socket loop, such as the app's request
+    /// handler. It is cheap to clone, `borrow()` reads the latest value, and
+    /// it keeps working after the guard is dropped, holding the last value.
+    /// It is separate from what [`changed`](SessionGuard::changed) tracks:
+    /// reading or waiting on it does not consume a change there.
+    pub fn watch_user(&self) -> watch::Receiver<UserInfo> {
+        self.current.clone()
     }
 }
 
