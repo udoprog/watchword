@@ -18,13 +18,14 @@ fn auth() -> Auth {
 
 /// The bootstrap admin `root`, signed in.
 async fn root(auth: &Auth) -> SignedIn {
-    let url = auth
+    let link = auth
         .bootstrap_admin(&BootstrapAdmin::login("root"))
         .await
         .unwrap()
+        .link()
+        .cloned()
         .unwrap();
-    let token = url.rsplit('/').next().unwrap();
-    register(auth, token).await
+    register(auth, &link.token).await
 }
 
 /// A user created by `admin` with `role` and still pending, without a

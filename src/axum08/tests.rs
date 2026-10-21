@@ -98,8 +98,7 @@ async fn call(
 }
 
 /// Registers through a `/register/{token}` URL, returning the cookie.
-async fn register(app: &Router, url: &str) -> String {
-    let token = url.rsplit('/').next().unwrap();
+async fn register(app: &Router, token: &str) -> String {
     let path = format!("/api/auth/register/{token}");
     let answer = call(
         app,
@@ -115,12 +114,14 @@ async fn register(app: &Router, url: &str) -> String {
 
 /// Bootstraps and registers the admin `root`, returning their cookie.
 async fn admin(auth: &Auth, app: &Router) -> String {
-    let url = auth
+    let link = auth
         .bootstrap_admin(&BootstrapAdmin::login("root"))
         .await
         .unwrap()
+        .link()
+        .cloned()
         .unwrap();
-    register(app, &url).await
+    register(app, &link.token).await
 }
 
 /// Creates and registers the regular user `login`, returning their id and
@@ -160,12 +161,14 @@ async fn config_me_and_registration() {
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
     assert_eq!(unknown.error(), "not_found");
 
-    let url = auth
+    let link = auth
         .bootstrap_admin(&BootstrapAdmin::login("root"))
         .await
         .unwrap()
+        .link()
+        .cloned()
         .unwrap();
-    let token = url.rsplit('/').next().unwrap();
+    let token = &link.token;
     let path = format!("/api/auth/register/{token}");
 
     let info = call(&app, Method::GET, &path, None, None).await;
@@ -799,12 +802,14 @@ async fn live_session() {
 /// The admin `root`, registered through the service, as an extractor would
 /// load them.
 async fn signed_in(auth: &Auth) -> SignedIn {
-    let url = auth
+    let link = auth
         .bootstrap_admin(&BootstrapAdmin::login("root"))
         .await
         .unwrap()
+        .link()
+        .cloned()
         .unwrap();
-    let token = url.rsplit('/').next().unwrap();
+    let token = &link.token;
     let request = RegisterRequest {
         password: PASSWORD.to_owned(),
     };
@@ -919,13 +924,14 @@ async fn guard_ends_on_delete_and_expiry() {
         )
         .await
         .unwrap();
-    // The admin as a request would load them.
+    // The admin as a request would load them once registered; a pending
+    // admin may not act.
     let pat = User {
         id: pat.user.id,
         login: pat.user.login,
         email: None,
         role: Role::Admin,
-        access: Access::Pending,
+        access: Access::Active,
         method: UserMethod::Password,
         password_hash: None,
         google_sub: None,

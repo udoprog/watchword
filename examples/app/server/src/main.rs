@@ -204,10 +204,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bootstrap = BootstrapAdmin::new(&args.bootstrap_admin).public_url(Some(&public_url));
 
-    if let Some(url) = auth.bootstrap_admin(&bootstrap).await? {
+    // The library logs the link too; print it where the operator looks. The
+    // store is in memory, so every start creates the admin afresh, but a
+    // persistent store also gets a new link here once the first one expires
+    // unused.
+    if let Some(link) = auth.bootstrap_admin(&bootstrap).await?.link() {
         println!(
-            "\nSign up as the first admin ({}): {url}\n",
-            args.bootstrap_admin
+            "\nSign up as the first admin ({}): {}\n",
+            args.bootstrap_admin,
+            link.url(Some(public_url.as_str()))
         );
     }
 

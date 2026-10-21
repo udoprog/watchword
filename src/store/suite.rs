@@ -9,9 +9,11 @@ use std::net::IpAddr;
 use jiff::{SignedDuration, Timestamp};
 
 use super::{Credential, Session, Store, Token, TokenKind, User};
-use crate::core::{Auth, AuthEvent, BootstrapAdmin, Error, generate_session_key, new_token};
+use crate::core::{
+    Auth, AuthEvent, Bootstrap, BootstrapAdmin, Error, generate_session_key, new_token,
+};
 use crate::types::{
-    Access, AuthError, Conflict, Invalid, LoginRequest, Method, NewUser, PasswordChange,
+    Access, AuthError, Conflict, Invalid, Link, LoginRequest, Method, NewUser, PasswordChange,
     RegisterRequest, Role, UserChange, UserId,
 };
 
@@ -38,6 +40,9 @@ macro_rules! store_suite {
             bootstraps_an_admin_into_an_empty_store,
             bootstraps_an_admin_by_login,
             bootstrap_is_skipped_once_users_exist,
+            bootstrap_reissues_an_expired_link,
+            bootstrap_leaves_a_pending_admin_to_an_active_admin,
+            recovery_links_reset_register_and_restore,
             password_sign_in_by_login_or_email,
             password_sign_in_by_email_only_without_logins,
             password_sign_in_is_throttled,
@@ -694,11 +699,34 @@ where
     Ok(())
 }
 
-fn token_of(url: &str) -> Result<&str, Box<dyn StdError>> {
-    Ok(url
-        .rsplit_once("/register/")
-        .map(|(_, token)| token)
-        .ok_or("not a registration url")?)
+/// The link a bootstrap issued; fails on any other outcome.
+fn issued(outcome: Bootstrap) -> Result<Link, Box<dyn StdError>> {
+    match outcome {
+        Bootstrap::Created(link) | Bootstrap::Reissued(link) => Ok(link),
+        outcome => Err(format!("expected a link, got {outcome:?}").into()),
+    }
+}
+
+/// Whether `token` can currently be used.
+async fn link_usable(auth: &Auth, token: &str) -> bool {
+    auth.register_info(token).await.is_ok()
+}
+
+/// Replaces the user's links with one that has already expired.
+async fn expire_links<S>(store: &S, user: UserId) -> Result<String, Box<dyn StdError>>
+where
+    S: Store,
+{
+    let now = Timestamp::now();
+    let token = Token {
+        id: new_token(),
+        user,
+        kind: TokenKind::Registration,
+        expires_at: now - SignedDuration::from_secs(1),
+        used_at: None,
+    };
+    store.create_token(&token, now).await?;
+    Ok(token.id)
 }
 
 pub(crate) async fn bootstraps_an_admin_into_an_empty_store<S>(store: S) -> TestResult
@@ -711,10 +739,12 @@ where
 
     let admin =
         BootstrapAdmin::new("Admin@Example.com").public_url(Some("https://maps.example.com/"));
-    let url = auth.bootstrap_admin(&admin).await?.ok_or("skipped")?;
-    assert!(
-        url.starts_with("https://maps.example.com/register/"),
-        "{url}"
+    let outcome = auth.bootstrap_admin(&admin).await?;
+    assert!(matches!(outcome, Bootstrap::Created(..)), "{outcome:?}");
+    let link = issued(outcome)?;
+    assert_eq!(
+        link.url(admin.public_url.as_deref()),
+        format!("https://maps.example.com/register/{}", link.token)
     );
 
     let user = store
@@ -725,12 +755,22 @@ where
     assert_eq!(user.access, Access::Pending);
     assert!(user.password_hash.is_none());
 
-    let token = store.token(token_of(&url)?).await?.ok_or("token missing")?;
+    let token = store.token(&link.token).await?.ok_or("token missing")?;
     assert_eq!(token.user, user.id);
     assert_eq!(token.kind, TokenKind::Registration);
 
-    let info = auth.register_info(token_of(&url)?).await?;
+    let info = auth.register_info(&link.token).await?;
     assert_eq!(info.email.as_deref(), Some("admin@example.com"));
+
+    // Restarting while the link is live changes nothing.
+    assert_eq!(
+        auth.bootstrap_admin(&admin).await?,
+        Bootstrap::Pending {
+            expires_at: token.expires_at
+        }
+    );
+    assert!(link_usable(&auth, &link.token).await);
+    assert_eq!(store.user_count().await?, 1);
     Ok(())
 }
 
@@ -749,11 +789,11 @@ where
     assert_eq!(store.user_count().await?, 0);
 
     let auth = Auth::builder(store.clone(), generate_session_key()).build();
-    let url = auth
-        .bootstrap_admin(&BootstrapAdmin::new("root").public_url(None::<String>))
-        .await?
-        .ok_or("skipped")?;
-    assert!(url.starts_with("/register/"), "{url}");
+    let link = issued(
+        auth.bootstrap_admin(&BootstrapAdmin::new("root").public_url(None::<String>))
+            .await?,
+    )?;
+    assert_eq!(link.url(None), format!("/register/{}", link.token));
 
     let user = store.user_by_login("root").await?.ok_or("admin missing")?;
     assert_eq!(user.role, Role::Admin);
@@ -763,7 +803,7 @@ where
     let request = RegisterRequest {
         password: PASSWORD.to_owned(),
     };
-    auth.register(token_of(&url)?, &request).await?;
+    auth.register(&link.token, &request).await?;
     let request = LoginRequest {
         login: "root".to_owned(),
         password: PASSWORD.to_owned(),
@@ -780,13 +820,13 @@ where
     let auth = Auth::builder(store.clone(), generate_session_key()).build();
     let admin = BootstrapAdmin::email(ADMIN);
 
-    let url = auth.bootstrap_admin(&admin).await?.ok_or("skipped")?;
+    let link = issued(auth.bootstrap_admin(&admin).await?)?;
 
     // The admin registers and is later demoted.
     let request = RegisterRequest {
         password: PASSWORD.to_owned(),
     };
-    let (user, _) = auth.register(token_of(&url)?, &request).await?;
+    let (user, _) = auth.register(&link.token, &request).await?;
     let change = UserChange {
         role: Some(Role::Regular),
         ..UserChange::default()
@@ -798,11 +838,11 @@ where
     let hash = store.user(user.id).await?.ok_or("gone")?.password_hash;
 
     // Restarting with the option still set changes nothing.
-    assert!(auth.bootstrap_admin(&admin).await?.is_none());
+    assert_eq!(auth.bootstrap_admin(&admin).await?, Bootstrap::Skipped);
 
     // Nor does naming another email.
     let other = BootstrapAdmin::email("other@example.com");
-    assert!(auth.bootstrap_admin(&other).await?.is_none());
+    assert_eq!(auth.bootstrap_admin(&other).await?, Bootstrap::Skipped);
     assert!(store.user_by_email("other@example.com").await?.is_none());
 
     let user = store.user(user.id).await?.ok_or("admin missing")?;
@@ -814,6 +854,156 @@ where
     // No new link was issued.
     let users = store.users(Timestamp::now()).await?;
     assert!(users.iter().all(|(_, link)| link.is_none()));
+    Ok(())
+}
+
+pub(crate) async fn bootstrap_reissues_an_expired_link<S>(store: S) -> TestResult
+where
+    S: Store + Clone,
+{
+    let auth = Auth::builder(store.clone(), generate_session_key()).build();
+    let admin = BootstrapAdmin::new(" Admin@Example.COM ");
+
+    let first = issued(auth.bootstrap_admin(&admin).await?)?;
+    let user = store.user_by_email(ADMIN).await?.ok_or("admin missing")?;
+
+    // The link expires before the admin registers.
+    let expired = expire_links(&store, user.id).await?;
+    assert!(!link_usable(&auth, &first.token).await);
+    assert!(!link_usable(&auth, &expired).await);
+
+    // Naming someone else still changes nothing.
+    let other = BootstrapAdmin::email("other@example.com");
+    assert_eq!(auth.bootstrap_admin(&other).await?, Bootstrap::Skipped);
+
+    // A restart issues a new registration link to the same admin.
+    let outcome = auth.bootstrap_admin(&admin).await?;
+    assert!(matches!(outcome, Bootstrap::Reissued(..)), "{outcome:?}");
+    let link = issued(outcome)?;
+    let token = store.token(&link.token).await?.ok_or("missing")?;
+    assert_eq!(token.user, user.id);
+    assert_eq!(token.kind, TokenKind::Registration);
+    assert_eq!(store.user_count().await?, 1);
+
+    // It stays pending while that link is live.
+    assert_eq!(
+        auth.bootstrap_admin(&admin).await?,
+        Bootstrap::Pending {
+            expires_at: token.expires_at
+        }
+    );
+
+    // The admin registers with it, after which nothing is reissued.
+    let request = RegisterRequest {
+        password: PASSWORD.to_owned(),
+    };
+    let (registered, _) = auth.register(&link.token, &request).await?;
+    assert_eq!(registered.id, user.id);
+    assert_eq!(registered.access, Access::Active);
+    assert_eq!(auth.bootstrap_admin(&admin).await?, Bootstrap::Skipped);
+    Ok(())
+}
+
+pub(crate) async fn bootstrap_leaves_a_pending_admin_to_an_active_admin<S>(store: S) -> TestResult
+where
+    S: Store + Clone,
+{
+    let env = env(store).await?;
+
+    // An active admin exists, and the named admin is pending with an
+    // expired link: the active admin issues their links.
+    let new = NewUser {
+        login: Some("root".to_owned()),
+        email: None,
+        role: Role::Admin,
+    };
+    let (entry, _) = env.auth.create_user(&env.admin, &new).await?;
+    expire_links(&env.store, entry.user.id).await?;
+
+    let root = BootstrapAdmin::login("root");
+    assert_eq!(env.auth.bootstrap_admin(&root).await?, Bootstrap::Skipped);
+
+    // Once no active admin is left, the pending admin gets a new link.
+    env.store.set_access(env.admin.id, Access::Revoked).await?;
+    let link = issued(env.auth.bootstrap_admin(&root).await?)?;
+    assert_eq!(
+        env.store.token(&link.token).await?.ok_or("missing")?.user,
+        entry.user.id
+    );
+
+    // A pending regular user is never the bootstrap admin.
+    let new = NewUser {
+        login: Some("pat".to_owned()),
+        email: None,
+        role: Role::Regular,
+    };
+    let pat = env
+        .store
+        .create_user(&new, Timestamp::now())
+        .await?
+        .expect("no conflict");
+    expire_links(&env.store, pat.id).await?;
+    assert_eq!(
+        env.auth
+            .bootstrap_admin(&BootstrapAdmin::login("pat"))
+            .await?,
+        Bootstrap::Skipped
+    );
+    Ok(())
+}
+
+pub(crate) async fn recovery_links_reset_register_and_restore<S>(store: S) -> TestResult
+where
+    S: Store + Clone,
+{
+    let env = env(store).await?;
+
+    // An active user gets a reset link, by email or login, using up the
+    // earlier one.
+    let active = env.password_user("user@example.com").await?;
+    let first = env.auth.recovery_link(" User@Example.com ").await?;
+    assert_eq!(env.token_kind(&first.token).await?, TokenKind::Reset);
+    let link = env.auth.recovery_link("admin").await?;
+    assert_eq!(
+        env.store.token(&link.token).await?.ok_or("missing")?.user,
+        env.admin.id
+    );
+    assert_eq!(env.token_kind(&link.token).await?, TokenKind::Reset);
+
+    let second = env.auth.recovery_link("user@example.com").await?;
+    assert!(!env.usable(&first.token).await);
+    assert!(env.usable(&second.token).await);
+    let request = RegisterRequest {
+        password: "another correct horse battery".to_owned(),
+    };
+    let (user, _) = env.auth.register(&second.token, &request).await?;
+    assert_eq!(user.id, active.id);
+
+    // A pending user gets a registration link.
+    let (pending, _) = env.invite("pending@example.com").await?;
+    let link = env.auth.recovery_link("pending@example.com").await?;
+    assert_eq!(env.token_kind(&link.token).await?, TokenKind::Registration);
+    assert_eq!(env.reload(pending.id).await?.access, Access::Pending);
+
+    // A revoked user regains access by registering with one.
+    env.auth.revoke_access(&env.admin, active.id).await?;
+    let link = env.auth.recovery_link("user@example.com").await?;
+    assert_eq!(env.token_kind(&link.token).await?, TokenKind::Registration);
+    let request = RegisterRequest {
+        password: PASSWORD.to_owned(),
+    };
+    let (user, _) = env.auth.register(&link.token, &request).await?;
+    assert_eq!(user.access, Access::Active);
+
+    // Nobody by that name.
+    assert_eq!(
+        refused(env.auth.recovery_link("nobody").await),
+        AuthError::NotFound
+    );
+    assert_eq!(
+        refused(env.auth.recovery_link("nobody@example.com").await),
+        AuthError::NotFound
+    );
     Ok(())
 }
 
@@ -1150,6 +1340,35 @@ where
         forbidden
     );
     assert_eq!(env.reload(user.id).await?.role, Role::Regular);
+
+    // Nor can an admin who is not active: one still pending, or revoked.
+    let new_admin = NewUser {
+        login: None,
+        email: Some("second@example.com".to_owned()),
+        role: Role::Admin,
+    };
+    let (entry, link) = env.auth.create_user(&env.admin, &new_admin).await?;
+    let pending = env.reload(entry.user.id).await?;
+    assert_eq!(refused(env.auth.users(&pending).await), forbidden);
+    assert_eq!(refused(env.auth.issue_link(&pending, id).await), forbidden);
+    assert_eq!(
+        refused(env.auth.issue_link(&pending, pending.id).await),
+        forbidden
+    );
+    assert_eq!(
+        refused(env.auth.create_user(&pending, &new).await),
+        forbidden
+    );
+
+    let request = RegisterRequest {
+        password: PASSWORD.to_owned(),
+    };
+    env.auth.register(&link.token, &request).await?;
+    env.auth.revoke_access(&env.admin, pending.id).await?;
+    let revoked = env.reload(pending.id).await?;
+    assert_eq!(revoked.role, Role::Admin);
+    assert_eq!(refused(env.auth.users(&revoked).await), forbidden);
+    assert_eq!(refused(env.auth.delete_user(&revoked, id).await), forbidden);
 
     // Unknown users are not found.
     let missing = UserId(u64::MAX);

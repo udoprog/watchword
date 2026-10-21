@@ -153,6 +153,8 @@ pub struct LoginRequest { pub login: String, pub password: String }
 pub struct RegisterInfo { pub login: Option<String>, pub email: Option<String>, pub google: bool }
 pub struct RegisterRequest { pub password: String }
 pub struct Link { pub token: String, pub expires_at: Timestamp }   // shown once
+Link::path() -> String                     // `/register/{token}`, the frontend's route
+Link::url(public_url: Option<&str>) -> String  // a full URL under the app's public URL, else the path
 pub struct NewUser { pub login: Option<String>, pub email: Option<String>, pub role: Role }
 pub struct UserChange { pub login: Option<Option<String>>, pub email: Option<Option<String>>, pub role: Option<Role> }
 pub struct PasswordChange { pub old_password: Option<String>, pub new_password: String }
@@ -217,7 +219,8 @@ let auth = Auth::builder(store, key)
     .build();
 
 auth.set_cloudflare(Option<CloudflareConfig>);  // when an admin changes the settings
-auth.bootstrap_admin(&BootstrapAdmin::new(name).public_url(public_url)).await?;  // the link; None when users exist
+auth.bootstrap_admin(&BootstrapAdmin::new(name).public_url(public_url)).await?;  // -> Bootstrap
+auth.recovery_link(name).await?;                // -> Link, for the app's own CLI; no actor
 auth.events() -> broadcast::Receiver<AuthEvent>;
 auth.prune().await?;                            // delete expired sessions, for apps with a timer
 ```
@@ -228,13 +231,38 @@ key is stored as standard base64. `BootstrapAdmin::new` takes an email if the
 name contains `@`, otherwise a login, as for a `--bootstrap-admin` option;
 `BootstrapAdmin::email` and `::login` say which explicitly.
 
+```rust
+/// What `bootstrap_admin` did (decision 6).
+pub enum Bootstrap {
+    Created(Link),                       // no users: the admin, pending, and their registration link
+    Reissued(Link),                      // still pending, no active admin, link expired: a new one
+    Pending { expires_at: Timestamp },   // still pending, and the earlier link is live
+    Skipped,                             // anything else: nothing changed
+}
+Bootstrap::link() -> Option<&Link>       // the link issued this time
+```
+
+`bootstrap_admin` logs the outcome at `info`, the link as `Link::url` under
+`BootstrapAdmin::public_url`. An app whose log the operator may not see prints
+the link itself from `Bootstrap::link`, as the example app does; the token is
+never shown again, so `Pending` carries only the expiry.
+
+`recovery_link(name)` issues a link to the user named by `name` (a login, or
+else an email; `AuthError::NotFound` otherwise), as `issue_link` does but with
+no actor: a reset link for an active user, a registration link otherwise. It
+is for an app's own command line, such as `track issue-link <login>`, to let in
+a user no admin can act for (a locked-out last admin, say), and must never be
+reachable from a request.
+
 The operations behind the routes are public methods too, so an app can call
 them from its own handlers or tests: `sign_in_password`, `sign_in_cloudflare`,
 `sign_out`, `register_info`, `register`, `change_password`, `users`,
 `create_user`, `issue_link`, `revoke_link`, `sign_out_everywhere`,
 `revoke_access`, `set_role`, `update_user`, `delete_user`, `impersonate` and
 `stop_impersonating`. Each one enforces the rules of section 3: who may act on
-whom, never on oneself, token usability, and ending sessions. Around them,
+whom, never on oneself, token usability, and ending sessions. An admin
+operation needs an *active* admin as its actor: a pending admin, who has not
+registered, and a revoked one are refused with `Forbidden`. Around them,
 `session(id)` loads a live session and its user, `session_info(&user,
 &session)` gives the `UserInfo` of the request's own user, marked when
 impersonated, `cloudflare_available(&headers)` answers `AuthConfig::cloudflare`,
@@ -415,7 +443,7 @@ enable foreign keys. A database made with the schema from before sessions had
 ```rust
 // Extractors; each needs `Auth: FromRef<S>`.
 SignedIn { user: User, session: Session }   // 401 without a live session of an active (or impersonated pending) user; an impersonated one only while its admin is an active admin
-Admin(SignedIn)                             // 403 unless the user is an admin *now*
+Admin(SignedIn)                             // 403 unless the user is an active admin *now*
 MaybeSignedIn(Option<SignedIn>)
 LiveSession(String)                         // the session id; liveness only, cached for 10 s, for hot asset routes
 
@@ -871,9 +899,20 @@ once the release is on crates.io.
 6. **First admin: a bootstrap link, no default password.**
    `Auth::bootstrap_admin` creates a pending admin from an email or login when
    there are no users, and logs (and returns) their registration link, a full
-   URL when the app's public URL is known. It does nothing once users exist, so
-   the option can stay set across restarts. A seeded default password would be
-   a standing risk on every new install.
+   URL when the app's public URL is known. The option stays set across
+   restarts: while the named admin is still a pending admin and no active
+   admin exists, a restart after their link expired issues a new one
+   (`Bootstrap::Reissued`), and one while it is live changes nothing
+   (`Bootstrap::Pending`). Otherwise it does nothing once users exist. A
+   seeded default password would be a standing risk on every new install.
+
+   Only an active admin can revoke a link on purpose, so a pending admin with
+   no live link and no active admin around has one that expired or was used
+   up, and reissuing it lets in nobody new. The same reasoning makes admin
+   operations need an active admin: a pending admin acting through the
+   service (as apps did to reissue the bootstrap link themselves) would be an
+   admin who never proved they hold the link. For any other lockout, an app's
+   CLI calls `Auth::recovery_link`, which acts as the system.
 7. **Cookie.** The cookie name is configurable. `Secure` is set automatically
    from `X-Forwarded-Proto` (`Secure::Auto`), with `Secure::Always` and
    `Secure::Never` also available. The other attributes are fixed:

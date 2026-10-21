@@ -114,19 +114,6 @@ async fn key_is_created_once_and_read_in_either_encoding() {
 }
 
 #[test]
-fn registration_url_uses_the_public_url() {
-    assert_eq!(registration_url(None, "abc"), "/register/abc");
-    assert_eq!(
-        registration_url(Some("https://maps.example.com"), "abc"),
-        "https://maps.example.com/register/abc"
-    );
-    assert_eq!(
-        registration_url(Some("https://example.com/maps/"), "abc"),
-        "https://example.com/maps/register/abc"
-    );
-}
-
-#[test]
 fn bootstrap_admin_names() {
     assert_eq!(BootstrapAdmin::new("a@b.c"), BootstrapAdmin::email("a@b.c"));
     assert_eq!(BootstrapAdmin::new("root"), BootstrapAdmin::login("root"));

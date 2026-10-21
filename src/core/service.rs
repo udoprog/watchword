@@ -1127,46 +1127,169 @@ impl Auth {
         Ok(())
     }
 
-    /// Creates the first admin, pending, when there are no users, and
-    /// returns the registration link it logs: a full URL under
-    /// [`BootstrapAdmin::public_url`] if set, otherwise the path. Returns
-    /// `None` and changes nothing when users exist, so the option can stay
-    /// set across restarts.
-    pub async fn bootstrap_admin(&self, admin: &BootstrapAdmin) -> Result<Option<String>> {
+    /// Brings up the first admin, so the option can stay set across
+    /// restarts:
+    ///
+    /// - With no users, creates the admin, pending, and issues their
+    ///   registration link: [`Bootstrap::Created`].
+    /// - When the named admin is still pending, no active admin exists and
+    ///   their link has expired (or was used up), issues a new one:
+    ///   [`Bootstrap::Reissued`].
+    /// - When that admin's link is still live, changes nothing:
+    ///   [`Bootstrap::Pending`].
+    /// - Otherwise, changes nothing: [`Bootstrap::Skipped`].
+    ///
+    /// It logs the outcome at `info`, with the link as a full URL under
+    /// [`BootstrapAdmin::public_url`] if set, otherwise as the path. An app
+    /// whose log the operator may not see prints the link itself, with
+    /// [`Link::url`].
+    pub async fn bootstrap_admin(&self, admin: &BootstrapAdmin) -> Result<Bootstrap> {
         let name = admin
             .email
             .as_deref()
             .or(admin.login.as_deref())
             .unwrap_or_default();
 
-        if self.store().user_count().await? > 0 {
+        let public_url = admin.public_url.as_deref();
+        let now = Timestamp::now();
+
+        if self.store().user_count().await? == 0 {
+            let new = NewUser {
+                login: admin.login.clone(),
+                email: admin.email.clone(),
+                role: Role::Admin,
+            };
+
+            let (_, link) = self.create_pending(&new).await?;
+            log_bootstrap_link(name, "registration", public_url, &link);
+            return Ok(Bootstrap::Created(link));
+        }
+
+        let Some(user) = self.pending_bootstrap_admin(admin).await? else {
             tracing::info!(
                 "Bootstrap: skipped for {name}, since users already exist; \
-                 the bootstrap admin only applies to an empty users table"
+                 the bootstrap admin only applies to an empty users table, \
+                 or to its pending admin while no active admin exists"
             );
-            return Ok(None);
-        }
-
-        let new = NewUser {
-            login: admin.login.clone(),
-            email: admin.email.clone(),
-            role: Role::Admin,
+            return Ok(Bootstrap::Skipped);
         };
 
-        let (_, link) = self.create_pending(&new).await?;
-        let url = registration_url(admin.public_url.as_deref(), &link.token);
+        let mut active_admin = false;
+        let mut live = None;
 
-        if admin.public_url.is_some() {
-            tracing::info!("Bootstrap: registration URL for {name}: {url}");
-        } else {
-            tracing::info!(
-                "Bootstrap: registration link for {name}: {url} \
-                 (relative to the address the service is reached at; \
-                 set a public URL to log a full one)"
-            );
+        for (other, expires_at) in self.store().users(now).await? {
+            active_admin |= is_active_admin(&other);
+
+            if other.id == user.id {
+                live = expires_at;
+            }
         }
 
-        Ok(Some(url))
+        if active_admin {
+            tracing::info!(
+                "Bootstrap: skipped for {name}, since an active admin exists \
+                 to issue them a link"
+            );
+            return Ok(Bootstrap::Skipped);
+        }
+
+        if let Some(expires_at) = live {
+            tracing::info!(
+                "Bootstrap: {name} has not registered yet; \
+                 their registration link works until {expires_at}"
+            );
+            return Ok(Bootstrap::Pending { expires_at });
+        }
+
+        let link = self.issue(&user, now).await?;
+        log_bootstrap_link(name, "new registration", public_url, &link);
+        Ok(Bootstrap::Reissued(link))
+    }
+
+    /// The user `admin` names, if they are a pending admin.
+    async fn pending_bootstrap_admin(&self, admin: &BootstrapAdmin) -> Result<Option<User>> {
+        let user = match (&admin.email, &admin.login) {
+            (Some(email), _) => self.store().user_by_email(&normalize_email(email)).await?,
+            (None, Some(login)) => self.store().user_by_login(login.trim()).await?,
+            (None, None) => None,
+        };
+
+        Ok(user.filter(|user| user.access == Access::Pending && user.is_admin()))
+    }
+
+    /// Issues a new link to the user named `name`, for an app's own command
+    /// line to recover an account with no admin to act: a reset link for an
+    /// active user, a registration link otherwise, which restores a revoked
+    /// user. It uses up the user's earlier links, as
+    /// [`issue_link`](Auth::issue_link) does, but acts as the system, so it
+    /// needs no actor; never expose it to a request.
+    ///
+    /// `name` is a login, or else an email. [`AuthError::NotFound`] when
+    /// neither names a user.
+    pub async fn recovery_link(&self, name: &str) -> Result<Link> {
+        let login = name.trim();
+
+        let user = match self.store().user_by_login(login).await? {
+            Some(user) => user,
+            None => self
+                .store()
+                .user_by_email(&normalize_email(name))
+                .await?
+                .ok_or(AuthError::NotFound)?,
+        };
+
+        let link = self.issue(&user, Timestamp::now()).await?;
+        tracing::info!(
+            "Recovery: issued a link for {}, which works until {}",
+            user.info().name(),
+            link.expires_at
+        );
+        Ok(link)
+    }
+}
+
+fn log_bootstrap_link(name: &str, what: &str, public_url: Option<&str>, link: &Link) {
+    let url = link.url(public_url);
+
+    if public_url.is_some() {
+        tracing::info!("Bootstrap: {what} URL for {name}: {url}");
+    } else {
+        tracing::info!(
+            "Bootstrap: {what} link for {name}: {url} \
+             (relative to the address the service is reached at; \
+             set a public URL to log a full one)"
+        );
+    }
+}
+
+/// What [`Auth::bootstrap_admin`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Bootstrap {
+    /// There were no users: it created the admin, pending, with this
+    /// registration link.
+    Created(Link),
+    /// The admin was still pending, with no active admin to act and no live
+    /// link: it issued them this registration link, using up the earlier
+    /// ones.
+    Reissued(Link),
+    /// The admin is still pending, and the link issued earlier works until
+    /// `expires_at`. Its token was shown only when it was issued.
+    Pending {
+        /// When the outstanding link stops working.
+        expires_at: Timestamp,
+    },
+    /// Users exist, and either the named admin is not a pending admin or an
+    /// active admin exists to issue them a link: nothing changed.
+    Skipped,
+}
+
+impl Bootstrap {
+    /// The link issued this time, if any.
+    pub fn link(&self) -> Option<&Link> {
+        match self {
+            Bootstrap::Created(link) | Bootstrap::Reissued(link) => Some(link),
+            Bootstrap::Pending { .. } | Bootstrap::Skipped => None,
+        }
     }
 }
 
@@ -1216,17 +1339,6 @@ impl BootstrapAdmin {
     }
 }
 
-/// The registration link for `token`: a full URL under `public_url` if set,
-/// otherwise the path.
-fn registration_url(public_url: Option<&str>, token: &str) -> String {
-    let path = format!("/register/{token}");
-
-    match public_url {
-        Some(base) => format!("{}{path}", base.trim_end_matches('/')),
-        None => path,
-    }
-}
-
 /// Whether the token can still be used by `user`, the user it was issued to.
 ///
 /// Once a user has registered, a registration link can no longer set their
@@ -1237,14 +1349,16 @@ pub(crate) fn token_usable(token: &Token, user: &User, now: Timestamp) -> bool {
         && (user.access != Access::Active || token.kind == TokenKind::Reset)
 }
 
-/// Whether `user` may act as an admin, as the impersonator of a live
-/// session must.
+/// Whether `user` may act as an admin: by an admin operation, or as the
+/// impersonator of a live session.
 fn is_active_admin(user: &User) -> bool {
     user.access == Access::Active && user.is_admin()
 }
 
+/// Admin operations need an active admin: a pending admin has not
+/// registered, and a revoked one may not act.
 fn require_admin(actor: &User) -> Result<(), AuthError> {
-    if !actor.is_admin() {
+    if !is_active_admin(actor) {
         return Err(AuthError::Forbidden);
     }
 

@@ -4,7 +4,7 @@ use axum08::http::request::Parts;
 use crate::Auth;
 use crate::core::Error;
 use crate::store::{Session, User};
-use crate::types::AuthError;
+use crate::types::{Access, AuthError};
 
 /// The signed-in user and their session, loaded fresh for each request.
 ///
@@ -63,7 +63,8 @@ where
 /// A signed-in admin.
 ///
 /// Rejects as [`SignedIn`] does, and with [`AuthError::Forbidden`] (403)
-/// unless the user is an admin now.
+/// unless the user is an active admin now (an impersonated pending admin is
+/// not).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Admin(pub SignedIn);
 
@@ -77,7 +78,7 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let signed_in = SignedIn::from_request_parts(parts, state).await?;
 
-        if !signed_in.user.is_admin() {
+        if signed_in.user.access != Access::Active || !signed_in.user.is_admin() {
             return Err(AuthError::Forbidden.into());
         }
 

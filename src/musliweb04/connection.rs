@@ -376,11 +376,12 @@ impl Connection {
     }
 
     /// The connection's user, refused with [`AuthError::Forbidden`] unless
-    /// they are an admin now, as the `Admin` extractor answers over HTTP.
+    /// they are an active admin now, as the `Admin` extractor answers over
+    /// HTTP.
     async fn admin(&self) -> Result<User> {
         let (user, _) = self.signed_in().await?;
 
-        if !user.is_admin() {
+        if user.access != Access::Active || !user.is_admin() {
             return Err(AuthError::Forbidden.into());
         }
 

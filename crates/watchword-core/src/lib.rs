@@ -319,6 +319,24 @@ pub struct Link {
     pub expires_at: Timestamp,
 }
 
+impl Link {
+    /// The link's path on the app, `/register/{token}`, the route the
+    /// frontend registers or resets from.
+    pub fn path(&self) -> String {
+        format!("/register/{}", self.token)
+    }
+
+    /// The link as a full URL under `public_url`, the URL the app is reached
+    /// at (with or without a trailing slash), or as [`path`](Link::path)
+    /// without one.
+    pub fn url(&self, public_url: Option<&str>) -> String {
+        match public_url {
+            Some(base) => format!("{}{}", base.trim_end_matches('/'), self.path()),
+            None => self.path(),
+        }
+    }
+}
+
 /// A user to create. At least one of `login` and `email` is required.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]

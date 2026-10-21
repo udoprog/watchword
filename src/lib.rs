@@ -157,10 +157,10 @@ pub use self::types::{
 #[cfg(feature = "server")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "server")))]
 pub use self::core::{
-    Auth, AuthBuilder, AuthEvent, BootstrapAdmin, CookieConfig, PasswordError, SESSION_LIFETIME,
-    Secure, SessionGuard, TOKEN_LIFETIME, dummy_hash, generate_session_key, hash_password,
-    is_expired, load_or_create_key, new_session_id, new_token, session_cookie, session_expiry,
-    token_expiry, verify_password, verify_session_cookie,
+    Auth, AuthBuilder, AuthEvent, Bootstrap, BootstrapAdmin, CookieConfig, PasswordError,
+    SESSION_LIFETIME, Secure, SessionGuard, TOKEN_LIFETIME, dummy_hash, generate_session_key,
+    hash_password, is_expired, load_or_create_key, new_session_id, new_token, session_cookie,
+    session_expiry, token_expiry, verify_password, verify_session_cookie,
 };
 
 #[cfg(feature = "server")]

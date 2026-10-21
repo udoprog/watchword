@@ -215,6 +215,24 @@ fn invalid_json() {
 }
 
 #[test]
+fn link_path_and_url() {
+    let link = Link {
+        token: "abc".to_owned(),
+        expires_at: at("2026-10-08T12:00:00Z"),
+    };
+    assert_eq!(link.path(), "/register/abc");
+    assert_eq!(link.url(None), "/register/abc");
+    assert_eq!(
+        link.url(Some("https://maps.example.com")),
+        "https://maps.example.com/register/abc"
+    );
+    assert_eq!(
+        link.url(Some("https://example.com/maps/")),
+        "https://example.com/maps/register/abc"
+    );
+}
+
+#[test]
 fn user_name() {
     let mut user = user();
     assert_eq!(user.name(), "root");
