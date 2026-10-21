@@ -43,6 +43,8 @@ use core::fmt;
 use core::str::FromStr;
 
 #[cfg(feature = "alloc")]
+use alloc::format;
+#[cfg(feature = "alloc")]
 use alloc::string::String;
 
 #[cfg(feature = "alloc")]
