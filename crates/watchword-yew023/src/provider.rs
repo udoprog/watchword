@@ -5,7 +5,7 @@ use std::time::Duration;
 #[cfg(feature = "musliweb05")]
 use musli_web05::web03::prelude::ws;
 use phrasebook02::Phrases;
-use yew::context::ContextHandle;
+use phrasebook02::yew023::PhrasesContext;
 use yew::prelude::*;
 
 use super::browser;
@@ -22,6 +22,7 @@ use super::socket::{Socket, SocketHandle};
 use super::users::UsersStore;
 #[cfg(feature = "musliweb05")]
 use watchword_core::musliweb05::AuthUpdate;
+use watchword_core::phrasebook02::L10N;
 use watchword_core::{AuthConfig, UserInfo};
 
 /// The properties of [`AuthProvider`].
@@ -82,9 +83,8 @@ pub struct AuthProviderProps {
 /// back to watchword's English (see [`L10N`](super::L10N)).
 pub struct AuthProvider {
     state: State,
-    phrases: Phrases,
-    /// Keeps this subscribed to the app's phrases.
-    _phrases: Option<ContextHandle<Phrases>>,
+    /// The app's phrases, with watchword's catalog as the backstop.
+    l10n: PhrasesContext,
     config: Option<AuthConfig>,
     register_token: Option<AttrValue>,
     checking: bool,
@@ -173,13 +173,11 @@ impl Component for AuthProvider {
         link.send_message(Msg::Load);
         let check_session = link.callback(|()| Msg::CheckSession);
 
-        let context = link.context::<Phrases>(link.callback(Msg::Phrases));
-        let phrases = l10n::phrases(context.as_ref().map(|(phrases, _)| phrases.clone()));
+        let l10n = PhrasesContext::new_with(link, link.callback(Msg::Phrases), &L10N);
 
         Self {
             state: State::Loading,
-            phrases,
-            _phrases: context.map(|(_, handle)| handle),
+            l10n,
             config: None,
             register_token: browser::register_token().map(AttrValue::from),
             checking: false,
@@ -401,9 +399,7 @@ impl Component for AuthProvider {
 
                 self.signed_in_as(user);
             }
-            Msg::Phrases(phrases) => {
-                self.phrases = l10n::phrases(Some(phrases));
-            }
+            Msg::Phrases(phrases) => return self.l10n.set(phrases),
         }
 
         true
@@ -452,11 +448,11 @@ impl Component for AuthProvider {
                     }
 
                     <div class="auth-message" role="alert">
-                        <p class="auth-error">{unreachable(&self.phrases, error)}</p>
+                        <p class="auth-error">{unreachable(self.l10n.phrases(), error)}</p>
                     </div>
 
                     <div class="auth-actions">
-                        <button type="button" class="auth-retry" onclick={self.retry.clone()}>{self.phrases.text("watchword-retry")}</button>
+                        <button type="button" class="auth-retry" onclick={self.retry.clone()}>{self.l10n.phrases().text("watchword-retry")}</button>
                     </div>
                 </main>
             },
@@ -544,7 +540,7 @@ impl AuthProvider {
     fn signed_out_notice(&self, props: &AuthProviderProps) -> AttrValue {
         match &props.signed_out_notice {
             Some(notice) => notice.clone(),
-            None => l10n::text(&self.phrases, "watchword-session-ended"),
+            None => l10n::text(self.l10n.phrases(), "watchword-session-ended"),
         }
     }
 

@@ -7,7 +7,8 @@ use std::string::ToString;
 use std::vec::Vec;
 
 use jiff::Timestamp;
-use phrasebook02::{Phrases, args};
+use phrasebook02::yew023::{PhrasesContext, html_around};
+use phrasebook02::{Args, Phrases, args};
 use yew::context::ContextHandle;
 use yew::prelude::*;
 
@@ -16,9 +17,10 @@ use super::client::Client;
 use super::context::AuthContext;
 use super::form::{identity_change, optional};
 use super::http::{self, CreatedUser, Error};
-use super::l10n::{self, error_message, placed, role_name};
+use super::l10n::{self, error_message, role_name};
 use super::listener::Listener;
 use super::users::{Users, UsersStore, retain_links};
+use watchword_core::phrasebook02::L10N;
 use watchword_core::{
     Access, Link, Method, NewUser, Role, UserChange, UserEntry, UserId, UserInfo,
 };
@@ -125,9 +127,8 @@ pub struct AdminUsers {
     auth: Option<AuthContext>,
     /// Keeps this subscribed to the context.
     _context: Option<ContextHandle<AuthContext>>,
-    phrases: Phrases,
-    /// Keeps this subscribed to the app's phrases.
-    _phrases: Option<ContextHandle<Phrases>>,
+    /// The app's phrases, with watchword's catalog as the backstop.
+    l10n: PhrasesContext,
     /// The query when the app does not keep it.
     query: UsersQuery,
     adding: Option<UserForm>,
@@ -208,8 +209,7 @@ impl Component for AdminUsers {
     fn create(ctx: &Context<Self>) -> Self {
         let link = ctx.link();
 
-        let phrases_context = link.context::<Phrases>(link.callback(Msg::Phrases));
-        let phrases = l10n::phrases(phrases_context.as_ref().map(|(p, _)| p.clone()));
+        let l10n = PhrasesContext::new_with(link, link.callback(Msg::Phrases), &L10N);
 
         let context = link.context::<AuthContext>(link.callback(Msg::Context));
         let (auth, _context) = context.unzip();
@@ -228,8 +228,7 @@ impl Component for AdminUsers {
             _users,
             auth,
             _context,
-            phrases,
-            _phrases: phrases_context.map(|(_, handle)| handle),
+            l10n,
             query: ctx.props().query.clone(),
             adding: None,
             editing: None,
@@ -266,7 +265,7 @@ impl Component for AdminUsers {
 
                     if let (Some(..), Some(error)) = (users.entries(), users.error()) {
                         self.message = Some(Message::Error(error_message(
-                            &self.phrases,
+                            self.l10n.phrases(),
                             error,
                             "watchword-failed-loading-users",
                         )));
@@ -320,7 +319,7 @@ impl Component for AdminUsers {
                     identity_change((None, None), login.clone(), email.clone(), logins)
                 {
                     self.message = Some(Message::Error(AttrValue::from(l10n::invalid(
-                        &self.phrases,
+                        self.l10n.phrases(),
                         &error,
                     ))));
                     return true;
@@ -357,7 +356,7 @@ impl Component for AdminUsers {
                         self.links.insert(id, link);
                         self.adding = None;
                         self.message = Some(Message::Notice(l10n::text(
-                            &self.phrases,
+                            self.l10n.phrases(),
                             "watchword-user-added",
                         )));
                         // Show the new user, wherever they sort.
@@ -365,7 +364,7 @@ impl Component for AdminUsers {
                     }
                     Err(error) => {
                         self.message = Some(Message::Error(error_message(
-                            &self.phrases,
+                            self.l10n.phrases(),
                             &error,
                             "watchword-failed-adding-user",
                         )));
@@ -429,7 +428,7 @@ impl Component for AdminUsers {
                     Ok(change) => change,
                     Err(error) => {
                         self.message = Some(Message::Error(AttrValue::from(l10n::invalid(
-                            &self.phrases,
+                            self.l10n.phrases(),
                             &error,
                         ))));
                         return true;
@@ -476,11 +475,12 @@ impl Component for AdminUsers {
                             }
                         });
 
-                        self.message = Some(Message::Notice(l10n::text(&self.phrases, notice)));
+                        self.message =
+                            Some(Message::Notice(l10n::text(self.l10n.phrases(), notice)));
                     }
                     Err(error) => {
                         self.message = Some(Message::Error(error_message(
-                            &self.phrases,
+                            self.l10n.phrases(),
                             &error,
                             "watchword-failed-saving",
                         )));
@@ -524,7 +524,7 @@ impl Component for AdminUsers {
                     }
                     Err(error) => {
                         self.message = Some(Message::Error(error_message(
-                            &self.phrases,
+                            self.l10n.phrases(),
                             &error,
                             "watchword-failed-issuing-link",
                         )));
@@ -575,7 +575,7 @@ impl Component for AdminUsers {
 
                 if let Err(error) = result {
                     self.message = Some(Message::Error(error_message(
-                        &self.phrases,
+                        self.l10n.phrases(),
                         &error,
                         action.failed(),
                     )));
@@ -583,7 +583,10 @@ impl Component for AdminUsers {
                     return true;
                 }
 
-                self.message = Some(Message::Notice(l10n::text(&self.phrases, action.done())));
+                self.message = Some(Message::Notice(l10n::text(
+                    self.l10n.phrases(),
+                    action.done(),
+                )));
 
                 match action {
                     Action::RevokeLink => {
@@ -622,9 +625,9 @@ impl Component for AdminUsers {
             }
             Msg::Copied(ok) => {
                 self.message = Some(if ok {
-                    Message::Notice(l10n::text(&self.phrases, "watchword-link-copied"))
+                    Message::Notice(l10n::text(self.l10n.phrases(), "watchword-link-copied"))
                 } else {
-                    Message::Error(l10n::text(&self.phrases, "watchword-copy-refused"))
+                    Message::Error(l10n::text(self.l10n.phrases(), "watchword-copy-refused"))
                 });
             }
             Msg::Context(auth) => {
@@ -640,9 +643,7 @@ impl Component for AdminUsers {
 
                 self.auth = Some(auth);
             }
-            Msg::Phrases(phrases) => {
-                self.phrases = l10n::phrases(Some(phrases));
-            }
+            Msg::Phrases(phrases) => return self.l10n.set(phrases),
         }
 
         true
@@ -652,7 +653,7 @@ impl Component for AdminUsers {
         let props = ctx.props();
         let link = ctx.link();
         let query = self.query(ctx);
-        let phrases = &self.phrases;
+        let phrases = self.l10n.phrases();
 
         let message = html! {
             <div class="auth-message" role="alert">
@@ -799,7 +800,7 @@ impl AdminUsers {
 
         let link = ctx.link();
         let logins = self.logins(ctx);
-        let phrases = &self.phrases;
+        let phrases = self.l10n.phrases();
 
         let onsubmit = link.callback(|e: SubmitEvent| {
             e.prevent_default();
@@ -861,7 +862,7 @@ impl AdminUsers {
     fn view_users(&self, ctx: &Context<Self>, users: &[UserEntry], query: &UsersQuery) -> Html {
         let link = ctx.link();
         let logins = self.logins(ctx);
-        let phrases = &self.phrases;
+        let phrases = self.l10n.phrases();
 
         let mut shown = users
             .iter()
@@ -951,7 +952,7 @@ impl AdminUsers {
         let me = self.me_id(ctx) == Some(user.id);
         let name = user.name().to_owned();
         let busy = self.busy;
-        let phrases = &self.phrases;
+        let phrases = self.l10n.phrases();
 
         let editing = self
             .editing
@@ -1053,7 +1054,7 @@ impl AdminUsers {
     fn view_link(&self, ctx: &Context<Self>, entry: &UserEntry, now: Timestamp) -> Html {
         let link = ctx.link();
         let name = entry.user.name();
-        let phrases = &self.phrases;
+        let phrases = self.l10n.phrases();
 
         if let Some(issued) = self.links.get(&entry.user.id) {
             let url = link_url(&browser::origin(), &issued.token);
@@ -1100,7 +1101,7 @@ impl AdminUsers {
         let user = &entry.user;
         let id = user.id;
         let busy = self.busy;
-        let phrases = &self.phrases;
+        let phrases = self.l10n.phrases();
         let named = |id: &str| phrases.msg(id, &args!(name = name));
 
         if editing {
@@ -1117,9 +1118,13 @@ impl AdminUsers {
                 Action::Delete => "watchword-confirm-delete",
                 _ => "watchword-confirm-revoke-access",
             };
-            let prompt = placed(phrases, prompt, "name", name, |name| {
-                html! { <strong>{name}</strong> }
-            });
+            let prompt = html_around(
+                phrases,
+                prompt,
+                &Args::new(),
+                "name",
+                html! { <strong>{name}</strong> },
+            );
 
             return html! {
                 <div class="auth-confirm" role="group">

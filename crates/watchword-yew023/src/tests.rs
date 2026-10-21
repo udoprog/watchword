@@ -4,7 +4,8 @@ use std::string::ToString;
 use std::vec::Vec;
 
 use jiff::Timestamp;
-use phrasebook02::{Catalog, Lang, Phrasebook, Phrases, Source, check};
+use phrasebook02::yew023::or_catalog;
+use phrasebook02::{Args, Catalog, Lang, Phrasebook, Phrases, Source, check};
 
 use super::account::account_change;
 use super::admin_users::{link_url, matches_filter, page_bounds, relative_time};
@@ -14,7 +15,7 @@ use super::browser::{
 use super::cloudflare_settings::{failure, header_unverified};
 use super::form::identity_change;
 use super::http::{CreatedUser, Error};
-use super::l10n::{self, error_message, split_around};
+use super::l10n::{self, error_message};
 use super::provider::replace_user;
 use super::sign_in::query_error_message;
 use super::user_menu::{impersonation_banner, stop_error_message};
@@ -539,7 +540,7 @@ fn translated_by_the_app() {
             builder = builder.catalog(&L10N);
         }
 
-        let sv = l10n::phrases(Some(builder.build().phrases(SV_SE)));
+        let sv = or_catalog(Some(builder.build().phrases(SV_SE)), &L10N);
 
         assert_eq!(&*sv.text("watchword-sign-in"), "Logga in");
         assert_eq!(&*sv.text("watchword-sign-out"), "Sign out");
@@ -550,14 +551,32 @@ fn translated_by_the_app() {
     }
 }
 
+/// The messages `html_around` places markup in use the argument it names,
+/// so the markup lands inside the text rather than after it.
 #[test]
-fn split_around_a_mark() {
-    assert_eq!(
-        split_around("Delete \u{E000}?", "\u{E000}"),
-        Some(("Delete ", "?"))
-    );
-    assert_eq!(split_around("\u{E000}", "\u{E000}"), Some(("", "")));
-    assert_eq!(split_around("Delete?", "\u{E000}"), None);
+fn markup_placed_in_messages() {
+    let en = en();
+
+    for (id, name, before, after) in [
+        ("watchword-confirm-delete", "name", "Delete ", "?"),
+        (
+            "watchword-confirm-revoke-access",
+            "name",
+            "Revoke access for ",
+            "?",
+        ),
+        (
+            "watchword-cloudflare-step-team-domain",
+            "host",
+            "Enter your team domain below: the ",
+            "",
+        ),
+    ] {
+        let around = en.msg_around(id, &Args::new(), name);
+        assert!(around.before.starts_with(before), "{id}: {around:?}");
+        let after_text = around.after.unwrap_or_else(|| panic!("{id} lacks ${name}"));
+        assert!(after_text.starts_with(after), "{id}: {after_text:?}");
+    }
 }
 
 #[test]

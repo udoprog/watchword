@@ -1,30 +1,17 @@
-//! watchword's messages: the handle the components look them up in, backed by
-//! watchword-core's catalog, and the messages for failed requests.
+//! watchword's messages for failed requests, invalid input and roles.
+//! Components read the handle with phrasebook's `use_phrases_with(&L10N)`, or
+//! a `PhrasesContext::new_with` subscription in a struct component, so
+//! watchword-core's catalog backs whatever the app provides.
 
-use std::borrow::ToOwned;
 use std::rc::Rc;
 use std::string::String;
 use std::string::ToString;
 
-use phrasebook02::yew023::or_catalog;
-use phrasebook02::{Args, Phrases, args};
+use phrasebook02::{Phrases, args};
 use yew::prelude::*;
 
 use super::http::Error;
-use watchword_core::phrasebook02::L10N;
 use watchword_core::{AuthError, Conflict, Invalid, Role};
-
-/// The provided handle backed by [`L10N`], or `L10N` alone.
-#[hook]
-pub(super) fn use_phrases() -> Phrases {
-    or_catalog(use_context::<Phrases>(), &L10N)
-}
-
-/// The same for a struct component, from what its context subscription
-/// returned.
-pub(super) fn phrases(provided: Option<Phrases>) -> Phrases {
-    or_catalog(provided, &L10N)
-}
 
 /// The message for why a request is invalid.
 pub(super) fn invalid(phrases: &Phrases, invalid: &Invalid) -> String {
@@ -112,35 +99,4 @@ pub(super) fn role_name(phrases: &Phrases, role: Role) -> Rc<str> {
         Role::Admin => "watchword-role-admin",
         Role::Regular => "watchword-role-regular",
     })
-}
-
-/// The message `id` with its argument `name` set to `value` and wrapped by
-/// `wrap`, such as a user's name in `<strong>`, wherever the translation
-/// places it.
-pub(super) fn placed(
-    phrases: &Phrases,
-    id: &str,
-    name: &'static str,
-    value: &str,
-    wrap: impl FnOnce(String) -> Html,
-) -> Html {
-    let text = phrases.msg(id, &Args::new().with(name, MARK));
-
-    match split_around(&text, MARK) {
-        Some((before, after)) => html! {
-            <>{before.to_owned()}{wrap(value.to_owned())}{after.to_owned()}</>
-        },
-        // A translation without the argument, or a missing message.
-        None => html! { {text} },
-    }
-}
-
-/// Stands in for an argument [`placed`] wraps: a private use character, which
-/// no message contains.
-const MARK: &str = "\u{E000}";
-
-/// The text before and after the first occurrence of `mark`.
-pub(super) fn split_around<'a>(text: &'a str, mark: &str) -> Option<(&'a str, &'a str)> {
-    let start = text.find(mark)?;
-    Some((&text[..start], &text[start + mark.len()..]))
 }

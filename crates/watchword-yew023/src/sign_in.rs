@@ -2,12 +2,14 @@ use std::rc::Rc;
 use std::string::String;
 
 use phrasebook02::Phrases;
+use phrasebook02::yew023::use_phrases_with;
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
 use super::browser;
 use super::http::{self, Error};
-use super::l10n::{self, use_phrases};
+use super::l10n;
+use watchword_core::phrasebook02::L10N;
 use watchword_core::{AuthConfig, AuthError, LoginRequest, UserInfo};
 
 /// The properties of [`SignIn`].
@@ -38,7 +40,7 @@ pub struct SignInProps {
 /// sign-in, is shown and removed from the URL.
 #[function_component]
 pub fn SignIn(props: &SignInProps) -> Html {
-    let phrases = use_phrases();
+    let phrases = use_phrases_with(&L10N);
     let login = use_state(String::new);
     let password = use_state(String::new);
     let busy = use_state(|| false);

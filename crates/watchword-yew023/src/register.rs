@@ -1,12 +1,14 @@
 use std::string::String;
 
 use phrasebook02::Phrases;
+use phrasebook02::yew023::use_phrases_with;
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
 use super::browser;
 use super::http::{self, Error};
-use super::l10n::{self, use_phrases};
+use super::l10n;
+use watchword_core::phrasebook02::L10N;
 use watchword_core::{AuthError, RegisterInfo, RegisterRequest, UserInfo, validate_password};
 
 /// The properties of [`Register`].
@@ -37,7 +39,7 @@ enum Link {
 /// user in.
 #[function_component]
 pub fn Register(props: &RegisterProps) -> Html {
-    let phrases = use_phrases();
+    let phrases = use_phrases_with(&L10N);
     let link = use_state(|| Link::Loading);
     let password = use_state(String::new);
     let confirm = use_state(String::new);

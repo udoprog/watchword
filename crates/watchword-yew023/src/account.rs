@@ -2,6 +2,7 @@ use std::rc::Rc;
 use std::string::String;
 
 use phrasebook02::Phrases;
+use phrasebook02::yew023::use_phrases_with;
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
@@ -9,7 +10,8 @@ use super::browser;
 use super::context::use_auth;
 use super::form::{identity_change, optional};
 use super::http::{self, Error};
-use super::l10n::{self, error_message, role_name, use_phrases};
+use super::l10n::{self, error_message, role_name};
+use watchword_core::phrasebook02::L10N;
 use watchword_core::{
     AuthError, Invalid, Method, PasswordChange, UserChange, UserInfo, validate_password,
 };
@@ -36,7 +38,7 @@ pub struct AccountPanelProps {
 #[function_component]
 pub fn AccountPanel(props: &AccountPanelProps) -> Html {
     let auth = use_auth();
-    let phrases = use_phrases();
+    let phrases = use_phrases_with(&L10N);
     let user = auth.user.clone();
     let logins = auth.config.logins;
     let google_method = user.method == Method::Google;
@@ -96,7 +98,7 @@ struct ProfileFormProps {
 #[function_component]
 fn ProfileForm(props: &ProfileFormProps) -> Html {
     let auth = use_auth();
-    let phrases = use_phrases();
+    let phrases = use_phrases_with(&L10N);
     let login = use_state(|| props.user.login.clone().unwrap_or_default());
     let email = use_state(|| props.user.email.clone().unwrap_or_default());
     let busy = use_state(|| false);
@@ -243,7 +245,7 @@ struct PasswordFormProps {
 #[function_component]
 fn PasswordForm(props: &PasswordFormProps) -> Html {
     let auth = use_auth();
-    let phrases = use_phrases();
+    let phrases = use_phrases_with(&L10N);
     let old_password = use_state(String::new);
     let new_password = use_state(String::new);
     let confirm = use_state(String::new);

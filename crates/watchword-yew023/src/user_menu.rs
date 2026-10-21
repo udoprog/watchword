@@ -2,13 +2,15 @@ use std::borrow::ToOwned;
 use std::string::String;
 use std::string::ToString;
 
+use phrasebook02::yew023::use_phrases_with;
 use phrasebook02::{Phrases, args};
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
 use super::context::use_auth;
 use super::http::{self, Error};
-use super::l10n::{self, use_phrases};
+use super::l10n;
+use watchword_core::phrasebook02::L10N;
 use watchword_core::{AuthError, UserInfo};
 
 /// The properties of [`UserMenu`].
@@ -42,7 +44,7 @@ pub struct UserMenuProps {
 #[function_component]
 pub fn UserMenu(props: &UserMenuProps) -> Html {
     let auth = use_auth();
-    let phrases = use_phrases();
+    let phrases = use_phrases_with(&L10N);
     let open = use_state(|| false);
     let stopping = use_state(|| false);
     let stop_error = use_state(|| None::<AttrValue>);

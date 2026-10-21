@@ -1,13 +1,15 @@
 use std::borrow::ToOwned;
 
-use phrasebook02::{Phrases, args};
+use phrasebook02::yew023::{html_around, use_phrases_with};
+use phrasebook02::{Args, Phrases, args};
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
 use super::browser;
 use super::context::use_auth;
 use super::http::Error;
-use super::l10n::{self, error_message, placed, use_phrases};
+use super::l10n::{self, error_message};
+use watchword_core::phrasebook02::L10N;
 use watchword_core::{AuthError, CloudflareConfig};
 
 /// The properties of [`AdminCloudflare`].
@@ -61,7 +63,7 @@ enum Message {
 #[function_component]
 pub fn AdminCloudflare(props: &AdminCloudflareProps) -> Html {
     let auth = use_auth();
-    let phrases = use_phrases();
+    let phrases = use_phrases_with(&L10N);
     let loaded = use_state(|| Loaded::Loading);
     let saving = use_state(|| false);
     let message = use_state(|| None::<Message>);
@@ -225,7 +227,7 @@ pub struct CloudflareSettingsProps {
 /// the header is trusted without verifying the token.
 #[function_component]
 pub fn CloudflareSettings(props: &CloudflareSettingsProps) -> Html {
-    let phrases = use_phrases();
+    let phrases = use_phrases_with(&L10N);
     let value = &props.value;
     let disabled = props.disabled;
     let app = match &props.app_name {
@@ -233,12 +235,12 @@ pub fn CloudflareSettings(props: &CloudflareSettingsProps) -> Html {
         None => AttrValue::from(phrases.text("watchword-cloudflare-the-app")),
     };
     let with_app = |id: &str| phrases.msg(id, &args!(app = app.as_str()));
-    let team_domain_step = placed(
+    let team_domain_step = html_around(
         &phrases,
         "watchword-cloudflare-step-team-domain",
+        &Args::new(),
         "host",
-        "<team>.cloudflareaccess.com",
-        |host| html! { <code>{host}</code> },
+        html! { <code>{"<team>.cloudflareaccess.com"}</code> },
     );
 
     let update = |apply: fn(&mut CloudflareConfig, &Event)| {
