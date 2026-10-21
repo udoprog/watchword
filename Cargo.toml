@@ -38,7 +38,8 @@ google = ["server", "dep:reqwest", "dep:serde_json", "dep:url", "dep:lru", "axum
 axum08 = ["server", "dep:axum08", "watchword-core/axum08", "musli-web04?/ws"]
 sqll014 = ["server", "dep:sqll014", "watchword-core/sqll014"]
 test-util = ["google", "axum08?/http1"]
-yew023 = ["std", "dep:watchword-yew023"]
+phrasebook01 = ["std", "watchword-core/phrasebook01"]
+yew023 = ["std", "phrasebook01", "dep:watchword-yew023"]
 
 [dependencies]
 # types

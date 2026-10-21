@@ -2795,6 +2795,7 @@ dependencies = [
  "jiff",
  "musli-core",
  "musli-web",
+ "phrasebook",
  "serde",
  "thiserror 2.0.21",
 ]

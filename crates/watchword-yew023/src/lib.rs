@@ -215,7 +215,7 @@
 //! [`L10N`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/static.L10N.html
 //! [`use_auth`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth.html
 //! [`UserMenu`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.UserMenu.html
-//! [ftl]: https://github.com/udoprog/watchword/blob/main/crates/watchword-yew023/locales/en-US.ftl
+//! [ftl]: https://github.com/udoprog/watchword/blob/main/crates/watchword-core/locales/en-US.ftl
 //! [musli-web]: https://docs.rs/musli-web
 //! [phrasebook]: https://docs.rs/phrasebook
 //! [watchword]: https://docs.rs/watchword
@@ -284,7 +284,8 @@ pub use self::context::{AuthContext, use_auth};
 
 #[cfg(feature = "std")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
-pub use self::l10n::L10N;
+#[doc(inline)]
+pub use watchword_core::phrasebook01::L10N;
 
 #[cfg(feature = "std")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]

@@ -28,6 +28,8 @@ musli01 = ["dep:musli-core01"]
 musliweb04 = ["alloc", "musli01", "dep:musli-web04"]
 axum08 = ["std", "dep:axum08"]
 sqll014 = ["std", "dep:sqll014"]
+# phrasebook 0.1 has no `no_std` support.
+phrasebook01 = ["std", "dep:phrasebook01"]
 
 # jiff without its time zone databases: only `Timestamp` is used.
 [dependencies]
@@ -41,6 +43,8 @@ axum08 = { package = "axum", version = "0.8.9", default-features = false, featur
 # Only its traits. `threadsafe` because sqll-sys builds with nothing but
 # `bundled` without it; the app picks the linking and anything else it needs.
 sqll014 = { package = "sqll", version = "0.14.7", default-features = false, features = ["threadsafe"], optional = true }
+# Only `Catalog`; watchword-yew023 adds its `yew023` feature.
+phrasebook01 = { package = "phrasebook", version = "0.1.0", optional = true }
 
 [dev-dependencies]
 musli = { version = "0.1.9", features = ["storage", "wire", "descriptive"] }

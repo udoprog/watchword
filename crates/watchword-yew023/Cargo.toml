@@ -22,7 +22,7 @@ rustdoc-args = ["--cfg", "watchword_docsrs"]
 # `std`; `alloc` alone provides nothing yet.
 [features]
 default = ["std"]
-std = ["alloc", "watchword-core/std", "serde/std", "jiff/std", "musli-web04?/std"]
+std = ["alloc", "watchword-core/std", "watchword-core/phrasebook01", "serde/std", "jiff/std", "musli-web04?/std"]
 alloc = ["watchword-core/alloc", "serde/alloc", "jiff/alloc"]
 musliweb04 = ["std", "dep:musli-web04", "watchword-core/musliweb04"]
 

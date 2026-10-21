@@ -24,10 +24,11 @@
 //!
 //! A dependency that is not yet 1.0 and appears in the API is named after its
 //! version: its feature and module are `axum08` for axum 0.8, `sqll014` for
-//! sqll 0.14, `musli01` for musli 0.1, `musliweb04` for musli-web 0.4 and
-//! `yew023` for yew 0.23. A later version is added beside it, so a watchword
-//! upgrade never forces an app onto a new axum, sqll, musli, musli-web or yew,
-//! and an app moves when it chooses.
+//! sqll 0.14, `musli01` for musli 0.1, `musliweb04` for musli-web 0.4,
+//! `phrasebook01` for phrasebook 0.1 and `yew023` for yew 0.23. A later
+//! version is added beside it, so a watchword upgrade never forces an app onto
+//! a new axum, sqll, musli, musli-web, phrasebook or yew, and an app moves when
+//! it chooses.
 //!
 //! | Feature | Module | What it provides |
 //! |---|---|---|
@@ -42,7 +43,8 @@
 //! | `axum08` | [`axum08`] | for axum 0.8: the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors and `routes()` for the `/api/auth` JSON routes, plus the Cloudflare and Google routes when those features are on (implies `server`) |
 //! | `sqll014` | [`sqll014`] | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA` for a new database, its ordered `MIGRATIONS` (the first tables and every upgrade since) for an app's migration runner, `check_schema` to fail at startup on missing tables or columns, and watchword-core's `sqll014` (sqll's bind and column traits on `UserId`, `Role`, `Access` and `Method`) (implies `server`). It takes sqll with `derive`, `pool`, `typed` and `threadsafe` only; the app names `bundled` or links its own SQLite |
 //! | `test-util` | [`google::fake`] | for an app's tests: `AuthBuilder::google_endpoints`, and with `axum08` `FakeGoogle`, a local fake Google to sign in through offline (implies `google`) |
-//! | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings`, the `http` client and `L10N`, the components' messages as a [phrasebook] catalog, from the [watchword-yew023] crate (implies `std`) |
+//! | `phrasebook01` | [`phrasebook01`] | `L10N`, watchword's messages (the text of the `yew023` components) as a [phrasebook] 0.1 catalog, for a native tool such as an app's localization checker that needs them without building yew, from the [watchword-core] crate (implies `std`) |
+//! | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings`, the `http` client and `L10N`, the components' messages as a [phrasebook] catalog, from the [watchword-yew023] crate (implies `std` and `phrasebook01`) |
 //!
 //! The most-used names that do not depend on a versioned feature are
 //! re-exported at the crate root.
@@ -102,6 +104,7 @@
 //! [`google::fake`]: https://docs.rs/watchword/latest/watchword/google/fake/index.html
 //! [`google`]: https://docs.rs/watchword/latest/watchword/google/index.html
 //! [`musliweb04`]: https://docs.rs/watchword/latest/watchword/musliweb04/index.html
+//! [`phrasebook01`]: https://docs.rs/watchword/latest/watchword/phrasebook01/index.html
 //! [`sqll014`]: https://docs.rs/watchword/latest/watchword/sqll014/index.html
 //! [`store`]: https://docs.rs/watchword/latest/watchword/store/index.html
 //! [`types`]: https://docs.rs/watchword/latest/watchword/types/index.html
@@ -158,6 +161,11 @@ pub mod axum08;
 #[cfg(feature = "sqll014")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll014")))]
 pub mod sqll014;
+
+#[cfg(feature = "phrasebook01")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "phrasebook01")))]
+#[doc(inline)]
+pub use watchword_core::phrasebook01;
 
 #[cfg(feature = "yew023")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "yew023")))]

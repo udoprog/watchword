@@ -12,10 +12,11 @@ use super::browser::{register_token_from_path, return_url, safe_next, strip_quer
 use super::cloudflare_settings::header_unverified;
 use super::form::identity_change;
 use super::http::{CreatedUser, Error};
-use super::l10n::{self, L10N, error_message, split_around};
+use super::l10n::{self, error_message, split_around};
 use super::provider::replace_user;
 use super::sign_in::query_error_message;
 use super::user_menu::{impersonation_banner, stop_error_message};
+use watchword_core::phrasebook01::L10N;
 use watchword_core::{
     Access, AuthError, CloudflareConfig, Conflict, Impersonator, Invalid, Link, Method, Role,
     UserChange, UserEntry, UserId, UserInfo,
@@ -383,12 +384,6 @@ fn stop_errors() {
     );
 }
 
-/// The catalog parses, every id has the prefix, and every message formats.
-#[test]
-fn catalog() {
-    check::catalog(&L10N).unwrap();
-}
-
 /// Every `watchword-` id the code names is in the catalog, and every message
 /// in the catalog is used.
 #[test]
@@ -418,7 +413,7 @@ fn catalog_matches_the_code() {
 
             assert!(
                 defined.iter().any(|d| d == id),
-                "{}: {id} is not in locales/en-US.ftl",
+                "{}: {id} is not in watchword-core's locales/en-US.ftl",
                 path.display()
             );
 
@@ -427,7 +422,10 @@ fn catalog_matches_the_code() {
     }
 
     for id in &defined {
-        assert!(used.contains(id), "{id} in locales/en-US.ftl is not used");
+        assert!(
+            used.contains(id),
+            "{id} in watchword-core's locales/en-US.ftl is not used"
+        );
     }
 }
 

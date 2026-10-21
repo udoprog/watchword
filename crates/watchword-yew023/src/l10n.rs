@@ -1,5 +1,5 @@
-//! watchword's messages: its catalog, the handle the components look them up
-//! in, and the messages for failed requests.
+//! watchword's messages: the handle the components look them up in, backed by
+//! watchword-core's catalog, and the messages for failed requests.
 
 use std::borrow::ToOwned;
 use std::rc::Rc;
@@ -7,49 +7,12 @@ use std::string::String;
 use std::string::ToString;
 
 use phrasebook01::yew023::or_catalog;
-use phrasebook01::{Args, Catalog, Lang, Phrases, Source, args};
+use phrasebook01::{Args, Phrases, args};
 use yew::prelude::*;
 
 use super::http::Error;
+use watchword_core::phrasebook01::L10N;
 use watchword_core::{AuthError, Conflict, Invalid, Role};
-
-/// watchword's messages, in English, with every id under the `watchword-`
-/// prefix.
-///
-/// The components look their text up in the [`Phrases`] the app provides
-/// with `ContextProvider<Phrases>`, and fall back to these messages for any
-/// id the app's phrasebook lacks, or when nothing is provided. An app that
-/// translates watchword adds the `watchword-*` ids of
-/// [`locales/en-US.ftl`][ftl] to its own catalog for each language, and adds
-/// this catalog after its own, so its translations win:
-///
-/// ```ignore
-/// use phrasebook::{Catalog, Lang, Phrasebook, Source};
-///
-/// const SV_SE: Lang = Lang::new("sv-SE");
-///
-/// static APP: Catalog = Catalog::new("app", &[
-///     Source::new(Lang::EN_US, include_str!("../locales/en-US.ftl")),
-///     Source::new(SV_SE, include_str!("../locales/sv-SE.ftl")),
-/// ]);
-///
-/// let book = Phrasebook::builder()
-///     .language(Lang::EN_US, "English")
-///     .language(SV_SE, "Svenska")
-///     .catalog(&APP)
-///     .catalog(&auth::yew023::L10N)
-///     .build();
-/// ```
-///
-/// [ftl]: https://github.com/udoprog/watchword/blob/main/crates/watchword-yew023/locales/en-US.ftl
-pub static L10N: Catalog = Catalog::new(
-    "watchword",
-    &[Source::new(
-        Lang::EN_US,
-        include_str!("../locales/en-US.ftl"),
-    )],
-)
-.with_prefix("watchword-");
 
 /// The provided handle backed by [`L10N`], or `L10N` alone.
 #[hook]
