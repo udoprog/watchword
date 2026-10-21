@@ -171,6 +171,12 @@ watchword-link-expires = Link expires { $expires }
 watchword-discard-changes = Discard changes
 watchword-confirm-delete = Delete { $name }?
 watchword-confirm-revoke-access = Revoke access for { $name }?
+# The explanation and confirm button of an app's own confirmation dialog
+# (AdminUsers' `confirm` prop), under the title above.
+watchword-confirm-delete-explanation = { $name } is deleted, with their sessions and links. This cannot be undone.
+watchword-confirm-delete-label = Delete user
+watchword-confirm-revoke-access-explanation = { $name } is signed out everywhere and can no longer sign in: their password is cleared and their links stop working. A new link restores their access.
+watchword-confirm-revoke-access-label = Revoke access
 watchword-no = No
 watchword-yes = Yes
 watchword-edit = Edit

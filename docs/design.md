@@ -878,6 +878,45 @@ The components make every request with the provider's `AuthService`
   `Users::reload`, for an app without a socket), and
   `extra: Callback<UserInfo, Html>` for the app's own columns, such as group
   membership.
+
+  Delete and Revoke access are confirmed first. By default the row's actions
+  turn into an inline `auth-confirm` group ("Delete {name}?", No, Yes). An
+  app that confirms destructive actions with a dialog of its own takes that
+  over with two optional props, which leave the default as it is when
+  absent:
+
+  - `confirm: Option<Callback<ConfirmRequest>>`. Delete and Revoke access
+    then emit a `ConfirmRequest` instead of showing the inline group. It
+    carries `action: DangerAction` (`#[non_exhaustive]`: `Delete`,
+    `RevokeAccess`), the `user: UserInfo` acted on, and watchword's own
+    localized text for the dialog: `title` (the inline prompt's message,
+    `watchword-confirm-delete` / `-revoke-access`), `explanation` (what is
+    lost, `watchword-confirm-*-explanation`), `confirm_label`
+    (`watchword-confirm-*-label`) and `cancel_label` (`watchword-cancel`),
+    so an app's translations reach the dialog the same way. The app answers
+    it once with `accept()` or `cancel()`. It is `Clone`, the clones share
+    the one answer, and dropping the last clone unanswered cancels, so a
+    dialog closed without either is harmless.
+
+    Each request has a ticket, and the component acts only on the answer to
+    the request it is waiting for, on the user id it was made for, never on
+    a row position: an answer to an older request, or after the user left
+    the list (deleted elsewhere), does nothing. The pending request ends when
+    the admin starts another confirmation or an edit, or the user leaves the
+    list. While it is pending the component is busy as it is during a
+    request: every action button is disabled, which also keeps the accept
+    from finding a request already in flight. The state is a plain type
+    (`Confirming`) the tests drive without rendering.
+  - `danger_icon: Option<Callback<DangerAction, Html>>`, rendered inside the
+    destructive buttons, before their label, in a `<span class="auth-icon"
+    aria-hidden="true">` (an icon is decoration; the label stays the
+    accessible name): the row's Delete and Revoke access, and the inline
+    group's Yes for the action it confirms. The buttons also carry stable
+    classes beside `auth-danger`, `auth-delete` and `auth-revoke-access`
+    (the Yes keeps `auth-confirm-yes`), so CSS can tell them apart. A slot
+    rather than an icon set of watchword's: the app's own icons and markup
+    fit without watchword knowing them, and a callback, like `extra`, needs
+    no `Html` comparison for the props.
 - `<AdminCloudflare app_name on_saved>` is the Cloudflare Access settings page
   for admins. It loads the settings watchword keeps (`GET
   /api/auth/cloudflare`, or `Cloudflare` over the socket), shows
@@ -1662,3 +1701,24 @@ once the release is on crates.io.
     themselves in those tests would need yew's `ssr` feature or a
     wasm-bindgen-test browser, and SSR runs no effects or futures, so the
     component tests stay with their pure functions.
+
+31. **The app may confirm `<AdminUsers>`' destructive actions, and decorate
+    their buttons.** Apps such as army confirm every destructive action with
+    a modal of their own, and the inline Yes/No group does not fit them.
+    `confirm` hands the decision over as a `ConfirmRequest` carrying
+    watchword's localized text, so the dialog reads the same in every app
+    and translates with the rest; the app only lays it out. The request is
+    answered through a one-shot responder rather than a `Callback<bool>`
+    prop pair, so the answer cannot reach a request it was not given for:
+    each carries a ticket, and the component acts only on the current one,
+    by user id. Dropping it cancels, because a dialog component that is
+    unmounted (navigation, the host's own error path) must not leave a row
+    stuck waiting. The component is busy while the request is pending, the
+    host's dialog being modal in effect, which keeps an accept from
+    arriving while another request is in flight and being lost.
+    `DangerAction` is its own `#[non_exhaustive]` enum, apart from the
+    internal action list, so confirming another action later is not a
+    breaking change. Icons are a render slot (`danger_icon`) plus stable
+    classes rather than built-in icons, since every app brings its own icon
+    set; the slot is called with the action, so one callback serves Delete,
+    Revoke access and the Yes that confirms either.

@@ -74,6 +74,40 @@
 //! [`CloudflareSettings`] is its form alone, for an app that stores the
 //! settings itself.
 //!
+//! [`AdminUsers`] confirms Delete and Revoke access inline, with a Yes/No
+//! group in the user's row. An app that confirms destructive actions with a
+//! dialog of its own sets the `confirm` prop instead: each such action then
+//! emits a [`ConfirmRequest`] carrying the [`DangerAction`], the user, and
+//! watchword's localized title, explanation and button labels, which the
+//! app answers once with `accept()` or `cancel()` (dropping it unanswered
+//! cancels). The `danger_icon` prop renders the app's icon inside the
+//! destructive buttons:
+//!
+//! ```ignore
+//! use watchword::yew023::{AdminUsers, ConfirmRequest, DangerAction};
+//!
+//! #[function_component]
+//! fn Admin() -> Html {
+//!     let pending = use_state(|| None::<ConfirmRequest>);
+//!
+//!     let confirm = {
+//!         let pending = pending.clone();
+//!         Callback::from(move |request| pending.set(Some(request)))
+//!     };
+//!
+//!     let danger_icon = Callback::from(|_: DangerAction| html! { <TrashIcon /> });
+//!
+//!     html! {
+//!         <>
+//!             <AdminUsers {confirm} {danger_icon} />
+//!             if let Some(request) = (*pending).clone() {
+//!                 <ConfirmDialog {request} on_close={move |_| pending.set(None)} />
+//!             }
+//!         </>
+//!     }
+//! }
+//! ```
+//!
 //! <br>
 //!
 //! ## Making requests
@@ -303,7 +337,8 @@
 //! | `auth-access` | a user's account state, with `auth-pending`, `auth-active` or `auth-revoked` |
 //! | `auth-link-state` | when a user's link expires, or "No link" |
 //! | `auth-link` | a link shown once: its `auth-link-url` input, `auth-copy` button and hint |
-//! | `auth-danger` | a destructive button, such as Delete |
+//! | `auth-danger` | a destructive button: Delete (also `auth-delete`), Revoke access (also `auth-revoke-access`) and the inline confirmation's Yes |
+//! | `auth-icon` | the app's `danger_icon` content inside a destructive button |
 //! | `auth-confirm` | an inline confirmation, with `auth-confirm-no` and `auth-confirm-yes` |
 //! | `auth-pages` | the paging row: `auth-previous`, `auth-page-number` and `auth-next` |
 //! | `auth-hidden` | text for screen readers only, which the app should hide visually |
@@ -341,6 +376,8 @@
 //! [`AuthProvider`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthProvider.html
 //! [`AuthService`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthService.html
 //! [`CloudflareSettings`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.CloudflareSettings.html
+//! [`ConfirmRequest`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.ConfirmRequest.html
+//! [`DangerAction`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/enum.DangerAction.html
 //! [`http`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/http/index.html
 //! [`HttpTransport`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.HttpTransport.html
 //! [`L10N`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/static.L10N.html
@@ -416,7 +453,9 @@ pub use self::account::{AccountPanel, AccountPanelProps};
 
 #[cfg(feature = "std")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
-pub use self::admin_users::{AdminUsers, AdminUsersProps, PAGE_SIZE, UsersQuery};
+pub use self::admin_users::{
+    AdminUsers, AdminUsersProps, ConfirmRequest, DangerAction, PAGE_SIZE, UsersQuery,
+};
 
 #[cfg(feature = "std")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]

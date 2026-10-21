@@ -768,3 +768,142 @@ fn google_sign_in_carries_next() {
     assert_eq!(google("/", "?next=/", ""), "/api/auth/google");
     assert_eq!(google("/", "?error=x", ""), "/api/auth/google");
 }
+
+fn listed(id: u64) -> UserEntry {
+    UserEntry {
+        user: UserInfo {
+            id: UserId(id),
+            ..user(Some("pat"), None, Method::Password)
+        },
+        link_expires_at: None,
+    }
+}
+
+/// Without the app's `confirm`, the row confirms inline and nothing waits
+/// for an answer.
+#[test]
+fn confirm_inline_without_the_app() {
+    use super::admin_users::{Confirming, DangerAction};
+
+    let mut confirming = Confirming::default();
+    confirming.start_inline(UserId(2), DangerAction::Delete);
+
+    assert_eq!(confirming.inline(UserId(2)), Some(DangerAction::Delete));
+    assert_eq!(confirming.inline(UserId(3)), None);
+    assert!(!confirming.app_pending());
+    // No ticket was handed out, so no answer is taken.
+    assert_eq!(confirming.answer(0, true), None);
+    assert_eq!(confirming.inline(UserId(2)), Some(DangerAction::Delete));
+
+    confirming.clear();
+    assert_eq!(confirming.inline(UserId(2)), None);
+}
+
+/// The app's confirmation acts on the user it was asked for once accepted,
+/// and not when cancelled, stale, or after the user left the list.
+#[test]
+fn confirm_by_the_app() {
+    use super::admin_users::{Confirming, DangerAction};
+
+    let mut confirming = Confirming::default();
+
+    // Accepted: the action on that user, once.
+    let ticket = confirming.start_app(UserId(2), DangerAction::RevokeAccess);
+    assert!(confirming.app_pending());
+    assert_eq!(confirming.inline(UserId(2)), None);
+    assert_eq!(
+        confirming.answer(ticket, true),
+        Some((UserId(2), DangerAction::RevokeAccess))
+    );
+    assert!(!confirming.app_pending());
+    assert_eq!(confirming.answer(ticket, true), None);
+
+    // Cancelled: nothing, and nothing waits.
+    let ticket = confirming.start_app(UserId(2), DangerAction::Delete);
+    assert_eq!(confirming.answer(ticket, false), None);
+    assert!(!confirming.app_pending());
+
+    // An answer to an older request does nothing to the current one.
+    let old = confirming.start_app(UserId(2), DangerAction::Delete);
+    let new = confirming.start_app(UserId(3), DangerAction::Delete);
+    assert_ne!(old, new);
+    assert_eq!(confirming.answer(old, true), None);
+    assert!(confirming.app_pending());
+    assert_eq!(
+        confirming.answer(new, true),
+        Some((UserId(3), DangerAction::Delete))
+    );
+
+    // The user left the list, such as deleted elsewhere: the answer does
+    // nothing.
+    let ticket = confirming.start_app(UserId(2), DangerAction::Delete);
+    confirming.retain(&[listed(1), listed(2)]);
+    assert!(confirming.app_pending());
+    confirming.retain(&[listed(1)]);
+    assert!(!confirming.app_pending());
+    assert_eq!(confirming.answer(ticket, true), None);
+}
+
+/// The request carries the action, the user and watchword's text, and is
+/// answered once: by `accept`, `cancel`, or by being dropped.
+#[test]
+fn confirm_requests() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use yew::Callback;
+
+    use super::admin_users::{DangerAction, confirm_request};
+
+    let answers = Rc::new(RefCell::new(Vec::new()));
+    let on_answer = {
+        let answers = answers.clone();
+        Callback::from(move |answer: (u64, bool)| answers.borrow_mut().push(answer))
+    };
+
+    let en = en();
+    let pat = user(Some("pat"), None, Method::Password);
+
+    let request = confirm_request(&en, DangerAction::Delete, pat.clone(), 7, on_answer.clone());
+    assert_eq!(request.action, DangerAction::Delete);
+    assert_eq!(request.user, pat);
+    assert_eq!(&*request.title, "Delete pat?");
+    assert_eq!(
+        &*request.explanation,
+        "pat is deleted, with their sessions and links. This cannot be undone."
+    );
+    assert_eq!(&*request.confirm_label, "Delete user");
+    assert_eq!(&*request.cancel_label, "Cancel");
+
+    // Clones share the one answer; the last one dropping after it says
+    // nothing more.
+    let copy = request.clone();
+    request.accept();
+    copy.cancel();
+    assert_eq!(*answers.borrow(), [(7, true)]);
+
+    let request = confirm_request(
+        &en,
+        DangerAction::RevokeAccess,
+        pat.clone(),
+        8,
+        on_answer.clone(),
+    );
+    assert_eq!(&*request.title, "Revoke access for pat?");
+    assert!(
+        request
+            .explanation
+            .starts_with("pat is signed out everywhere")
+    );
+    assert_eq!(&*request.confirm_label, "Revoke access");
+    request.cancel();
+    assert_eq!(*answers.borrow(), [(7, true), (8, false)]);
+
+    // Dropped unanswered, once every clone is gone, it cancels.
+    let request = confirm_request(&en, DangerAction::Delete, pat, 9, on_answer);
+    let copy = request.clone();
+    drop(request);
+    assert_eq!(answers.borrow().len(), 2);
+    drop(copy);
+    assert_eq!(*answers.borrow(), [(7, true), (8, false), (9, false)]);
+}

@@ -1,5 +1,7 @@
 use std::borrow::ToOwned;
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::fmt;
 use std::ops::Range;
 use std::rc::Rc;
 use std::string::String;
@@ -75,9 +77,254 @@ pub struct AdminUsersProps {
     /// How many users a page shows.
     #[prop_or(PAGE_SIZE)]
     pub page_size: usize,
+    /// Confirms Delete and Revoke access in the app's own dialog instead of
+    /// the inline Yes/No group: each emits a [`ConfirmRequest`], with
+    /// watchword's text for the dialog, which the app answers once with
+    /// [`accept`](ConfirmRequest::accept) or
+    /// [`cancel`](ConfirmRequest::cancel). While one is pending, the actions
+    /// are disabled.
+    #[prop_or_default]
+    pub confirm: Option<Callback<ConfirmRequest>>,
+    /// Renders the app's content, such as an icon, inside the destructive
+    /// buttons before their label: Delete, Revoke access, and the inline
+    /// confirmation's Yes for the action it confirms. It goes in a `<span
+    /// class="auth-icon" aria-hidden="true">`, so the label stays the
+    /// button's accessible name.
+    #[prop_or_default]
+    pub danger_icon: Option<Callback<DangerAction, Html>>,
     /// Classes added to the outermost element.
     #[prop_or_default]
     pub class: Classes,
+}
+
+/// A destructive action of [`AdminUsers`], which it confirms first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DangerAction {
+    /// Deletes the user, with their sessions and links.
+    Delete,
+    /// Revokes the user's access: they are signed out everywhere and can no
+    /// longer sign in, until a new link restores them.
+    RevokeAccess,
+}
+
+impl DangerAction {
+    /// The internal action it confirms.
+    fn action(self) -> Action {
+        match self {
+            DangerAction::Delete => Action::Delete,
+            DangerAction::RevokeAccess => Action::RevokeAccess,
+        }
+    }
+
+    /// The ids of its prompt, explanation and confirm label.
+    fn messages(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            DangerAction::Delete => (
+                "watchword-confirm-delete",
+                "watchword-confirm-delete-explanation",
+                "watchword-confirm-delete-label",
+            ),
+            DangerAction::RevokeAccess => (
+                "watchword-confirm-revoke-access",
+                "watchword-confirm-revoke-access-explanation",
+                "watchword-confirm-revoke-access-label",
+            ),
+        }
+    }
+
+    /// The class telling its button apart, beside `auth-danger`.
+    fn class(self) -> &'static str {
+        match self {
+            DangerAction::Delete => "auth-delete",
+            DangerAction::RevokeAccess => "auth-revoke-access",
+        }
+    }
+}
+
+/// A destructive action [`AdminUsers`] asks the app to confirm, through its
+/// `confirm` prop.
+///
+/// It carries watchword's own text for the dialog, from the app's
+/// [`Phrases`] (see [`L10N`](super::L10N)), and is answered once, with
+/// [`accept`](Self::accept) or [`cancel`](Self::cancel). Clones share the
+/// one answer, and dropping the last clone unanswered cancels. An answer
+/// after the component stopped waiting for it, such as when the admin
+/// started another confirmation or the user was deleted elsewhere, does
+/// nothing.
+#[derive(Clone, PartialEq)]
+pub struct ConfirmRequest {
+    /// The action to confirm.
+    pub action: DangerAction,
+    /// The user it acts on.
+    pub user: UserInfo,
+    /// The dialog's title, such as "Delete pat?".
+    pub title: AttrValue,
+    /// What is lost, in plain words.
+    pub explanation: AttrValue,
+    /// The label of the button that confirms, such as "Delete user".
+    pub confirm_label: AttrValue,
+    /// The label of the button that cancels.
+    pub cancel_label: AttrValue,
+    responder: Rc<Responder>,
+}
+
+impl ConfirmRequest {
+    /// Confirms the action, which the component then carries out.
+    pub fn accept(self) {
+        self.responder.answer(true);
+    }
+
+    /// Cancels the action. Dropping every clone unanswered does the same.
+    pub fn cancel(self) {
+        self.responder.answer(false);
+    }
+}
+
+impl fmt::Debug for ConfirmRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ConfirmRequest")
+            .field("action", &self.action)
+            .field("user", &self.user)
+            .field("title", &self.title)
+            .field("explanation", &self.explanation)
+            .field("confirm_label", &self.confirm_label)
+            .field("cancel_label", &self.cancel_label)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Answers a [`ConfirmRequest`] once, and cancels when dropped unanswered.
+struct Responder {
+    ticket: u64,
+    answered: Cell<bool>,
+    on_answer: Callback<(u64, bool)>,
+}
+
+impl Responder {
+    fn answer(&self, accept: bool) {
+        if !self.answered.replace(true) {
+            self.on_answer.emit((self.ticket, accept));
+        }
+    }
+}
+
+impl PartialEq for Responder {
+    fn eq(&self, other: &Self) -> bool {
+        self.ticket == other.ticket && self.on_answer == other.on_answer
+    }
+}
+
+impl Drop for Responder {
+    fn drop(&mut self) {
+        self.answer(false);
+    }
+}
+
+/// The request for `action` on `user`, in `phrases`, answered to
+/// `on_answer` with `ticket`.
+pub(super) fn confirm_request(
+    phrases: &Phrases,
+    action: DangerAction,
+    user: UserInfo,
+    ticket: u64,
+    on_answer: Callback<(u64, bool)>,
+) -> ConfirmRequest {
+    let (title, explanation, confirm_label) = action.messages();
+    let name = args!(name = user.name());
+
+    ConfirmRequest {
+        action,
+        title: AttrValue::from(phrases.msg(title, &name)),
+        explanation: AttrValue::from(phrases.msg(explanation, &name)),
+        confirm_label: l10n::text(phrases, confirm_label),
+        cancel_label: l10n::text(phrases, "watchword-cancel"),
+        user,
+        responder: Rc::new(Responder {
+            ticket,
+            answered: Cell::new(false),
+            on_answer,
+        }),
+    }
+}
+
+/// The confirmation [`AdminUsers`] waits for, if any: inline, or the app's,
+/// identified by a ticket so a stale answer does nothing.
+#[derive(Debug, Default)]
+pub(super) struct Confirming {
+    pending: Option<Pending>,
+    tickets: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Pending {
+    id: UserId,
+    action: DangerAction,
+    /// Set when the app confirms.
+    ticket: Option<u64>,
+}
+
+impl Confirming {
+    /// Waits for the inline confirmation of `action` on `id`, replacing any
+    /// other.
+    pub(super) fn start_inline(&mut self, id: UserId, action: DangerAction) {
+        self.pending = Some(Pending {
+            id,
+            action,
+            ticket: None,
+        });
+    }
+
+    /// Waits for the app's confirmation of `action` on `id`, replacing any
+    /// other, and returns its ticket.
+    pub(super) fn start_app(&mut self, id: UserId, action: DangerAction) -> u64 {
+        self.tickets += 1;
+        let ticket = self.tickets;
+
+        self.pending = Some(Pending {
+            id,
+            action,
+            ticket: Some(ticket),
+        });
+
+        ticket
+    }
+
+    /// Stops waiting.
+    pub(super) fn clear(&mut self) {
+        self.pending = None;
+    }
+
+    /// The inline confirmation shown on `id`'s row.
+    pub(super) fn inline(&self, id: UserId) -> Option<DangerAction> {
+        self.pending
+            .filter(|p| p.id == id && p.ticket.is_none())
+            .map(|p| p.action)
+    }
+
+    /// Whether the app's confirmation is pending.
+    pub(super) fn app_pending(&self) -> bool {
+        self.pending.is_some_and(|p| p.ticket.is_some())
+    }
+
+    /// Takes the app's answer for `ticket`: what to carry out when it
+    /// accepts the confirmation waited for, and nothing for a stale one.
+    pub(super) fn answer(&mut self, ticket: u64, accept: bool) -> Option<(UserId, DangerAction)> {
+        let pending = self.pending.filter(|p| p.ticket == Some(ticket))?;
+        self.pending = None;
+        accept.then_some((pending.id, pending.action))
+    }
+
+    /// Stops waiting when the user is no longer listed, such as when they
+    /// were deleted elsewhere.
+    pub(super) fn retain(&mut self, entries: &[UserEntry]) {
+        if self
+            .pending
+            .is_some_and(|p| !entries.iter().any(|e| e.user.id == p.id))
+        {
+            self.pending = None;
+        }
+    }
 }
 
 /// Admin user management over the `/api/auth/users` routes.
@@ -92,7 +339,9 @@ pub struct AdminUsersProps {
 ///   and revoking a live link;
 /// - Sign out everywhere, Revoke access, Impersonate (with `on_impersonate`)
 ///   and Delete, except on the admin's own row. Revoke access and Delete ask
-///   for confirmation.
+///   for confirmation: inline, or in the app's own dialog with the `confirm`
+///   prop (see [`ConfirmRequest`]). `danger_icon` puts the app's icon in
+///   their buttons.
 ///
 /// Use it inside [`AuthProvider`](super::AuthProvider): the context gives the
 /// admin (unless `me` is set), says whether the app uses logins, keeps the
@@ -138,7 +387,7 @@ pub struct AdminUsers {
     query: UsersQuery,
     adding: Option<UserForm>,
     editing: Option<(UserId, UserForm)>,
-    confirm: Option<(UserId, Action)>,
+    confirm: Confirming,
     /// Links issued here, whose tokens are shown only this once.
     links: HashMap<UserId, Link>,
     busy: bool,
@@ -197,8 +446,10 @@ pub enum Msg {
     Updated(Result<UserInfo, Error>, &'static str),
     IssueLink(UserId),
     Issued(UserId, Result<Link, Error>),
-    Confirm(UserId, Action),
+    Confirm(UserId, DangerAction),
     CancelConfirm,
+    /// The app's answer to the [`ConfirmRequest`] with this ticket.
+    Answer(u64, bool),
     Act(UserId, Action),
     Done(UserId, Action, Result<(), Error>),
     Copy(String),
@@ -245,7 +496,7 @@ impl Component for AdminUsers {
             query: ctx.props().query.clone(),
             adding: None,
             editing: None,
-            confirm: None,
+            confirm: Confirming::default(),
             links: HashMap::new(),
             busy: false,
             message: None,
@@ -270,6 +521,8 @@ impl Component for AdminUsers {
                 // Links that are no longer live are no use to show.
                 if let Some(entries) = users.entries() {
                     retain_links(&mut self.links, entries);
+                    // Nothing to confirm on a user who is gone.
+                    self.confirm.retain(entries);
                 }
 
                 // A list already shown stays; say why it is stale.
@@ -320,7 +573,7 @@ impl Component for AdminUsers {
                     return false;
                 };
 
-                if self.busy {
+                if self.is_busy() {
                     return false;
                 }
 
@@ -400,7 +653,7 @@ impl Component for AdminUsers {
                         role: user.role,
                     },
                 ));
-                self.confirm = None;
+                self.confirm.clear();
                 self.message = None;
             }
             Msg::CancelEdit => {
@@ -420,7 +673,7 @@ impl Component for AdminUsers {
                     return false;
                 };
 
-                if self.busy {
+                if self.is_busy() {
                     return false;
                 }
 
@@ -456,7 +709,7 @@ impl Component for AdminUsers {
                 self.update_user(ctx, *id, change, "watchword-saved");
             }
             Msg::SetRole(id, role) => {
-                if self.busy {
+                if self.is_busy() {
                     return true;
                 }
 
@@ -502,7 +755,7 @@ impl Component for AdminUsers {
                 }
             }
             Msg::IssueLink(id) => {
-                if self.busy {
+                if self.is_busy() {
                     return false;
                 }
 
@@ -546,11 +799,48 @@ impl Component for AdminUsers {
                 }
             }
             Msg::Confirm(id, action) => {
-                self.confirm = Some((id, action));
+                if self.is_busy() {
+                    return false;
+                }
+
                 self.editing = None;
+
+                match &ctx.props().confirm {
+                    Some(confirm) => {
+                        let Some(user) = self.entry(id).map(|e| e.user.clone()) else {
+                            return false;
+                        };
+
+                        let ticket = self.confirm.start_app(id, action);
+                        let on_answer = ctx
+                            .link()
+                            .callback(|(ticket, accept)| Msg::Answer(ticket, accept));
+
+                        confirm.emit(confirm_request(
+                            self.l10n.phrases(),
+                            action,
+                            user,
+                            ticket,
+                            on_answer,
+                        ));
+                    }
+                    None => self.confirm.start_inline(id, action),
+                }
             }
             Msg::CancelConfirm => {
-                self.confirm = None;
+                self.confirm.clear();
+            }
+            Msg::Answer(ticket, accept) => {
+                let pending = self.confirm.app_pending();
+
+                return match self.confirm.answer(ticket, accept) {
+                    Some((id, action)) => {
+                        Component::update(self, ctx, Msg::Act(id, action.action()))
+                    }
+                    // Only an answer to the request waited for changes what
+                    // is shown.
+                    None => pending != self.confirm.app_pending(),
+                };
             }
             Msg::Act(id, action) => {
                 if self.busy {
@@ -558,7 +848,7 @@ impl Component for AdminUsers {
                 }
 
                 self.busy = true;
-                self.confirm = None;
+                self.confirm.clear();
                 self.message = None;
 
                 let service = self.service.clone();
@@ -736,6 +1026,12 @@ impl AdminUsers {
         }
     }
 
+    /// Whether a request is in flight or the app's confirmation is pending,
+    /// which disables the actions.
+    fn is_busy(&self) -> bool {
+        self.busy || self.confirm.app_pending()
+    }
+
     fn me_id(&self, ctx: &Context<Self>) -> Option<UserId> {
         self.me(ctx).map(|me| me.id)
     }
@@ -824,7 +1120,7 @@ impl AdminUsers {
                             spellcheck="false"
                             value={form.login.clone()}
                             oninput={link.callback(|e: InputEvent| Msg::AddInput(Field::Login, browser::input_value(&e)))}
-                            disabled={self.busy}
+                            disabled={self.is_busy()}
                         />
                     </div>
                 }
@@ -838,7 +1134,7 @@ impl AdminUsers {
                         required={!logins}
                         value={form.email.clone()}
                         oninput={link.callback(|e: InputEvent| Msg::AddInput(Field::Email, browser::input_value(&e)))}
-                        disabled={self.busy}
+                        disabled={self.is_busy()}
                     />
 
                     if logins {
@@ -848,14 +1144,14 @@ impl AdminUsers {
 
                 <div class="auth-field">
                     <label for="auth-new-role">{phrases.text("watchword-role")}</label>
-                    {role_select(phrases, "auth-new-role", form.role, self.busy, link.callback(Msg::AddRole))}
+                    {role_select(phrases, "auth-new-role", form.role, self.is_busy(), link.callback(Msg::AddRole))}
                 </div>
 
                 <p class="auth-hint">{phrases.text("watchword-new-user-hint")}</p>
 
                 <div class="auth-actions">
-                    <button type="button" onclick={link.callback(|_| Msg::CancelAdd)} disabled={self.busy}>{phrases.text("watchword-cancel")}</button>
-                    <button type="submit" class="auth-submit" disabled={self.busy}>{phrases.text("watchword-add-user")}</button>
+                    <button type="button" onclick={link.callback(|_| Msg::CancelAdd)} disabled={self.is_busy()}>{phrases.text("watchword-cancel")}</button>
+                    <button type="submit" class="auth-submit" disabled={self.is_busy()}>{phrases.text("watchword-add-user")}</button>
                 </div>
             </form>
         }
@@ -953,7 +1249,7 @@ impl AdminUsers {
         let id = user.id;
         let me = self.me_id(ctx) == Some(user.id);
         let name = user.name().to_owned();
-        let busy = self.busy;
+        let busy = self.is_busy();
         let phrases = self.l10n.phrases();
 
         let editing = self
@@ -1102,7 +1398,7 @@ impl AdminUsers {
         let link = ctx.link();
         let user = &entry.user;
         let id = user.id;
-        let busy = self.busy;
+        let busy = self.is_busy();
         let phrases = self.l10n.phrases();
         let named = |id: &str| phrases.msg(id, &args!(name = name));
 
@@ -1115,11 +1411,14 @@ impl AdminUsers {
             };
         }
 
-        if let Some((_, action)) = self.confirm.filter(|(confirm, _)| *confirm == id) {
-            let prompt = match action {
-                Action::Delete => "watchword-confirm-delete",
-                _ => "watchword-confirm-revoke-access",
-            };
+        let icon = |action: DangerAction| {
+            props.danger_icon.as_ref().map(|icon| {
+                html! { <span class="auth-icon" aria-hidden="true">{icon.emit(action)}</span> }
+            })
+        };
+
+        if let Some(action) = self.confirm.inline(id) {
+            let (prompt, _, _) = action.messages();
             let prompt = html_around(
                 phrases,
                 prompt,
@@ -1132,7 +1431,7 @@ impl AdminUsers {
                 <div class="auth-confirm" role="group">
                     <span>{prompt}</span>
                     <button type="button" class="auth-confirm-no" onclick={link.callback(|_| Msg::CancelConfirm)}>{phrases.text("watchword-no")}</button>
-                    <button type="button" class="auth-confirm-yes auth-danger" onclick={link.callback(move |_| Msg::Act(id, action))} disabled={busy}>{phrases.text("watchword-yes")}</button>
+                    <button type="button" class="auth-confirm-yes auth-danger" onclick={link.callback(move |_| Msg::Act(id, action.action()))} disabled={busy}>{icon(action)}{phrases.text("watchword-yes")}</button>
                 </div>
             };
         }
@@ -1162,8 +1461,8 @@ impl AdminUsers {
                     </button>
 
                     if !revoked {
-                        <button type="button" class="auth-danger" title={named("watchword-revoke-access-for")} onclick={link.callback(move |_| Msg::Confirm(id, Action::RevokeAccess))} disabled={busy}>
-                            {phrases.text("watchword-revoke-access")}
+                        <button type="button" class={classes!("auth-danger", DangerAction::RevokeAccess.class())} title={named("watchword-revoke-access-for")} onclick={link.callback(move |_| Msg::Confirm(id, DangerAction::RevokeAccess))} disabled={busy}>
+                            {icon(DangerAction::RevokeAccess)}{phrases.text("watchword-revoke-access")}
                         </button>
                     }
 
@@ -1173,8 +1472,8 @@ impl AdminUsers {
                         </button>
                     }
 
-                    <button type="button" class="auth-danger" title={named("watchword-delete-user")} onclick={link.callback(move |_| Msg::Confirm(id, Action::Delete))} disabled={busy}>
-                        {phrases.text("watchword-delete")}
+                    <button type="button" class={classes!("auth-danger", DangerAction::Delete.class())} title={named("watchword-delete-user")} onclick={link.callback(move |_| Msg::Confirm(id, DangerAction::Delete))} disabled={busy}>
+                        {icon(DangerAction::Delete)}{phrases.text("watchword-delete")}
                     </button>
                 }
             </div>
