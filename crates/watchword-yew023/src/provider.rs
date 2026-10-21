@@ -65,7 +65,8 @@ pub struct AuthProviderProps {
 /// origin is followed (never `//host` or a URL with a scheme); any other
 /// `next` is dropped. See also
 /// [`sign_in_path`](AuthProviderProps::sign_in_path). Sign-in with Google
-/// leaves the page, and comes back to `/`.
+/// leaves the page and comes back to the same `next` (checked again by the
+/// server), or else to the page it left.
 ///
 /// With the `musliweb04` feature and a socket handed over with
 /// [`AuthContext::set_socket`], it also follows the server's

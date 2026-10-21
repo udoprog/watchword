@@ -22,7 +22,7 @@ by default. On docs.rs, items that need a feature are marked with it.
 
 The crate is `no_std`. With `default-features = false` and neither `std`
 nor `alloc`, it has only the plain types (`UserId`, `Role`, `Access`,
-`Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN`); `alloc` adds the
+`Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN`, `is_same_origin_path`); `alloc` adds the
 rest of [`types`]. The server layers and `yew023` imply `std`.
 
 A dependency that is not yet 1.0 and appears in the API is named after its
@@ -35,7 +35,7 @@ it chooses.
 
 | Feature | Module | What it provides |
 |---|---|---|
-| *(none)* | [`types`] | `UserId`, `Role`, `Access`, `Method`, `Conflict`, `AuthConfig` and `MIN_PASSWORD_LEN`, from the [watchword-core] crate |
+| *(none)* | [`types`] | `UserId`, `Role`, `Access`, `Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN` and `is_same_origin_path`, from the [watchword-core] crate |
 | `alloc` | [`types`] | the wire types (`UserInfo`, `LoginRequest`, `CreatedUser`, ...), `AuthError` and its `Invalid` reasons, `validate_password`, `normalize_email` |
 | `std` *(default)* | | `alloc`, and the standard library for the dependencies that have it |
 | `musli01` | | musli 0.1 `Encode`/`Decode` on the types |

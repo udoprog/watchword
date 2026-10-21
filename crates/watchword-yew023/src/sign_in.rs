@@ -31,7 +31,8 @@ pub struct SignInProps {
 /// The sign-in page, offering the enabled methods: a login (or email) and
 /// password form when `config.password` is set, "Sign in with Cloudflare"
 /// when `config.cloudflare` is, and "Sign in with Google" when
-/// `config.google` is.
+/// `config.google` is. Signing in with Google comes back to the URL's
+/// `?next=` when it is a path on this origin, or else to this page.
 ///
 /// An `?error=` the server redirected with, such as from a failed Google
 /// sign-in, is shown and removed from the URL.
@@ -210,7 +211,7 @@ pub fn SignIn(props: &SignInProps) -> Html {
                         }
 
                         if config.google {
-                            <a class="auth-google" href={http::GOOGLE_SIGN_IN}>{phrases.text("watchword-sign-in-google")}</a>
+                            <a class="auth-google" href={browser::google_sign_in(http::GOOGLE_SIGN_IN)}>{phrases.text("watchword-sign-in-google")}</a>
                         }
                     </div>
                 }

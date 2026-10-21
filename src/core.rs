@@ -16,6 +16,8 @@ pub use self::audit::{Actor, AuditEvent};
 pub use self::cookie::{generate_session_key, session_cookie, verify_session_cookie};
 pub use self::guard::SessionGuard;
 pub use self::password::{PasswordError, dummy_hash, hash_password, verify_password};
+#[cfg(all(feature = "google", feature = "axum08"))]
+pub(crate) use self::service::GoogleReturn;
 pub use self::service::{
     Auth, AuthBuilder, AuthEvent, Bootstrap, BootstrapAdmin, CookieConfig, Error, Result, Secure,
     load_or_create_key,

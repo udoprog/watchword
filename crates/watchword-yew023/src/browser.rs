@@ -5,6 +5,7 @@ use std::borrow::ToOwned;
 use std::string::String;
 use std::vec::Vec;
 
+use watchword_core::is_same_origin_path;
 use web_sys::wasm_bindgen::JsValue;
 use yew::{InputEvent, TargetCast};
 
@@ -97,22 +98,65 @@ pub(super) fn return_url(
 }
 
 /// Decodes a `?next=` value, returning it only when it is a path on this
-/// origin: it starts with a single `/` and holds no backslash or control
-/// character, so it can never name another host (`//host`, `/\host`, or
-/// `/<tab>/host`, which browsers read as `//host`) or a scheme.
+/// origin, by watchword-core's [`is_same_origin_path`]: it starts with a
+/// single `/` and holds no backslash or control character, so it can never
+/// name another host (`//host`, `/\host`, or `/<tab>/host`, which browsers
+/// read as `//host`) or a scheme.
 pub(super) fn safe_next(value: &str) -> Option<String> {
     let decoded = percent_decode(value)?;
-    let bytes = decoded.as_bytes();
+    is_same_origin_path(&decoded).then_some(decoded)
+}
 
-    if bytes.first() != Some(&b'/') || matches!(bytes.get(1), Some(b'/' | b'\\')) {
-        return None;
+/// Where "Sign in with Google" starts, given the browser's location: the
+/// Google route with a `?next=` naming where to come back to. That is the
+/// URL's own usable `next` (see [`safe_next`]), or else this page without
+/// one (nor an `?error=` the sign-in page shows), so that signing in with
+/// Google returns where signing in with a password would. On `/` it carries
+/// none, since `/` is where it returns to by default.
+pub(super) fn google_sign_in_url(base: &str, path: &str, search: &str, hash: &str) -> String {
+    let (next, rest) = strip_query_param(search, "next");
+    let (_, rest) = strip_query_param(&rest, "error");
+
+    let target = match next.as_deref().and_then(safe_next) {
+        Some(target) => target,
+        None => format!("{path}{rest}{hash}"),
+    };
+
+    if target == "/" || !is_same_origin_path(&target) {
+        return base.to_owned();
     }
 
-    if bytes.iter().any(|&b| b == b'\\' || b.is_ascii_control()) {
-        return None;
-    }
+    let mut url = format!("{base}?next=");
+    encode_into(&mut url, &target);
+    url
+}
 
-    Some(decoded)
+/// Percent-encodes `value` as a query value, keeping only unreserved
+/// characters and `/` as they are.
+fn encode_into(out: &mut String, value: &str) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    for &b in value.as_bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'/') {
+            out.push(char::from(b));
+        } else {
+            out.push('%');
+            out.push(char::from(HEX[usize::from(b >> 4)]));
+            out.push(char::from(HEX[usize::from(b & 0xf)]));
+        }
+    }
+}
+
+/// [`google_sign_in_url`] for the browser's current location.
+pub(super) fn google_sign_in(base: &str) -> String {
+    let Some(location) = web_sys::window().map(|w| w.location()) else {
+        return base.to_owned();
+    };
+
+    let path = location.pathname().unwrap_or_default();
+    let search = location.search().unwrap_or_default();
+    let hash = location.hash().unwrap_or_default();
+    google_sign_in_url(base, &path, &search, &hash)
 }
 
 /// Decodes `%XX` escapes, failing on a malformed escape or a result that is

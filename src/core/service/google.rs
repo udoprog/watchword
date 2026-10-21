@@ -8,11 +8,13 @@
 #![cfg_attr(not(feature = "axum08"), allow(dead_code))]
 
 use std::borrow::ToOwned;
+use std::string::String;
 
 use jiff::Timestamp;
 
 use super::{Auth, AuthBuilder, Error, Result};
 use crate::google::{Callback, Flow, GoogleConfig, Provider, Url};
+use crate::is_same_origin_path;
 use crate::store::{Session, User};
 use crate::types::AuthError;
 
@@ -41,6 +43,16 @@ impl AuthBuilder {
     }
 }
 
+/// What a Google callback came to.
+#[derive(Debug)]
+pub(crate) struct GoogleReturn {
+    /// Where the sign-in it completes was to come back to: a path on this
+    /// origin, encoded to be sent as a `Location`.
+    pub(crate) next: Option<String>,
+    /// The user and their new session, or why it failed.
+    pub(crate) result: Result<(User, Session), GoogleFailure>,
+}
+
 /// Why a Google callback failed, as the `?error=` code it redirects with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GoogleFailure {
@@ -66,9 +78,13 @@ impl Auth {
     }
 
     /// Starts signing in with Google, returning where to send the browser.
-    /// [`AuthError::NotFound`] when Google is not configured.
-    pub(crate) fn google_sign_in(&self) -> Result<Url> {
-        Ok(self.google_provider()?.start(Flow::SignIn))
+    /// Once signed in, the browser comes back to `next` when it is a path on
+    /// this origin (see [`is_same_origin_path`]); any other `next` is
+    /// ignored. [`AuthError::NotFound`] when Google is not configured.
+    pub(crate) fn google_sign_in(&self, next: Option<&str>) -> Result<Url> {
+        let provider = self.google_provider()?;
+        let next = next.filter(|next| is_same_origin_path(next)).map(location);
+        Ok(provider.start(Flow::SignIn { next }))
     }
 
     /// Starts registering, or resetting the credential, with the link
@@ -100,33 +116,56 @@ impl Auth {
     }
 
     /// Completes a flow Google redirected back from, returning the user and
-    /// their new session. Every failure is logged.
+    /// their new session, and where a sign-in was to come back to (whether
+    /// it succeeded or not). Every failure is logged.
     ///
     /// Registering or switching to Google replaces the user's credential,
     /// which ends all of their earlier sessions; the session returned is
     /// new. That includes the one that started switching, which the
     /// callback cannot see: the `SameSite=Strict` cookie is not sent on
     /// the redirect from Google.
-    pub(crate) async fn google_callback(
+    pub(crate) async fn google_callback(&self, callback: &Callback) -> GoogleReturn {
+        let Some(provider) = self.inner.google.as_ref() else {
+            tracing::warn!("Google sign-in: a callback arrived, but Google is not configured");
+            return GoogleReturn {
+                next: None,
+                result: Err(GoogleFailure::AuthFailed),
+            };
+        };
+
+        // Taken first, so the state is used up whatever Google answered, and
+        // a sign-in that failed still knows where it was to come back to.
+        let flow = callback
+            .state
+            .as_deref()
+            .and_then(|state| provider.take(state));
+
+        let next = match &flow {
+            Some(Flow::SignIn { next }) => next.clone(),
+            _ => None,
+        };
+
+        let result = self.complete_google(provider, callback, flow).await;
+        GoogleReturn { next, result }
+    }
+
+    async fn complete_google(
         &self,
+        provider: &Provider,
         callback: &Callback,
+        flow: Option<Flow>,
     ) -> Result<(User, Session), GoogleFailure> {
         if let Some(error) = &callback.error {
             tracing::info!(error, "Google sign-in: Google returned an error");
             return Err(GoogleFailure::AuthFailed);
         }
 
-        let (Some(code), Some(state)) = (&callback.code, &callback.state) else {
+        let (Some(code), Some(_)) = (&callback.code, &callback.state) else {
             tracing::info!("Google sign-in: the callback has no code or state");
             return Err(GoogleFailure::AuthFailed);
         };
 
-        let Some(provider) = self.inner.google.as_ref() else {
-            tracing::warn!("Google sign-in: a callback arrived, but Google is not configured");
-            return Err(GoogleFailure::AuthFailed);
-        };
-
-        let Some(flow) = provider.take(state) else {
+        let Some(flow) = flow else {
             tracing::info!("Google sign-in: unknown, expired or replayed state");
             return Err(GoogleFailure::AuthFailed);
         };
@@ -145,7 +184,7 @@ impl Auth {
         let (sub, email) = (&account.sub, &account.email);
 
         let result = match &flow {
-            Flow::SignIn => self.sign_in_google(sub, email).await,
+            Flow::SignIn { .. } => self.sign_in_google(sub, email).await,
             Flow::Register { token } => self.register_google(token, sub, email).await,
             Flow::Link { user, impersonator } => match self
                 .switch_to_google(*user, *impersonator, None, sub, email)
@@ -161,7 +200,9 @@ impl Auth {
 
         result.map_err(|error| {
             let failure = match (&flow, &error) {
-                (Flow::SignIn, Error::Auth(AuthError::Unauthorized)) => GoogleFailure::UserNotFound,
+                (Flow::SignIn { .. }, Error::Auth(AuthError::Unauthorized)) => {
+                    GoogleFailure::UserNotFound
+                }
                 _ => GoogleFailure::AuthFailed,
             };
 
@@ -188,8 +229,33 @@ impl Auth {
 /// The flow's purpose, for logs; a link's token is a credential.
 fn flow_name(flow: &Flow) -> &'static str {
     match flow {
-        Flow::SignIn => "sign-in",
+        Flow::SignIn { .. } => "sign-in",
         Flow::Register { .. } => "register",
         Flow::Link { .. } => "link",
     }
+}
+
+/// `next`, a path on this origin, as a `Location` header value: the bytes
+/// that cannot be sent in a URL as they are (spaces, non-ASCII) are
+/// percent-encoded, and everything else is kept, so its meaning is
+/// unchanged. Nothing is normalized, since resolving `/.//host` to `//host`
+/// would name another host.
+fn location(next: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    let mut out = String::with_capacity(next.len());
+
+    for &b in next.as_bytes() {
+        if b.is_ascii_graphic()
+            && !matches!(b, b'"' | b'<' | b'>' | b'`' | b'{' | b'|' | b'}' | b'^')
+        {
+            out.push(char::from(b));
+        } else {
+            out.push('%');
+            out.push(char::from(HEX[usize::from(b >> 4)]));
+            out.push(char::from(HEX[usize::from(b & 0xf)]));
+        }
+    }
+
+    out
 }

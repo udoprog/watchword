@@ -38,6 +38,22 @@ fn sign_in_urls() {
         sign_in_url("/login", "/a?b=1&error=user-not-found&c=2"),
         "/login?error=user-not-found&next=/a%3Fb%3D1%26c%3D2"
     );
+    // So does the `next` of `/` with nothing else, as a failed Google
+    // sign-in redirects with, rather than nesting it.
+    assert_eq!(
+        sign_in_url("/login", "/?error=auth-failed&next=/notes%3Fq%3D1"),
+        "/login?error=auth-failed&next=/notes%3Fq%3D1"
+    );
+    assert_eq!(sign_in_url("/login", "/?next=/notes"), "/login?next=/notes");
+    // Elsewhere, or beside anything else, it is part of the page.
+    assert_eq!(
+        sign_in_url("/login", "/a?next=/notes"),
+        "/login?next=/a%3Fnext%3D/notes"
+    );
+    assert_eq!(
+        sign_in_url("/login", "/?x=1&next=/notes"),
+        "/login?next=/%3Fx%3D1%26next%3D/notes"
+    );
 }
 
 fn gated(auth: &Auth) -> Router {

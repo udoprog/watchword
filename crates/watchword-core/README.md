@@ -22,7 +22,7 @@ any feature but `axum08` and `sqll014`. Only `std` is on by default.
 
 | Feature | What it provides |
 |---|---|
-| *(none)* | `UserId`, `Role`, `Access`, `Method`, `Conflict`, `AuthConfig` and `MIN_PASSWORD_LEN` |
+| *(none)* | `UserId`, `Role`, `Access`, `Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN` and `is_same_origin_path`, the rule a `?next=` is followed by |
 | `alloc` | the wire types that hold strings (`UserInfo`, `LoginRequest`, `CreatedUser`, ...), [`AuthError`] and its `Invalid` reasons, `validate_password` and `normalize_email` |
 | `std` *(default)* | `alloc`, and the standard library for the dependencies that have it |
 | `musli01` | musli 0.1 `Encode`/`Decode` on the types, so an app can embed them in its own WebSocket messages |

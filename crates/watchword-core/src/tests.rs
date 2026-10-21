@@ -560,3 +560,42 @@ fn user_id_conversions() {
     assert_eq!(i64::try_from(UserId(i64::MAX as u64)), Ok(i64::MAX));
     assert!(i64::try_from(UserId(i64::MAX as u64 + 1)).is_err());
 }
+
+/// The rule a `?next=` is followed by, on values already decoded: a path on
+/// this origin, and never a way to another host.
+#[test]
+fn same_origin_paths() {
+    for good in [
+        "/",
+        "/notes",
+        "/notes?q=1#top",
+        "/a b/\u{e5}",
+        "/%2F%2Fhost",
+        "/.//evil.example",
+        "/notes//x",
+    ] {
+        assert!(is_same_origin_path(good), "{good:?}");
+    }
+
+    for bad in [
+        "",
+        "notes",
+        "//evil.example",
+        "///evil.example",
+        "/\\evil.example",
+        "\\/evil.example",
+        "\\\\evil.example",
+        "/notes\\x",
+        "https://evil.example",
+        "javascript:alert(1)",
+        "/\t/evil.example",
+        "/\n/evil.example",
+        "/\r/evil.example",
+        "/\0",
+        "/\u{7f}",
+        " //evil.example",
+        "\t//evil.example",
+    ] {
+        assert!(!is_same_origin_path(bad), "{bad:?}");
+    }
+}

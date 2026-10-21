@@ -1819,5 +1819,8 @@ mod google;
 #[cfg(any(test, feature = "test-util"))]
 mod test_util;
 
+#[cfg(all(feature = "google", feature = "axum08"))]
+pub(crate) use self::google::GoogleReturn;
+
 #[cfg(test)]
 mod tests;

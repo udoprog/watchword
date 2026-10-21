@@ -580,8 +580,19 @@ ignores the app's own tables and columns.
   path cannot be set wrong. The fields stay public for a callback reached some
   other way (a proxy stripping a prefix), where the provider only warns when
   the path is not `REDIRECT_PATH`.
-  It is reached only through the routes (2.5); the callback redirects to `/` on
-  success, or to `/?error=auth-failed` or `/?error=user-not-found` on failure.
+  It is reached only through the routes (2.5); the callback redirects to the
+  sign-in's `next` (below), or `/`, on success, or to `/?error=auth-failed`
+  or `/?error=user-not-found` on failure, with `&next=` after it when the
+  sign-in had one, so trying again still returns there.
+
+  `GET /api/auth/google?next=…` takes the page to come back to. It is kept
+  only when `watchword_core::is_same_origin_path` holds for it once decoded,
+  the same rule watchword-yew023 follows a `next` by, and is remembered with
+  the flow's state in memory (never in the redirect to Google). The callback
+  takes the state before looking at Google's answer, so a denied or failed
+  sign-in still knows its `next`. It is sent as a `Location` with only the
+  bytes a URL cannot hold as they are (spaces, non-ASCII) percent-encoded,
+  and never normalized, since resolving `/.//host` would give `//host`.
 
   Google's endpoints are `google::Endpoints` (`auth`, `token`, `tokeninfo`),
   whose `Default` is Google's own; production always uses it. For an app to
@@ -644,7 +655,9 @@ page load (`GET`/`HEAD` outside `/api/` accepting `text/html`) is redirected
 (303) to `{sign_in_path}?next={path and query}`, `next` omitted for `/`, and
 anything else gets 401 (a store failure 500). An `error=` in the requested
 query moves to the sign-in URL's own query, so the Google callback's
-`/?error=…` still reaches the sign-in page. It is a plain `from_fn`
+`/?error=…` still reaches the sign-in page; so does the `next` of a `/`
+whose query is otherwise only that `error`, the shape of a failed Google
+sign-in's redirect, instead of being nested in a `next` of its own. It is a plain `from_fn`
 middleware with its state rather than a `Layer` of its own, since naming a
 layer type would add `tower-layer` and `tower-service` to the public API.
 Decision 24.
@@ -679,8 +692,8 @@ the app is served with `into_make_service_with_connect_info::<SocketAddr>()`.
 | `POST /api/auth/cloudflare` | anyone, feature `cloudflare` | → `UserInfo` + cookie; activates a pending user |
 | `GET /api/auth/cloudflare` | admin, feature `cloudflare` | `CloudflareConfig` as stored, or its default when there is none |
 | `PUT /api/auth/cloudflare` | admin, feature `cloudflare` | `CloudflareConfig` → `CloudflareConfig` as stored; applies it |
-| `GET /api/auth/google`, `/google/register/{token}`, `/google/link` | anyone / anyone / signed in | redirect to Google; 404 unless Google is configured |
-| `GET /api/auth/google/redirect` (`watchword::google::REDIRECT_PATH`; `redirect_url` must use this path, a different one is logged as a warning) | Google | callback; cookie + redirect to `/`, or `/?error=user-not-found` / `/?error=auth-failed` |
+| `GET /api/auth/google`, `/google/register/{token}`, `/google/link` | anyone / anyone / signed in | redirect to Google; the first takes `?next=`, a same-origin path to come back to; 404 unless Google is configured |
+| `GET /api/auth/google/redirect` (`watchword::google::REDIRECT_PATH`; `redirect_url` must use this path, a different one is logged as a warning) | Google | callback; cookie + redirect to the sign-in's `next` or `/`, or `/?error=user-not-found` / `/?error=auth-failed` (`&next=` kept) |
 | `POST /api/auth/logout` | anyone | 204, deletes the session, clears the cookie |
 | `GET /api/auth/register/{token}` | anyone | `RegisterInfo`; 404 unknown, 410 used or expired |
 | `POST /api/auth/register/{token}` | anyone | `RegisterRequest` → `UserInfo` + cookie; ends the user's other sessions |
@@ -736,8 +749,11 @@ cookies, so the library does not depend on the app's gloo version.
     it must start with a single `/` and hold no `\` or control character
     once decoded (no `//host`, `/\host`, `/<tab>/host` or scheme); any other
     `next` is dropped. On `sign_in_path` a signed-in user goes to `next` or
-    `/`, also when already signed in on load. Google sign-in leaves the page
-    and comes back to `/`.
+    `/`, also when already signed in on load. The rule is
+    `watchword_core::is_same_origin_path`, which the server's Google sign-in
+    shares. "Sign in with Google" leaves the page with `?next=` set to the
+    URL's usable `next`, or else to the page itself (none on `/`), and comes
+    back there.
 - `use_auth() -> AuthContext` gives `user: Rc<UserInfo>`, `config`,
   `is_admin()`, `sign_out()`, `refresh()`, `set_user(UserInfo)` and
   `check_session()`.
@@ -1387,7 +1403,10 @@ once the release is on crates.io.
     redirect to sign-in with `?next=` for pages. The `next` value is only
     ever followed by the frontend as a same-origin path, since the sign-in
     page is reachable by anyone with any query and an unchecked `next`
-    would be an open redirect. The extensions cache of `SignedIn` is now
+    would be an open redirect. The rule lives in watchword-core
+    (`is_same_origin_path`, needing no feature) so the server's Google
+    sign-in, which follows a `next` itself, checks exactly what the
+    frontend does. The extensions cache of `SignedIn` is now
     documented, since apps behind the gate rely on it.
 25. **Audit events are their own type, delivered by a hook.** Apps keep
     audit logs of admin actions, and `AuthEvent` said what changed but not

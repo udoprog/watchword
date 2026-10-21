@@ -19,7 +19,7 @@
 //!
 //! | Feature | What it provides |
 //! |---|---|
-//! | *(none)* | `UserId`, `Role`, `Access`, `Method`, `Conflict`, `AuthConfig` and `MIN_PASSWORD_LEN` |
+//! | *(none)* | `UserId`, `Role`, `Access`, `Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN` and `is_same_origin_path`, the rule a `?next=` is followed by |
 //! | `alloc` | the wire types that hold strings (`UserInfo`, `LoginRequest`, `CreatedUser`, ...), [`AuthError`] and its `Invalid` reasons, `validate_password` and `normalize_email` |
 //! | `std` *(default)* | `alloc`, and the standard library for the dependencies that have it |
 //! | `musli01` | musli 0.1 `Encode`/`Decode` on the types, so an app can embed them in its own WebSocket messages |
@@ -102,6 +102,34 @@ pub fn validate_password(password: &str) -> Option<Invalid> {
 /// case-insensitive.
 pub fn normalize_email(email: &str) -> String {
     email.trim().to_lowercase()
+}
+
+/// Whether `path`, a `?next=` value once decoded, is a path on this origin,
+/// and so safe to send a browser to after signing in.
+///
+/// It must start with a single `/` and hold no backslash or control
+/// character, so it can never name another host (`//host`, `/\host`, or
+/// `/<tab>/host`, which browsers read as `//host`) or a scheme. watchword's
+/// Google sign-in and watchword-yew023's `AuthProvider` follow a `next` only
+/// when this holds; anything else is an open redirect.
+///
+/// Check the value once it is decoded, as it is followed: an escape such as
+/// `%2F` decoded once more stays in the path as it is.
+///
+/// ```
+/// use watchword_core::is_same_origin_path;
+///
+/// assert!(is_same_origin_path("/notes?q=1#top"));
+/// assert!(!is_same_origin_path("//evil.example"));
+/// assert!(!is_same_origin_path("/\\evil.example"));
+/// assert!(!is_same_origin_path("https://evil.example"));
+/// ```
+pub fn is_same_origin_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+
+    bytes.first() == Some(&b'/')
+        && !matches!(bytes.get(1), Some(b'/' | b'\\'))
+        && !bytes.iter().any(|&b| b == b'\\' || b.is_ascii_control())
 }
 
 /// A user's id. Apps convert to and from their own `u64` ids with [`new`]

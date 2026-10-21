@@ -5,7 +5,9 @@
 //! [`AuthBuilder::google`](crate::AuthBuilder::google); the `axum08` feature
 //! serves its routes:
 //!
-//! - `GET /api/auth/google` starts signing in.
+//! - `GET /api/auth/google` starts signing in, and `?next=` names the page
+//!   to come back to once signed in: a path on this origin, by
+//!   [`is_same_origin_path`](crate::is_same_origin_path), or it is ignored.
 //! - `GET /api/auth/google/register/{token}` starts registering, or resetting
 //!   the credential, with a link.
 //! - `GET /api/auth/google/link` starts switching the signed-in user to Google.
@@ -20,9 +22,11 @@
 //! subject, or, for a Google user who registered before subjects were
 //! recorded, once by email. A Google account binds only one user.
 //!
-//! The callback redirects to `/` with the session cookie on success, and to
-//! `/?error=user-not-found` (signing in with an account no user has) or
-//! `/?error=auth-failed` (anything else) on failure; the reason is logged.
+//! The callback redirects with the session cookie to the sign-in's `next`, or
+//! to `/`, on success. On failure it redirects to `/?error=user-not-found`
+//! (signing in with an account no user has) or `/?error=auth-failed`
+//! (anything else), with the sign-in's `next` after it (`&next=`), so trying
+//! again still comes back there; the reason is logged.
 
 use std::fmt;
 use std::num::NonZeroUsize;
@@ -194,8 +198,9 @@ impl Default for Endpoints {
 /// What a started flow does once Google returns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Flow {
-    /// Sign in.
-    SignIn,
+    /// Sign in, coming back to `next`: a path on this origin, encoded to be
+    /// sent as a `Location`.
+    SignIn { next: Option<String> },
     /// Register, or reset the credential, with the link `token`.
     Register { token: String },
     /// Switch the signed-in user to Google, for an admin impersonating them
@@ -444,11 +449,11 @@ mod tests {
         let mut states = states(4);
         let now = Instant::now();
 
-        states.insert("a".into(), Flow::SignIn, now);
+        states.insert("a".into(), Flow::SignIn { next: None }, now);
 
         assert_eq!(
             states.take("a", now + Duration::from_secs(1)),
-            Some(Flow::SignIn)
+            Some(Flow::SignIn { next: None })
         );
         assert!(states.take("a", now + Duration::from_secs(1)).is_none());
         assert!(states.take("unknown", now).is_none());
@@ -459,7 +464,7 @@ mod tests {
         let mut states = states(4);
         let now = Instant::now();
 
-        states.insert("a".into(), Flow::SignIn, now);
+        states.insert("a".into(), Flow::SignIn { next: None }, now);
 
         assert!(states.take("a", now + PENDING_TTL).is_none());
         assert_eq!(states.len(), 0);
@@ -470,13 +475,21 @@ mod tests {
         let mut states = states(16);
         let now = Instant::now();
 
-        states.insert("old1".into(), Flow::SignIn, now);
-        states.insert("old2".into(), Flow::SignIn, now + Duration::from_secs(60));
-        states.insert("fresh".into(), Flow::SignIn, now + Duration::from_secs(120));
+        states.insert("old1".into(), Flow::SignIn { next: None }, now);
+        states.insert(
+            "old2".into(),
+            Flow::SignIn { next: None },
+            now + Duration::from_secs(60),
+        );
+        states.insert(
+            "fresh".into(),
+            Flow::SignIn { next: None },
+            now + Duration::from_secs(120),
+        );
 
         // Past the TTL of the first two, but not of "fresh".
         let later = now + PENDING_TTL + Duration::from_secs(60);
-        states.insert("new".into(), Flow::SignIn, later);
+        states.insert("new".into(), Flow::SignIn { next: None }, later);
 
         assert_eq!(states.len(), 2);
         assert!(states.take("old1", later).is_none());
@@ -491,7 +504,11 @@ mod tests {
         let now = Instant::now();
 
         for i in 0..10u64 {
-            states.insert(format!("s{i}"), Flow::SignIn, now + Duration::from_secs(i));
+            states.insert(
+                format!("s{i}"),
+                Flow::SignIn { next: None },
+                now + Duration::from_secs(i),
+            );
         }
 
         assert_eq!(states.len(), 3);
@@ -518,7 +535,7 @@ mod tests {
             Endpoints::default(),
         );
 
-        let url = provider.start(Flow::SignIn);
+        let url = provider.start(Flow::SignIn { next: None });
         assert_eq!(url.host_str(), Some("accounts.google.com"));
 
         let query = url.query_pairs().into_owned().collect::<Vec<_>>();
@@ -538,7 +555,7 @@ mod tests {
         assert!(!query.iter().any(|(_, v)| v == "secret"));
 
         let state = get("state").unwrap();
-        assert_eq!(provider.take(state), Some(Flow::SignIn));
+        assert_eq!(provider.take(state), Some(Flow::SignIn { next: None }));
         assert_eq!(provider.take(state), None);
     }
 

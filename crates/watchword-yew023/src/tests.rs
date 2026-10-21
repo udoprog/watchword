@@ -8,7 +8,9 @@ use phrasebook01::{Catalog, Lang, Phrasebook, Phrases, Source, check};
 
 use super::account::account_change;
 use super::admin_users::{link_url, matches_filter, page_bounds, relative_time};
-use super::browser::{register_token_from_path, return_url, safe_next, strip_query_param};
+use super::browser::{
+    google_sign_in_url, register_token_from_path, return_url, safe_next, strip_query_param,
+};
 use super::cloudflare_settings::{failure, header_unverified};
 use super::form::identity_change;
 use super::http::{CreatedUser, Error};
@@ -711,4 +713,39 @@ fn same_rights_follows_user_role_and_impersonation() {
     assert!(!same_rights(&current, &other));
 
     assert!(!same_rights(&current, &impersonated("admin")));
+}
+
+#[test]
+fn google_sign_in_carries_next() {
+    let google = |path, search, hash| google_sign_in_url("/api/auth/google", path, search, hash);
+
+    // The URL's own usable `next`, encoded once more for the query.
+    assert_eq!(
+        google("/login", "?next=/notes%3Fq%3D1", ""),
+        "/api/auth/google?next=/notes%3Fq%3D1"
+    );
+    assert_eq!(
+        google("/login", "?error=x&next=%2Fa%20b%2B", "#h"),
+        "/api/auth/google?next=/a%20b%2B"
+    );
+    // An escape left encoded in it stays encoded.
+    assert_eq!(
+        google("/login", "?next=/%252F%252Fhost", ""),
+        "/api/auth/google?next=/%252F%252Fhost"
+    );
+
+    // Without a usable one, this page, without `next` or `error`.
+    assert_eq!(
+        google("/notes", "?a=1&error=x&next=//evil.example", "#top"),
+        "/api/auth/google?next=/notes%3Fa%3D1%23top"
+    );
+    assert_eq!(
+        google("/login", "?next=https://evil.example", ""),
+        "/api/auth/google?next=/login"
+    );
+
+    // Nothing for `/`, where it returns to anyway.
+    assert_eq!(google("/", "", ""), "/api/auth/google");
+    assert_eq!(google("/", "?next=/", ""), "/api/auth/google");
+    assert_eq!(google("/", "?error=x", ""), "/api/auth/google");
 }

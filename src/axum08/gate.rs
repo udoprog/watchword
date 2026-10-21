@@ -55,7 +55,9 @@ type Predicate = dyn Fn(&str) -> bool + Send + Sync;
 ///
 /// An `?error=` on the page asked for, such as the one the Google callback
 /// redirects to `/` with, is moved to the sign-in page's own query, where
-/// the sign-in page shows it.
+/// the sign-in page shows it. So is the `next` of `/?next=…` (with nothing
+/// else but an `error`), which the callback adds for a sign-in that was to
+/// return elsewhere.
 ///
 /// A request let through with a session carries its [`SignedIn`] in the
 /// request extensions, so the handlers' [`SignedIn`], [`Admin`] and
@@ -147,7 +149,18 @@ impl RequireSession {
             separator = '&';
         }
 
-        if path != "/" || !rest.is_empty() {
+        // `/` with nothing but a `next`, as the Google callback redirects
+        // with after a failed sign-in, already says where to return to.
+        let own_next = match rest.as_slice() {
+            [pair] if path == "/" => pair.strip_prefix("next="),
+            _ => None,
+        };
+
+        if let Some(next) = own_next {
+            url.push(separator);
+            url.push_str("next=");
+            url.push_str(next);
+        } else if path != "/" || !rest.is_empty() {
             let mut next = String::from(path);
 
             if !rest.is_empty() {
@@ -217,7 +230,7 @@ fn is_page_request(method: &Method, path: &str, headers: &HeaderMap) -> bool {
 
 /// Percent-encodes `value` as a query value, keeping only unreserved
 /// characters and `/` as they are.
-fn encode_into(out: &mut String, value: &str) {
+pub(super) fn encode_into(out: &mut String, value: &str) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
     for &b in value.as_bytes() {

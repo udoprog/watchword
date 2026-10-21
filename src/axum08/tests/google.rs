@@ -364,3 +364,92 @@ async fn a_bound_google_account_cannot_be_linked_again() {
     assert_eq!(me.status, StatusCode::OK);
     assert_eq!(me.body["method"], json!("password"));
 }
+
+/// Signing in with Google comes back to a same-origin `next`, kept through
+/// the round trip, and never to anywhere else.
+#[tokio::test]
+async fn signing_in_with_google_returns_to_next() {
+    let (auth, google) = google_auth().await;
+    let app = router(&auth);
+    let admin = admin(&auth, &app).await;
+    let token = invite(&app, &admin, "new@example.com").await;
+    let url = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
+    signed_in_as(&app, &google, &url, account("sub:new", "new@example.com")).await;
+
+    // Where signing in from `/api/auth/google{query}` returns to.
+    let returns_to = async |query: &str| {
+        let url = start(&app, &format!("/api/auth/google{query}"), None).await;
+        let answer = follow(
+            &app,
+            &google.approve(&url, account("sub:new", "new@example.com")),
+        )
+        .await;
+        assert_eq!(answer.status, StatusCode::SEE_OTHER, "{query}");
+        assert!(answer.headers.contains_key(header::SET_COOKIE), "{query}");
+        location(&answer).to_owned()
+    };
+
+    assert_eq!(
+        returns_to("?next=/notes%3Fq%3D1%23top").await,
+        "/notes?q=1#top"
+    );
+    assert_eq!(returns_to("?next=/notes").await, "/notes");
+    // Only what cannot be sent as it is gets encoded.
+    assert_eq!(returns_to("?next=/a%20b/%C3%A5").await, "/a%20b/%C3%A5");
+    assert_eq!(returns_to("?next=/%252F%252Fhost").await, "/%2F%2Fhost");
+    // Never normalized into `//evil.example`, which would leave the origin.
+    assert_eq!(
+        returns_to("?next=/.//evil.example").await,
+        "/.//evil.example"
+    );
+    assert_eq!(returns_to("").await, "/");
+    assert_eq!(returns_to("?other=1").await, "/");
+
+    // Another host, a scheme, or not a path: ignored.
+    for bad in [
+        "",
+        "notes",
+        "//evil.example",
+        "%2F%2Fevil.example",
+        "///evil.example",
+        "/%5Cevil.example",
+        "%5C%5Cevil.example",
+        "https://evil.example",
+        "https%3A%2F%2Fevil.example",
+        "javascript:alert(1)",
+        "/%09/evil.example",
+        "/%0A/evil.example",
+        "%20//evil.example",
+    ] {
+        assert_eq!(returns_to(&format!("?next={bad}")).await, "/", "{bad:?}");
+    }
+
+    // A byte that is not UTF-8 decodes as U+FFFD, which stays on the origin.
+    assert_eq!(returns_to("?next=/%FF").await, "/%EF%BF%BD");
+
+    // A failed sign-in keeps it on the error redirect, for trying again.
+    let url = start(&app, "/api/auth/google?next=/notes%3Fq%3D1", None).await;
+    let other = account("sub:other", "other@example.com");
+    let answer = follow(&app, &google.approve(&url, other)).await;
+    assert_eq!(
+        location(&answer),
+        "/?error=user-not-found&next=/notes%3Fq%3D1"
+    );
+    assert!(!answer.headers.contains_key(header::SET_COOKIE));
+
+    let url = start(&app, "/api/auth/google?next=/a%20b", None).await;
+    let answer = follow(&app, &google.deny(&url)).await;
+    assert_eq!(location(&answer), "/?error=auth-failed&next=/a%2520b");
+
+    // The state is used up by the denial, `next` and all.
+    let code = google.code(account("sub:new", "new@example.com"));
+    fails_with(
+        &app,
+        &[("code", &code), ("state", &state_of(&url))],
+        "auth-failed",
+    )
+    .await;
+
+    // A state that was never handed out has no `next`.
+    fails_with(&app, &[("code", &code), ("state", "forged")], "auth-failed").await;
+}

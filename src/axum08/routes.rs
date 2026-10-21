@@ -45,10 +45,10 @@ use crate::types::{
 /// | `POST /api/auth/users/{id}/revoke` | admin | [`UserInfo`]; revokes access; not self |
 /// | `POST /api/auth/users/{id}/impersonate` | admin, if enabled | [`UserInfo`] (with `impersonated_by`) + cookie for a session as that user, marked with the admin; not self, not revoked, not from an impersonated session |
 /// | `POST /api/auth/impersonate/stop` | signed in, impersonated | [`UserInfo`] + cookie for a new session as the admin, ending the impersonated one; 403 unless the session is impersonated (401 once its admin is no longer an active admin, which ends it; 403 if that happens while the request runs) |
-/// | `GET /api/auth/google` | anyone | redirect to Google to sign in; 404 unless Google is configured (feature `google`) |
+/// | `GET /api/auth/google` | anyone | redirect to Google to sign in, coming back to `?next=` if it is a [same-origin path](crate::is_same_origin_path); 404 unless Google is configured (feature `google`) |
 /// | `GET /api/auth/google/register/{token}` | anyone | redirect to Google to register with the link; 404 unknown, 410 used or expired |
 /// | `GET /api/auth/google/link` | signed in | redirect to Google to switch to it |
-/// | `GET /api/auth/google/redirect` | Google | cookie + redirect to `/`, or to `/?error=auth-failed` or `/?error=user-not-found` |
+/// | `GET /api/auth/google/redirect` | Google | cookie + redirect to the sign-in's `next` or `/`, or to `/?error=auth-failed` or `/?error=user-not-found` (with `&next=` when the sign-in had one) |
 ///
 /// `{id}` is the decimal [`UserId`]. Errors are an [`AuthError`] body with
 /// its status: 401, 403, 404, 409, 410, 429, or 400 with a message, which a
