@@ -3,6 +3,7 @@ name = "watchword"
 version = "0.3.0"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
+rust-version = "1.95"
 description = "Authentication for axum servers and Yew frontends: password, Cloudflare Access and Google sign-in, sessions and user management."
 documentation = "https://docs.rs/watchword"
 readme = "README.md"

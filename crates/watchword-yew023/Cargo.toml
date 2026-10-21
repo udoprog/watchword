@@ -3,6 +3,7 @@ name = "watchword-yew023"
 version = "0.3.0"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
+rust-version = "1.95"
 description = "watchword's Yew 0.23 frontend: sign-in, registration, account and user management components, the auth context and its HTTP client."
 documentation = "https://docs.rs/watchword"
 readme = "README.md"
@@ -10,6 +11,7 @@ repository = "https://github.com/udoprog/watchword"
 license = "MIT OR Apache-2.0"
 keywords = ["authentication", "session", "wasm", "yew"]
 categories = ["authentication", "wasm", "web-programming"]
+include = ["/src/**", "/README.md", "/LICENSE-*", "/Cargo.toml"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(watchword_docsrs)'] }

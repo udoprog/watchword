@@ -3,6 +3,7 @@ name = "watchword-core"
 version = "0.3.0"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
+rust-version = "1.95"
 description = "The types watchword's server and frontends share: users, roles, the wire types of its routes, and AuthError."
 documentation = "https://docs.rs/watchword"
 readme = "README.md"
@@ -10,6 +11,7 @@ repository = "https://github.com/udoprog/watchword"
 license = "MIT OR Apache-2.0"
 keywords = ["authentication", "axum", "session", "yew"]
 categories = ["authentication", "wasm", "web-programming"]
+include = ["/src/**", "/locales/**", "/README.md", "/LICENSE-*", "/Cargo.toml"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(watchword_docsrs)'] }
