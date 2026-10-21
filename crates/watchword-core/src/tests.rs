@@ -516,3 +516,17 @@ mod musliweb04 {
         round_trip(AuthUpdate::Resync(user()));
     }
 }
+
+#[test]
+fn user_id_conversions() {
+    const ID: UserId = UserId::new(7);
+    assert_eq!(ID.get(), 7);
+    assert_eq!(UserId::from(7u64), ID);
+    assert_eq!(u64::from(ID), 7);
+
+    assert_eq!(UserId::try_from(7i64), Ok(ID));
+    assert!(UserId::try_from(-1i64).is_err());
+    assert_eq!(i64::try_from(ID), Ok(7));
+    assert_eq!(i64::try_from(UserId(i64::MAX as u64)), Ok(i64::MAX));
+    assert!(i64::try_from(UserId(i64::MAX as u64 + 1)).is_err());
+}

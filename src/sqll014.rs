@@ -14,6 +14,14 @@
 //! sessions and links itself, so it does not rely on `ON DELETE CASCADE`;
 //! the app's own tables cascade only if its connections enable foreign keys.
 //!
+//! An app's own SQL may read the store's columns, such as joining its tables
+//! on `users`: they change only through a new entry in [`MIGRATIONS`]. It
+//! changes them only through the [`Store`], which keeps a user's sessions and
+//! links consistent with them. [`UserId`], [`Role`], [`Access`] and [`Method`]
+//! bind and read as these columns hold them, so app statements take and
+//! return them directly: an id as an integer with the same bits, the enums as
+//! their names.
+//!
 //! # Sharing the app's pool
 //!
 //! The store runs its statements on a [`sqll014::Pool`]. An app with its own
@@ -374,7 +382,7 @@ where
 pub struct Read {
     #[sql = "SELECT id, login, email, role, access, method, password_hash, google_sub, created_at"]
     #[sql = "FROM users WHERE id = ?"]
-    user: TypedStatement<(i64,), UserRow>,
+    user: TypedStatement<(UserId,), UserRow>,
     #[sql = "SELECT id, login, email, role, access, method, password_hash, google_sub, created_at"]
     #[sql = "FROM users WHERE email = ?"]
     user_by_email: TypedStatement<(String,), UserRow>,
@@ -417,50 +425,50 @@ pub struct Write {
 
     #[sql = "INSERT INTO users (login, email, role, access, method, created_at)"]
     #[sql = "VALUES (?, ?, ?, 'pending', 'password', ?) RETURNING id"]
-    insert_user: TypedStatement<(Option<String>, Option<String>, String, i64), i64>,
+    insert_user: TypedStatement<(Option<String>, Option<String>, Role, i64), UserId>,
     #[sql = "UPDATE users SET login = ? WHERE id = ?"]
-    set_login: TypedStatement<(Option<String>, i64), ()>,
+    set_login: TypedStatement<(Option<String>, UserId), ()>,
     #[sql = "UPDATE users SET email = ? WHERE id = ?"]
-    set_email: TypedStatement<(Option<String>, i64), ()>,
+    set_email: TypedStatement<(Option<String>, UserId), ()>,
     #[sql = "UPDATE users SET role = ? WHERE id = ?"]
-    set_role: TypedStatement<(String, i64), ()>,
+    set_role: TypedStatement<(Role, UserId), ()>,
     #[sql = "DELETE FROM users WHERE id = ? RETURNING id"]
-    delete_user: TypedStatement<(i64,), i64>,
+    delete_user: TypedStatement<(UserId,), UserId>,
     #[sql = "UPDATE users SET method = 'password', password_hash = ?, google_sub = NULL,"]
     #[sql = "access = 'active' WHERE id = ? RETURNING id"]
-    set_password: TypedStatement<(String, i64), i64>,
+    set_password: TypedStatement<(String, UserId), UserId>,
     #[sql = "UPDATE users SET method = 'google', password_hash = NULL, google_sub = ?,"]
     #[sql = "email = ?, access = 'active' WHERE id = ? RETURNING id"]
-    set_google: TypedStatement<(String, String, i64), i64>,
+    set_google: TypedStatement<(String, String, UserId), UserId>,
     #[sql = "UPDATE users SET google_sub = ? WHERE id = ?"]
-    set_google_sub: TypedStatement<(String, i64), ()>,
+    set_google_sub: TypedStatement<(String, UserId), ()>,
     #[sql = "UPDATE users SET access = ? WHERE id = ? RETURNING id"]
-    set_access: TypedStatement<(String, i64), i64>,
+    set_access: TypedStatement<(Access, UserId), UserId>,
     #[sql = "UPDATE users SET access = 'active' WHERE id = ? AND access = 'pending' RETURNING id"]
-    activate: TypedStatement<(i64,), i64>,
+    activate: TypedStatement<(UserId,), UserId>,
     #[sql = "UPDATE users SET access = 'revoked', password_hash = NULL WHERE id = ? RETURNING id"]
-    revoke: TypedStatement<(i64,), i64>,
+    revoke: TypedStatement<(UserId,), UserId>,
 
     #[sql = "INSERT INTO sessions (id, user_id, impersonator_id, created_at, expires_at)"]
     #[sql = "VALUES (?, ?, ?, ?, ?)"]
-    insert_session: TypedStatement<(String, i64, Option<i64>, i64, i64), ()>,
+    insert_session: TypedStatement<(String, UserId, Option<UserId>, i64, i64), ()>,
     #[sql = "DELETE FROM sessions WHERE id = ?"]
     delete_session: TypedStatement<(String,), ()>,
     #[sql = "DELETE FROM sessions WHERE user_id = ? AND id IS NOT ?"]
-    delete_sessions: TypedStatement<(i64, Option<String>), ()>,
+    delete_sessions: TypedStatement<(UserId, Option<String>), ()>,
     #[sql = "DELETE FROM sessions WHERE impersonator_id = ?"]
-    delete_impersonations: TypedStatement<(i64,), ()>,
+    delete_impersonations: TypedStatement<(UserId,), ()>,
     #[sql = "DELETE FROM sessions WHERE expires_at <= ?"]
     delete_expired_sessions: TypedStatement<(i64,), ()>,
 
     #[sql = "INSERT INTO auth_tokens (id, user_id, kind, expires_at, used_at) VALUES (?, ?, ?, ?, ?)"]
-    insert_token: TypedStatement<(String, i64, String, i64, Option<i64>), ()>,
+    insert_token: TypedStatement<(String, UserId, String, i64, Option<i64>), ()>,
     #[sql = "UPDATE auth_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL"]
-    use_up_tokens: TypedStatement<(i64, i64), ()>,
+    use_up_tokens: TypedStatement<(i64, UserId), ()>,
     #[sql = "UPDATE auth_tokens SET used_at = ? WHERE id = ? AND used_at IS NULL"]
     use_token: TypedStatement<(i64, String), ()>,
     #[sql = "DELETE FROM auth_tokens WHERE user_id = ?"]
-    delete_tokens: TypedStatement<(i64,), ()>,
+    delete_tokens: TypedStatement<(UserId,), ()>,
 
     #[sql = "INSERT INTO config (key, value) VALUES (?, ?)"]
     #[sql = "ON CONFLICT (key) DO UPDATE SET value = excluded.value"]
@@ -477,7 +485,7 @@ impl AsMut<Read> for Read {
 impl Read {
     fn user(&mut self, id: UserId) -> Result<Option<User>> {
         self.user
-            .bind((sql_id(id),))?
+            .bind((id,))?
             .first()?
             .map(User::try_from)
             .transpose()
@@ -562,7 +570,7 @@ impl Write {
     /// [`Store::set_credential`] does, without touching sessions. Returns
     /// whether the user exists. A Google subject or email that belongs to
     /// another user fails on the unique constraints.
-    fn set_credential(&mut self, id: i64, cred: &Credential) -> Result<bool> {
+    fn set_credential(&mut self, id: UserId, cred: &Credential) -> Result<bool> {
         let found = match cred {
             Credential::Password(hash) => self.set_password.bind((hash.as_str(), id))?.first()?,
             Credential::Google { sub, email } => {
@@ -574,7 +582,7 @@ impl Write {
         Ok(found.is_some())
     }
 
-    fn delete_sessions(&mut self, user: i64, keep: Option<&str>) -> Result<()> {
+    fn delete_sessions(&mut self, user: UserId, keep: Option<&str>) -> Result<()> {
         self.delete_sessions.execute((user, keep))?;
         Ok(())
     }
@@ -582,8 +590,8 @@ impl Write {
     fn insert_session(&mut self, session: &Session) -> Result<()> {
         self.insert_session.execute((
             session.id.as_str(),
-            sql_id(session.user),
-            session.impersonator.map(sql_id),
+            session.user,
+            session.impersonator,
             millis(session.created_at),
             millis(session.expires_at),
         ))?;
@@ -650,11 +658,11 @@ where
 
             let id = w
                 .insert_user
-                .bind((login, email, new.role.as_str(), millis(now)))?
+                .bind((login, email, new.role, millis(now)))?
                 .first()?
                 .ok_or_else(|| StoreError::new("insert returned no id"))?;
 
-            let user = w.read.user(user_id(id))?;
+            let user = w.read.user(id)?;
             Ok(Ok(user.ok_or_else(|| {
                 StoreError::new("inserted user is missing")
             })?))
@@ -681,18 +689,16 @@ where
                 return Ok(Ok(None));
             }
 
-            let sql = sql_id(id);
-
             if let Some(login) = &change.login {
-                w.set_login.execute((login.as_deref(), sql))?;
+                w.set_login.execute((login.as_deref(), id))?;
             }
 
             if let Some(email) = &change.email {
-                w.set_email.execute((email.as_deref(), sql))?;
+                w.set_email.execute((email.as_deref(), id))?;
             }
 
             if let Some(role) = change.role {
-                w.set_role.execute((role.as_str(), sql))?;
+                w.set_role.execute((role, id))?;
             }
 
             Ok(Ok(w.read.user(id)?))
@@ -702,11 +708,10 @@ where
 
     async fn delete_user(&self, id: UserId) -> Result<bool> {
         self.write(move |w| {
-            let sql = sql_id(id);
-            w.delete_sessions(sql, None)?;
-            w.delete_impersonations.execute((sql,))?;
-            w.delete_tokens.execute((sql,))?;
-            Ok(w.delete_user.bind((sql,))?.first()?.is_some())
+            w.delete_sessions(id, None)?;
+            w.delete_impersonations.execute((id,))?;
+            w.delete_tokens.execute((id,))?;
+            Ok(w.delete_user.bind((id,))?.first()?.is_some())
         })
         .await
     }
@@ -721,19 +726,17 @@ where
         let keep = keep.map(str::to_owned);
 
         self.write(move |w| {
-            let sql = sql_id(id);
-
             // Read inside the transaction, so a revocation cannot land in
             // between.
             if w.read.user(id)?.is_none_or(|u| u.access == Access::Revoked) {
                 return Ok(false);
             }
 
-            if !w.set_credential(sql, &cred)? {
+            if !w.set_credential(id, &cred)? {
                 return Ok(false);
             }
 
-            w.delete_sessions(sql, keep.as_deref())?;
+            w.delete_sessions(id, keep.as_deref())?;
             Ok(true)
         })
         .await
@@ -756,7 +759,7 @@ where
                 return Ok(false);
             }
 
-            w.set_google_sub.execute((sub.as_str(), sql_id(id)))?;
+            w.set_google_sub.execute((sub.as_str(), id))?;
             Ok(true)
         })
         .await
@@ -764,27 +767,25 @@ where
 
     async fn set_access(&self, id: UserId, access: Access) -> Result<bool> {
         self.write(move |w| {
-            let row = w.set_access.bind((access.as_str(), sql_id(id)))?;
+            let row = w.set_access.bind((access, id))?;
             Ok(row.first()?.is_some())
         })
         .await
     }
 
     async fn activate(&self, id: UserId) -> Result<bool> {
-        self.write(move |w| Ok(w.activate.bind((sql_id(id),))?.first()?.is_some()))
+        self.write(move |w| Ok(w.activate.bind((id,))?.first()?.is_some()))
             .await
     }
 
     async fn revoke(&self, id: UserId, now: Timestamp) -> Result<bool> {
         self.write(move |w| {
-            let sql = sql_id(id);
-
-            if w.revoke.bind((sql,))?.first()?.is_none() {
+            if w.revoke.bind((id,))?.first()?.is_none() {
                 return Ok(false);
             }
 
-            w.use_up_tokens.execute((millis(now), sql))?;
-            w.delete_sessions(sql, None)?;
+            w.use_up_tokens.execute((millis(now), id))?;
+            w.delete_sessions(id, None)?;
             Ok(true)
         })
         .await
@@ -823,7 +824,7 @@ where
 
     async fn delete_sessions(&self, user: UserId, keep: Option<&str>) -> Result<()> {
         let keep = keep.map(str::to_owned);
-        self.write(move |w| w.delete_sessions(sql_id(user), keep.as_deref()))
+        self.write(move |w| w.delete_sessions(user, keep.as_deref()))
             .await
     }
 
@@ -839,7 +840,7 @@ where
         let token = token.clone();
 
         self.write(move |w| {
-            let user = sql_id(token.user);
+            let user = token.user;
             w.use_up_tokens.execute((millis(now), user))?;
             w.insert_token.execute((
                 token.id.as_str(),
@@ -860,7 +861,7 @@ where
 
     async fn use_up_tokens(&self, user: UserId, now: Timestamp) -> Result<()> {
         self.write(move |w| {
-            w.use_up_tokens.execute((millis(now), sql_id(user)))?;
+            w.use_up_tokens.execute((millis(now), user))?;
             Ok(())
         })
         .await
@@ -887,7 +888,7 @@ where
                 return Ok(false);
             }
 
-            let user = sql_id(row.user);
+            let user = row.user;
 
             if !w.set_credential(user, &cred)? {
                 return Ok(false);
@@ -928,12 +929,12 @@ impl From<sqll014::Error> for StoreError {
 #[derive(Row)]
 #[sql(crate = sqll014)]
 struct UserRow {
-    id: i64,
+    id: UserId,
     login: Option<String>,
     email: Option<String>,
-    role: String,
-    access: String,
-    method: String,
+    role: Role,
+    access: Access,
+    method: Method,
     password_hash: Option<String>,
     google_sub: Option<String>,
     created_at: i64,
@@ -944,12 +945,12 @@ impl TryFrom<UserRow> for User {
 
     fn try_from(row: UserRow) -> Result<Self> {
         Ok(User {
-            id: user_id(row.id),
+            id: row.id,
             login: row.login,
             email: row.email,
-            role: row.role.parse::<Role>().map_err(StoreError::new)?,
-            access: row.access.parse::<Access>().map_err(StoreError::new)?,
-            method: row.method.parse::<Method>().map_err(StoreError::new)?,
+            role: row.role,
+            access: row.access,
+            method: row.method,
             password_hash: row.password_hash,
             google_sub: row.google_sub,
             created_at: timestamp(row.created_at)?,
@@ -961,12 +962,12 @@ impl TryFrom<UserRow> for User {
 #[derive(Row)]
 #[sql(crate = sqll014)]
 struct UserLinkRow {
-    id: i64,
+    id: UserId,
     login: Option<String>,
     email: Option<String>,
-    role: String,
-    access: String,
-    method: String,
+    role: Role,
+    access: Access,
+    method: Method,
     password_hash: Option<String>,
     google_sub: Option<String>,
     created_at: i64,
@@ -995,8 +996,8 @@ impl UserLinkRow {
 #[sql(crate = sqll014)]
 struct SessionRow {
     id: String,
-    user_id: i64,
-    impersonator_id: Option<i64>,
+    user_id: UserId,
+    impersonator_id: Option<UserId>,
     created_at: i64,
     expires_at: i64,
 }
@@ -1007,8 +1008,8 @@ impl TryFrom<SessionRow> for Session {
     fn try_from(row: SessionRow) -> Result<Self> {
         Ok(Session {
             id: row.id,
-            user: user_id(row.user_id),
-            impersonator: row.impersonator_id.map(user_id),
+            user: row.user_id,
+            impersonator: row.impersonator_id,
             created_at: timestamp(row.created_at)?,
             expires_at: timestamp(row.expires_at)?,
         })
@@ -1019,7 +1020,7 @@ impl TryFrom<SessionRow> for Session {
 #[sql(crate = sqll014)]
 struct TokenRow {
     id: String,
-    user_id: i64,
+    user_id: UserId,
     kind: String,
     expires_at: i64,
     used_at: Option<i64>,
@@ -1037,7 +1038,7 @@ impl TryFrom<TokenRow> for Token {
 
         Ok(Token {
             id: row.id,
-            user: user_id(row.user_id),
+            user: row.user_id,
             kind,
             expires_at: timestamp(row.expires_at)?,
             used_at: row.used_at.map(timestamp).transpose()?,
@@ -1053,15 +1054,4 @@ fn millis(timestamp: Timestamp) -> i64 {
 
 fn timestamp(millis: i64) -> Result<Timestamp> {
     Timestamp::from_millisecond(millis).map_err(StoreError::new)
-}
-
-/// A user id as stored: bit-reinterpreted as SQLite's signed integer, so
-/// every [`UserId`] has a column value, and one beyond `i64::MAX` is simply
-/// not found.
-fn sql_id(id: UserId) -> i64 {
-    id.0 as i64
-}
-
-fn user_id(id: i64) -> UserId {
-    UserId(id as u64)
 }

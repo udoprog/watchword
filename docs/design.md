@@ -33,8 +33,10 @@ musli-web-macros):
   `Access`, `Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN`), and
   `alloc` adds those holding strings. Its `musli01` feature adds musli's
   derives, its `musliweb04` feature the musli-web API types of 2.7, and its
-  `axum08` feature `IntoResponse` for `AuthError` (Rust's orphan rule keeps
-  that impl in the crate defining `AuthError`).
+  `axum08` feature `IntoResponse` for `AuthError`, and its `sqll014` feature
+  sqll 0.14's `BindValue`, `Bind` and `FromColumn` for `UserId`, `Role`,
+  `Access` and `Method` (Rust's orphan rule keeps these impls in the crate
+  defining the types). Neither `axum08` nor `sqll014` is for wasm32.
 - **watchword-yew023**: everything for yew 0.23 (components, context,
   `use_auth`, the HTTP client and browser helpers). It depends on yew under the
   key `yew`, because yew's macros (`html!`, `#[function_component]`,
@@ -110,7 +112,7 @@ without its default features, so the time zone databases it does not need for
 | `cloudflare` | `server` + the Cloudflare Access provider | aws-lc-rs, reqwest, serde_json |
 | `google` | `server` + the Google OAuth provider (`GoogleConfig`) | reqwest, serde_json, url, lru |
 | `axum08` | `server` + extractors and `routes()` for axum 0.8 | axum 0.8 |
-| `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, its `SCHEMA`, `MIGRATIONS` and `check_schema` | sqll 0.14 (`derive`, `pool`, `typed`, `threadsafe`; no default features, the app picks `bundled`) |
+| `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, its `SCHEMA`, `MIGRATIONS` and `check_schema`, and watchword-core's `sqll014`: the sqll column traits on `UserId` (an integer with the same bits), `Role`, `Access` and `Method` (their names) | sqll 0.14 (`derive`, `pool`, `typed`, `threadsafe`; no default features, the app picks `bundled`) |
 | `yew023` | `std` + watchword-yew023: components, context, hook, HTTP client, and the messages as a phrasebook catalog (`L10N`) | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.1 (`yew023`) |
 | `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum08` also `google::fake::FakeGoogle` (see 2.4) | nothing more |
 | `musliweb04` *(2.7)* | `alloc` + `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
@@ -124,7 +126,7 @@ re-exported at the root.
 ### 2.1 Types (always available)
 
 ```rust
-pub struct UserId(pub u64);              // apps convert to and from their own u64 ids
+pub struct UserId(pub u64);              // new/get (const), From u64 both ways, TryFrom i64 both ways (checked)
 pub enum Role { Admin, Regular }         // serde lowercase
 pub enum Access { Pending, Active, Revoked }
 pub enum Method { Password, Google }     // the user's stored credential; see decision 4
@@ -427,7 +429,9 @@ when it opens, so the schema must be in place first. The schema:
 `watchword::sqll014::SCHEMA` creates the tables in a new database. An app keeps
 its own columns on `users` (with defaults, since the store inserts only its
 own) and its own tables referencing `users (id)`; the store reads and writes
-only its own columns. The store deletes a user's sessions and links itself
+only its own columns. An app's SQL may read the store's columns (they change
+only through a new migration), binding and reading `UserId`, `Role`, `Access`
+and `Method` directly, but changes them only through the `Store`. The store deletes a user's sessions and links itself
 rather than relying on `ON DELETE CASCADE`, since an app's connections may not
 enable foreign keys.
 

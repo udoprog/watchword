@@ -15,7 +15,7 @@
 //! ## Features
 //!
 //! The crate is `no_std`, and safe to build for `wasm32-unknown-unknown` with
-//! any feature but `axum08`. Only `std` is on by default.
+//! any feature but `axum08` and `sqll014`. Only `std` is on by default.
 //!
 //! | Feature | What it provides |
 //! |---|---|
@@ -25,6 +25,7 @@
 //! | `musli01` | musli 0.1 `Encode`/`Decode` on the types, so an app can embed them in its own WebSocket messages |
 //! | `musliweb04` | `alloc` + `musli01` + [`musliweb04`]: the account and user-management endpoints and `AuthBroadcast` as musli-web 0.4 API types, with their ids pinned in 32000–32255 |
 //! | `axum08` | `std` + axum 0.8 `IntoResponse` for [`AuthError`], answering with its JSON body and status; watchword's `axum08` feature turns it on (not for wasm) |
+//! | `sqll014` | `std` + sqll 0.14 `BindValue`, `Bind` and `FromColumn` for `UserId` (an integer with the same bits, as watchword's `SqllStore` stores it) and for `Role`, `Access` and `Method` (their names as text), so an app's own statements bind and read them directly; watchword's `sqll014` feature turns it on. It takes sqll with `threadsafe` only; the app names `bundled` or links its own SQLite (not for wasm) |
 //!
 //! [`AuthError`]: https://docs.rs/watchword-core/latest/watchword_core/enum.AuthError.html
 //! [`musliweb04`]: https://docs.rs/watchword-core/latest/watchword_core/musliweb04/index.html
@@ -40,6 +41,7 @@ extern crate alloc;
 extern crate std;
 
 use core::fmt;
+use core::num::TryFromIntError;
 use core::str::FromStr;
 
 #[cfg(feature = "alloc")]
@@ -60,6 +62,9 @@ extern crate musli_web04 as musli_web;
 
 #[cfg(feature = "axum08")]
 mod axum08;
+
+#[cfg(feature = "sqll014")]
+mod sqll014;
 
 #[cfg(feature = "musliweb04")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb04")))]
@@ -92,12 +97,66 @@ pub fn normalize_email(email: &str) -> String {
     email.trim().to_lowercase()
 }
 
-/// A user's id. Apps convert to and from their own `u64` ids.
+/// A user's id. Apps convert to and from their own `u64` ids with [`new`]
+/// and [`get`] or `From`, and to and from signed integers with `TryFrom`,
+/// which fails on a value out of the other's range. With the `sqll014`
+/// feature it binds and reads as a sqll column directly.
+///
+/// [`new`]: UserId::new
+/// [`get`]: UserId::get
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]
 #[cfg_attr(feature = "musli01", musli(crate = musli_core01, transparent))]
 #[serde(transparent)]
 pub struct UserId(pub u64);
+
+impl UserId {
+    /// The id with the given value.
+    #[inline]
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    /// The id's value.
+    #[inline]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<u64> for UserId {
+    #[inline]
+    fn from(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+impl From<UserId> for u64 {
+    #[inline]
+    fn from(id: UserId) -> Self {
+        id.0
+    }
+}
+
+/// Fails on a negative value.
+impl TryFrom<i64> for UserId {
+    type Error = TryFromIntError;
+
+    #[inline]
+    fn try_from(id: i64) -> Result<Self, Self::Error> {
+        Ok(Self(u64::try_from(id)?))
+    }
+}
+
+/// Fails on an id beyond `i64::MAX`.
+impl TryFrom<UserId> for i64 {
+    type Error = TryFromIntError;
+
+    #[inline]
+    fn try_from(id: UserId) -> Result<Self, Self::Error> {
+        i64::try_from(id.0)
+    }
+}
 
 impl fmt::Display for UserId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
