@@ -10,8 +10,7 @@ repository = "https://github.com/udoprog/watchword"
 license = "MIT OR Apache-2.0"
 keywords = ["authentication", "axum", "oauth", "session", "yew"]
 categories = ["authentication", "wasm", "web-programming"]
-# The sqll tests include docs/sqll/impersonator.sql.
-include = ["/src/**", "/docs/sqll/**", "/README.md", "/LICENSE-*", "/Cargo.toml"]
+include = ["/src/**", "/README.md", "/LICENSE-*", "/Cargo.toml"]
 
 [lib]
 name = "watchword"

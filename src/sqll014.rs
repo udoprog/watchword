@@ -46,24 +46,121 @@
 //! `SqllStore<Read, Write>`) over a `Pool<Read, Write>`.
 //!
 //! The pool's statements are prepared when it opens, so the schema must be in
-//! place by then: run [`SCHEMA`] (or an app's migration) first.
+//! place by then: migrate the database first, from the pool's write setup.
+//!
+//! # Creating and upgrading the tables
+//!
+//! The store's tables come in two forms that end up the same:
+//!
+//! * [`MIGRATIONS`], ordered `(id, sql)` pairs: the tables as first released,
+//!   then every change to them since, each under a stable id starting with
+//!   `watchword-`. A new release only appends to it.
+//! * [`SCHEMA`], what all of [`MIGRATIONS`] add up to, for creating the tables
+//!   in a new database in one step. Running it again changes nothing, but it
+//!   does not upgrade older tables either: it adds no columns.
+//!
+//! Use [`MIGRATIONS`] for any database that outlives a watchword upgrade, and
+//! [`SCHEMA`] alone only for one that never does, such as a test's.
+//!
+//! An app applies each migration whose id it has not recorded yet, in order,
+//! and records the id in the same transaction. It either hands the pairs to a
+//! migration runner that takes ordered `(id, sql)` pairs (such as sqll's
+//! `Migrations`, in releases after 0.14.7, which also takes [`SCHEMA`] as its
+//! fresh schema), or splices them into its own list of migrations, before any
+//! migration of its own that refers to `users`. Then [`check_schema`] fails at
+//! startup with an error naming every missing table and column, rather than
+//! letting a statement fail to prepare:
+//!
+//! ```
+//! use sqll014::{Connection, OpenOptions, PoolBuilder};
+//! use watchword::sqll014::{MIGRATIONS, Read, SqllStore, Write, check_schema};
+//!
+//! /// Applies the migrations `c` has not recorded, each in one transaction.
+//! fn migrate(c: &Connection, migrations: &[(&str, &str)]) -> sqll014::Result<()> {
+//!     c.execute(
+//!         "CREATE TABLE IF NOT EXISTS migrations \
+//!          (id TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
+//!     )?;
+//!
+//!     for &(id, sql) in migrations {
+//!         c.execute("BEGIN IMMEDIATE")?;
+//!
+//!         let result = (|| {
+//!             let seen = {
+//!                 let mut stmt = c.prepare("SELECT COUNT(*) FROM migrations WHERE id = ?")?;
+//!                 stmt.bind((id,))?;
+//!                 stmt.next::<i64>()?
+//!             };
+//!
+//!             if seen == Some(0) {
+//!                 c.execute(sql)?;
+//!                 let mut record = c.prepare(
+//!                     "INSERT INTO migrations (id, applied_at) VALUES (?, strftime('%s', 'now'))",
+//!                 )?;
+//!                 record.execute((id,))?;
+//!             }
+//!
+//!             c.execute("COMMIT")
+//!         })();
+//!
+//!         if result.is_err() {
+//!             _ = c.execute("ROLLBACK");
+//!         }
+//!
+//!         result?;
+//!     }
+//!
+//!     Ok(())
+//! }
+//!
+//! let mut options = OpenOptions::new();
+//! options.uri().create();
+//!
+//! let pool = PoolBuilder::new(options, 4)
+//!     .with_write_setup(|c| {
+//!         // The app's own migrations go before or after these, by what they need.
+//!         migrate(c, MIGRATIONS)?;
+//!         check_schema(c)
+//!     })
+//!     .open::<Read, Write>("file:watchword-doc?mode=memory&cache=shared")?;
+//!
+//! let store = SqllStore::new(std::sync::Arc::new(pool));
+//! # Ok::<_, Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## An app whose own migrations already made the tables
+//!
+//! An app that created the store's tables with a copy of an earlier schema in
+//! a migration of its own (a frozen base schema, say) keeps that migration as
+//! it is, and from then on takes watchword's changes from [`MIGRATIONS`]
+//! instead of copying them: it splices in every pair after it, leaving out the
+//! ids its own migrations already did. Its copy of the first schema did
+//! `watchword-0001-tables`; a copy of the `impersonator_id` column, as
+//! `ALTER TABLE` or in the copied schema, did
+//! `watchword-0002-sessions-impersonator`.
+//!
+//! ```
+//! use watchword::sqll014::MIGRATIONS;
+//!
+//! /// Ids of watchword's migrations this app's own migrations already did.
+//! const DONE: &[&str] = &["watchword-0001-tables", "watchword-0002-sessions-impersonator"];
+//!
+//! let watchword = MIGRATIONS.iter().filter(|(id, _)| !DONE.contains(id));
+//! // ...appended to the app's own migrations, in this order.
+//! # assert_eq!(watchword.count(), MIGRATIONS.len() - 2);
+//! ```
+//!
+//! [`check_schema`] then catches an upgrade that was left out.
 //!
 //! # Moving existing tables onto the store
 //!
 //! An app that already keeps users, sessions or tokens in tables of its own
-//! moves them onto [`SCHEMA`] once, with a migration of its own among its
-//! migrations, before it first opens the store. Afterwards the store's tables
-//! must have every column [`SCHEMA`] gives them, with timestamps as INTEGER
-//! milliseconds since the Unix epoch; the app's own columns on `users` need
-//! defaults.
-//!
-//! # Upgrading a database made with an earlier schema
-//!
-//! A database created with [`SCHEMA`] before sessions recorded the admin
-//! behind an impersonation lacks `sessions.impersonator_id`, and the store's
-//! statements fail to prepare on it. Add the column once with
-//! `docs/sqll/impersonator.sql` (a single `ALTER TABLE`) in the app's
-//! migrations. Running [`SCHEMA`] again does not add it.
+//! moves them onto the store's tables once, with a migration of its own among
+//! its migrations, before it first opens the store. Afterwards the store's
+//! tables must have every column [`SCHEMA`] gives them, with timestamps as
+//! INTEGER milliseconds since the Unix epoch; the app's own columns on `users`
+//! need defaults. It then takes the ids of [`MIGRATIONS`] its move covers as
+//! done, as above.
 
 use std::borrow::ToOwned;
 use std::panic::{self, AssertUnwindSafe};
@@ -81,9 +178,134 @@ use crate::types::{Access, Conflict, Method, NewUser, Role, UserChange, UserId};
 #[cfg(test)]
 mod tests;
 
-/// The SQL that creates the store's tables in a new database. Every statement
-/// is `IF NOT EXISTS`, so running it again changes nothing.
+/// The SQL that creates the store's tables in a new database, as all of
+/// [`MIGRATIONS`] together would. Every statement is `IF NOT EXISTS`, so
+/// running it again changes nothing, and it does not upgrade tables made by an
+/// earlier release. See [creating and upgrading the
+/// tables](self#creating-and-upgrading-the-tables).
 pub const SCHEMA: &str = include_str!("sqll014/schema.sql");
+
+/// The store's migrations, in the order to apply them, as `(id, sql)` pairs:
+/// the tables as first released, then each change to them since. Ids are
+/// stable and start with `watchword-`; a new release only appends.
+///
+/// Apply each one whose id the database has not recorded, and record it in
+/// the same transaction. See [creating and upgrading the
+/// tables](self#creating-and-upgrading-the-tables).
+///
+/// | Id | Change |
+/// |----|--------|
+/// | `watchword-0001-tables` | The `users`, `sessions`, `auth_tokens` and `config` tables |
+/// | `watchword-0002-sessions-impersonator` | `sessions.impersonator_id`, the admin behind an impersonated session |
+pub const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "watchword-0001-tables",
+        include_str!("sqll014/migrations/0001-tables.sql"),
+    ),
+    (
+        "watchword-0002-sessions-impersonator",
+        include_str!("sqll014/migrations/0002-sessions-impersonator.sql"),
+    ),
+];
+
+/// A table's columns, each with the id of the migration that added it after
+/// the table, if one did.
+type Columns = &'static [(&'static str, Option<&'static str>)];
+
+/// The tables and columns the store reads and writes.
+const COLUMNS: &[(&str, Columns)] = &[
+    (
+        "users",
+        &[
+            ("id", None),
+            ("login", None),
+            ("email", None),
+            ("role", None),
+            ("access", None),
+            ("method", None),
+            ("password_hash", None),
+            ("google_sub", None),
+            ("created_at", None),
+        ],
+    ),
+    (
+        "sessions",
+        &[
+            ("id", None),
+            ("user_id", None),
+            (
+                "impersonator_id",
+                Some("watchword-0002-sessions-impersonator"),
+            ),
+            ("created_at", None),
+            ("expires_at", None),
+        ],
+    ),
+    (
+        "auth_tokens",
+        &[
+            ("id", None),
+            ("user_id", None),
+            ("kind", None),
+            ("expires_at", None),
+            ("used_at", None),
+        ],
+    ),
+    ("config", &[("key", None), ("value", None)]),
+];
+
+/// Checks that the database on `c` has every table and column the store
+/// uses, so that an app fails at startup, before its pool prepares the
+/// store's statements, with an error naming each one missing and the
+/// migration that adds it.
+///
+/// Run it after migrating, such as at the end of the pool's write setup. It
+/// checks names only, not types or constraints, and ignores the app's own
+/// columns and tables.
+///
+/// # Errors
+///
+/// Fails with a [`sqll014::Error`] whose message lists what is missing, or
+/// with the error of reading the database's schema.
+pub fn check_schema(c: &sqll014::Connection) -> sqll014::Result<()> {
+    let mut stmt = c.prepare("SELECT name FROM pragma_table_info(?)")?;
+    let mut missing = Vec::new();
+
+    for &(table, columns) in COLUMNS {
+        stmt.reset()?;
+        stmt.bind((table,))?;
+        let mut found = Vec::new();
+
+        while let Some(name) = stmt.next::<String>()? {
+            found.push(name);
+        }
+
+        if found.is_empty() {
+            missing.push(format!("table `{table}`"));
+            continue;
+        }
+
+        for &(column, added_by) in columns {
+            if found.iter().any(|f| f.eq_ignore_ascii_case(column)) {
+                continue;
+            }
+
+            missing.push(match added_by {
+                Some(id) => format!("column `{table}.{column}` (added by `{id}`)"),
+                None => format!("column `{table}.{column}`"),
+            });
+        }
+    }
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    Err(sqll014::Error::custom(format_args!(
+        "watchword's tables lack {}; apply sqll014::MIGRATIONS",
+        missing.join(", ")
+    )))
+}
 
 /// A [`Store`] over SQLite, on a [`sqll014::Pool`] whose read and write
 /// statement collections contain [`Read`] and [`Write`]. See the [module

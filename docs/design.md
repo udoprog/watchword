@@ -110,7 +110,7 @@ without its default features, so the time zone databases it does not need for
 | `cloudflare` | `server` + the Cloudflare Access provider | aws-lc-rs, reqwest, serde_json |
 | `google` | `server` + the Google OAuth provider (`GoogleConfig`) | reqwest, serde_json, url, lru |
 | `axum08` | `server` + extractors and `routes()` for axum 0.8 | axum 0.8 |
-| `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, and its `SCHEMA` | sqll 0.14 (`derive`, `pool`, `typed`, `threadsafe`; no default features, the app picks `bundled`) |
+| `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, its `SCHEMA`, `MIGRATIONS` and `check_schema` | sqll 0.14 (`derive`, `pool`, `typed`, `threadsafe`; no default features, the app picks `bundled`) |
 | `yew023` | `std` + watchword-yew023: components, context, hook, HTTP client, and the messages as a phrasebook catalog (`L10N`) | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.1 (`yew023`) |
 | `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum08` also `google::fake::FakeGoogle` (see 2.4) | nothing more |
 | `musliweb04` *(2.7)* | `alloc` + `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
@@ -401,9 +401,32 @@ its own columns on `users` (with defaults, since the store inserts only its
 own) and its own tables referencing `users (id)`; the store reads and writes
 only its own columns. The store deletes a user's sessions and links itself
 rather than relying on `ON DELETE CASCADE`, since an app's connections may not
-enable foreign keys. A database made with the schema from before sessions had
-`impersonator_id` takes it with `docs/sqll/impersonator.sql`, a single
-`ALTER TABLE`, since rerunning `SCHEMA` does not add columns.
+enable foreign keys.
+
+The tables ship in two forms that end up the same, so apps stop copying SQL
+out of watchword by hand:
+
+- `watchword::sqll014::MIGRATIONS: &[(&str, &str)]`, ordered `(id, sql)`
+  pairs: `watchword-0001-tables` (the tables as first released, frozen), then
+  each change since (`watchword-0002-sessions-impersonator`, an `ALTER TABLE`
+  adding `sessions.impersonator_id`). Ids are stable and prefixed so they sit
+  in an app's own migrations table; a release only appends. This is the shape
+  sqll's `Migrations` runner takes (on sqll main, after 0.14.7), so watchword
+  exports plain data and depends on no runner: an app hands the pairs to a
+  runner, or splices them into its own list, leaving out the ids its own
+  migrations already did (a copied base schema did `watchword-0001-tables`).
+  The SQL lives in `src/sqll014/migrations/`.
+- `SCHEMA`, what all migrations add up to, for creating a new database in one
+  step (a runner's fresh schema). Rerunning it changes nothing and adds no
+  columns, so it does not upgrade. A test checks that `SCHEMA` and
+  `MIGRATIONS` produce the same tables, indexes and foreign keys.
+
+`watchword::sqll014::check_schema(&Connection)` checks that every table and
+column the store uses exists, and fails with a `sqll014::Error` naming each
+one missing and the migration that adds it, so an app run on a stale database
+fails at startup (at the end of its pool's write setup) with a readable error
+rather than when a statement fails to prepare. It checks names only, and
+ignores the app's own tables and columns.
 
 ### 2.4 Sign-in methods
 

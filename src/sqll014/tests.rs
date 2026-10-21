@@ -10,8 +10,6 @@ use crate::store::suite::{TestResult, store_suite};
 
 store_suite!(store(&scratch_uri(), true));
 
-const IMPERSONATOR_MIGRATION: &str = include_str!("../../docs/sqll/impersonator.sql");
-
 /// A new in-memory database's URI, shared by every connection that opens it
 /// while one is open.
 fn scratch_uri() -> String {
@@ -95,23 +93,23 @@ async fn schema_can_be_run_again() -> TestResult {
 }
 
 /// A database made with the schema from before sessions recorded their
-/// impersonator takes the column from `docs/sqll/impersonator.sql`.
+/// impersonator takes the column from its migration.
 #[tokio::test]
 async fn adds_the_impersonator_column() -> TestResult {
-    let column = "        impersonator_id INTEGER REFERENCES users (id) ON DELETE CASCADE,\n";
-    assert!(SCHEMA.contains(column));
-    let before = SCHEMA.replace(column, "");
+    let [(_, before), (_, impersonator)] = MIGRATIONS else {
+        panic!("expected two migrations");
+    };
 
     let uri = scratch_uri();
     let c = connect(&uri);
-    c.execute(&before)?;
+    c.execute(before)?;
     c.execute(
         "INSERT INTO users (id, login, role, access, created_at) VALUES \
          (1, 'root', 'admin', 'active', 0), (2, 'bob', 'regular', 'active', 0);
          INSERT INTO sessions (id, user_id, created_at, expires_at) \
          VALUES ('old', 2, 0, 9999999999999);",
     )?;
-    migrate(&c, IMPERSONATOR_MIGRATION)?;
+    migrate(&c, impersonator)?;
 
     let store = store(&uri, false);
     let old = store.session("old").await?.unwrap();
@@ -135,6 +133,142 @@ async fn adds_the_impersonator_column() -> TestResult {
         count(&c, "SELECT COUNT(*) FROM pragma_foreign_key_check"),
         0
     );
+    Ok(())
+}
+
+/// Everything about the database's tables that a migration can change: each
+/// table's and index's columns, foreign keys and uniqueness, ignoring column
+/// order (an added column comes last) and the SQL text.
+fn describe(c: &Connection) -> Vec<String> {
+    const SQL: &str = "
+        SELECT 'column ' || m.name || '.' || p.name || ' ' || p.type || ' notnull=' || p.\"notnull\"
+            || ' default=' || ifnull(p.dflt_value, 'NULL') || ' pk=' || p.pk
+        FROM sqlite_schema m, pragma_table_info(m.name) p WHERE m.type = 'table'
+        UNION ALL
+        SELECT 'foreign key ' || m.name || '.' || f.\"from\" || ' -> ' || f.\"table\" || '.'
+            || ifnull(f.\"to\", '') || ' on delete ' || f.on_delete || ' on update ' || f.on_update
+        FROM sqlite_schema m, pragma_foreign_key_list(m.name) f WHERE m.type = 'table'
+        UNION ALL
+        SELECT 'index ' || m.name || ' ' || i.name || ' unique=' || i.\"unique\" || ' origin=' || i.origin
+            || ' partial=' || i.partial || ' (' || (
+                SELECT group_concat(ifnull(x.name, '?'), ', ') FROM pragma_index_info(i.name) x
+            ) || ')'
+        FROM sqlite_schema m, pragma_index_list(m.name) i WHERE m.type = 'table'
+        UNION ALL
+        SELECT m.type || ' ' || m.name FROM sqlite_schema m
+        ORDER BY 1";
+
+    let mut stmt = c.prepare(SQL).expect("prepare");
+    let mut out = Vec::new();
+
+    while let Some(row) = stmt.next::<String>().expect("step") {
+        out.push(row);
+    }
+
+    out
+}
+
+/// Runs every migration, each once, as a runner would on a new database.
+fn migrate_all(c: &Connection) -> sqll014::Result<()> {
+    for (_, sql) in MIGRATIONS {
+        migrate(c, sql)?;
+    }
+
+    Ok(())
+}
+
+/// `SCHEMA` creates what all of `MIGRATIONS` add up to, so either can make a
+/// new database, as a runner given `SCHEMA` as its fresh schema assumes.
+#[test]
+fn migrations_add_up_to_the_schema() -> TestResult {
+    let fresh = connect(&scratch_uri());
+    fresh.execute(SCHEMA)?;
+
+    let migrated = connect(&scratch_uri());
+    migrate_all(&migrated)?;
+
+    let expected = describe(&fresh);
+    assert!(expected.iter().any(|row| row.contains("impersonator_id")));
+    assert_eq!(describe(&migrated), expected);
+    Ok(())
+}
+
+#[test]
+fn migration_ids_are_unique_and_prefixed() {
+    let mut ids = Vec::new();
+
+    for (id, sql) in MIGRATIONS {
+        assert!(id.starts_with("watchword-"), "{id}");
+        assert!(sql.contains(id), "{id} is named in its own SQL file");
+        assert!(!ids.contains(id), "{id} is repeated");
+        ids.push(*id);
+    }
+}
+
+#[test]
+fn check_schema_accepts_the_schema_and_the_migrations() -> TestResult {
+    let fresh = connect(&scratch_uri());
+    fresh.execute(SCHEMA)?;
+    check_schema(&fresh)?;
+
+    let migrated = connect(&scratch_uri());
+    migrate_all(&migrated)?;
+    check_schema(&migrated)?;
+
+    // The app's own columns and tables are none of its business.
+    migrated.execute(
+        "ALTER TABLE users ADD COLUMN nickname TEXT;
+         CREATE TABLE posts (user_id INTEGER REFERENCES users (id));",
+    )?;
+    check_schema(&migrated)?;
+    Ok(())
+}
+
+#[test]
+fn check_schema_names_what_is_missing() -> TestResult {
+    let empty = connect(&scratch_uri());
+    let error = check_schema(&empty).unwrap_err().to_string();
+
+    for table in ["users", "sessions", "auth_tokens", "config"] {
+        assert!(error.contains(&format!("table `{table}`")), "{error}");
+    }
+
+    let old = connect(&scratch_uri());
+    migrate(&old, MIGRATIONS[0].1)?;
+    let error = check_schema(&old).unwrap_err().to_string();
+    assert_eq!(
+        error,
+        "watchword's tables lack column `sessions.impersonator_id` \
+         (added by `watchword-0002-sessions-impersonator`); apply sqll014::MIGRATIONS"
+    );
+
+    migrate(&old, MIGRATIONS[1].1)?;
+    check_schema(&old)?;
+    Ok(())
+}
+
+/// `check_schema` covers every column the store's statements use: a pool
+/// opens on a database that passes it.
+#[test]
+fn check_schema_covers_the_statements() -> TestResult {
+    let uri = scratch_uri();
+    let c = connect(&uri);
+    c.execute(SCHEMA)?;
+    check_schema(&c)?;
+
+    for (table, columns) in COLUMNS {
+        let listed = describe(&c)
+            .into_iter()
+            .filter(|row| row.starts_with(&format!("column {table}.")))
+            .count();
+        assert_eq!(
+            listed,
+            columns.len(),
+            "every column of `{table}` is checked"
+        );
+    }
+
+    PoolBuilder::new(options(), 2).open::<Read, Write>(&uri)?;
     Ok(())
 }
 
