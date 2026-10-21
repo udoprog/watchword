@@ -67,6 +67,11 @@ async fn admin(store: &MemoryStore) -> Result<User, Box<dyn StdError>> {
     Ok(store.user(user.id).await?.unwrap())
 }
 
+/// A session for `user`, to act with.
+async fn session(auth: &Auth, user: &User) -> Result<Session, Box<dyn StdError>> {
+    Ok(auth.create_session(user.id).await?)
+}
+
 /// A pending user with `email`.
 async fn pending(store: &MemoryStore, email: &str) -> Result<User, Box<dyn StdError>> {
     let new = NewUser {
@@ -291,24 +296,29 @@ async fn settings_change_at_runtime() -> TestResult {
     active(&store, "alice@example.com").await?;
     let root = admin(&store).await?;
     let auth = auth(&store, None);
+    let root_session = session(&auth, &root).await?;
     let headers = email("alice@example.com");
 
     assert!(!auth.cloudflare_available(&headers).await?);
 
-    auth.set_cloudflare(&root, header_only()).await?;
+    auth.set_cloudflare(&root, &root_session, header_only())
+        .await?;
     assert!(auth.cloudflare_available(&headers).await?);
     auth.sign_in_cloudflare(&headers).await?;
 
     // Applying the same settings again is harmless.
-    auth.set_cloudflare(&root, header_only()).await?;
+    auth.set_cloudflare(&root, &root_session, header_only())
+        .await?;
     assert!(auth.cloudflare_available(&headers).await?);
 
     // Requiring the token, which this request lacks.
-    auth.set_cloudflare(&root, config(true, true)).await?;
+    auth.set_cloudflare(&root, &root_session, config(true, true))
+        .await?;
     assert!(!auth.cloudflare_available(&headers).await?);
 
     auth.set_cloudflare(
         &root,
+        &root_session,
         CloudflareConfig {
             enabled: false,
             ..header_only()
@@ -319,7 +329,8 @@ async fn settings_change_at_runtime() -> TestResult {
     let error = refused(auth.sign_in_cloudflare(&headers).await);
     assert_eq!(error, AuthError::Unauthorized);
 
-    auth.set_cloudflare(&root, header_only()).await?;
+    auth.set_cloudflare(&root, &root_session, header_only())
+        .await?;
     assert!(auth.cloudflare_available(&headers).await?);
     Ok(())
 }
@@ -351,11 +362,19 @@ async fn settings_are_stored() -> TestResult {
     };
     let root = admin(&store).await?;
     let alice = store.user_by_email("alice@example.com").await?.unwrap();
-    let error = refused(initial.set_cloudflare(&alice, disabled.clone()).await);
+    let alice_session = session(&initial, &alice).await?;
+    let root_session = session(&initial, &root).await?;
+    let error = refused(
+        initial
+            .set_cloudflare(&alice, &alice_session, disabled.clone())
+            .await,
+    );
     assert_eq!(error, AuthError::Forbidden);
     assert_eq!(store.config_get("cloudflare").await?, None);
 
-    let saved = initial.set_cloudflare(&root, disabled).await?;
+    let saved = initial
+        .set_cloudflare(&root, &root_session, disabled)
+        .await?;
     assert_eq!(
         saved,
         CloudflareConfig {
@@ -419,5 +438,112 @@ async fn a_concurrent_revocation_is_not_undone() -> TestResult {
     assert_eq!(error, AuthError::Unauthorized);
     assert_eq!(store.user(erin.id).await?.unwrap().access, Access::Revoked);
     assert!(events.try_recv().is_err());
+    Ok(())
+}
+
+/// Changing the settings sends an audit event with them before and after,
+/// naming an impersonating admin; saving them unchanged sends none.
+#[tokio::test]
+async fn changing_settings_is_audited() -> TestResult {
+    use std::sync::{Arc, Mutex};
+
+    let store = MemoryStore::new();
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sink = log.clone();
+
+    let auth = Auth::builder(store.clone(), generate_session_key())
+        .cloudflare(Some(header_only()))
+        .impersonation(true)
+        .audit(move |event| sink.lock().unwrap().push(event.clone()))
+        .build();
+
+    let take = || std::mem::take(&mut *log.lock().unwrap());
+
+    let root = admin(&store).await?;
+    let root_session = session(&auth, &root).await?;
+    let by_root = Actor::of(&root, &root_session);
+
+    // The builder's settings are the ones replaced, and saving them as they
+    // are changes nothing.
+    auth.set_cloudflare(&root, &root_session, header_only())
+        .await?;
+    assert_eq!(take(), []);
+
+    let required = config(true, true);
+    auth.set_cloudflare(&root, &root_session, required.clone())
+        .await?;
+    let events = take();
+    assert_eq!(
+        events,
+        [AuditEvent::CloudflareChanged {
+            actor: by_root,
+            before: Some(header_only()),
+            after: required.clone(),
+        }]
+    );
+    assert_eq!(events[0].actor(), by_root);
+    assert_eq!(events[0].user(), None);
+
+    // An admin impersonating another admin is named as responsible.
+    let new = NewUser {
+        login: Some("other".to_owned()),
+        email: None,
+        role: Role::Admin,
+    };
+    let other = store.create_user(&new, Timestamp::now()).await?.unwrap();
+    let cred = Credential::Password(crate::core::dummy_hash().to_owned());
+    assert!(store.set_credential(other.id, &cred, None).await?);
+    let (as_other, as_other_session) = auth.impersonate(&root, &root_session, other.id).await?;
+    take();
+
+    let disabled = CloudflareConfig {
+        enabled: false,
+        ..required.clone()
+    };
+    auth.set_cloudflare(&as_other, &as_other_session, disabled.clone())
+        .await?;
+    let events = take();
+    assert_eq!(
+        events,
+        [AuditEvent::CloudflareChanged {
+            actor: Actor::User {
+                user: other.id,
+                impersonator: Some(root.id),
+            },
+            before: Some(required),
+            after: disabled,
+        }]
+    );
+    assert_eq!(events[0].actor().responsible(), Some(root.id));
+    Ok(())
+}
+
+/// With no settings before, the event says so.
+#[tokio::test]
+async fn first_settings_are_audited_from_none() -> TestResult {
+    use std::sync::{Arc, Mutex};
+
+    let store = MemoryStore::new();
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sink = log.clone();
+
+    let auth = Auth::builder(store.clone(), generate_session_key())
+        .audit(move |event| sink.lock().unwrap().push(event.clone()))
+        .build();
+
+    let root = admin(&store).await?;
+    let root_session = session(&auth, &root).await?;
+
+    auth.set_cloudflare(&root, &root_session, header_only())
+        .await?;
+
+    assert_eq!(
+        *log.lock().unwrap(),
+        [AuditEvent::CloudflareChanged {
+            actor: Actor::of(&root, &root_session),
+            before: None,
+            after: header_only(),
+        }]
+    );
     Ok(())
 }

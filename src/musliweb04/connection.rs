@@ -443,8 +443,8 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.require_admin().await?;
-                    self.set_cloudflare(&admin, config).await
+                    let (admin, session) = self.admin_session().await?;
+                    self.set_cloudflare(&admin, &session, config).await
                 };
 
                 respond(outgoing, response.await)
@@ -472,13 +472,19 @@ impl Connection {
     async fn set_cloudflare(
         &self,
         admin: &User,
+        session: &Session,
         config: CloudflareConfig,
     ) -> Result<CloudflareConfig> {
-        self.auth.set_cloudflare(admin, config).await
+        self.auth.set_cloudflare(admin, session, config).await
     }
 
     #[cfg(not(feature = "cloudflare"))]
-    async fn set_cloudflare(&self, _: &User, _: CloudflareConfig) -> Result<CloudflareConfig> {
+    async fn set_cloudflare(
+        &self,
+        _: &User,
+        _: &Session,
+        _: CloudflareConfig,
+    ) -> Result<CloudflareConfig> {
         Err(AuthError::NotFound.into())
     }
 

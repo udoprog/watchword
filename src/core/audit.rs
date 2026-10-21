@@ -4,6 +4,8 @@
 use jiff::Timestamp;
 
 use crate::store::{Session, User};
+#[cfg(feature = "cloudflare")]
+use crate::types::CloudflareConfig;
 use crate::types::{UserId, UserInfo};
 
 /// Who performed an operation.
@@ -176,6 +178,20 @@ pub enum AuditEvent {
         /// The impersonated user.
         user: UserId,
     },
+    /// An admin changed the Cloudflare Access settings, with
+    /// [`set_cloudflare`](super::Auth::set_cloudflare). Not sent when they
+    /// are saved unchanged. It acts on no user.
+    #[cfg(feature = "cloudflare")]
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "cloudflare")))]
+    CloudflareChanged {
+        /// The admin.
+        actor: Actor,
+        /// The settings before, as [`cloudflare`](super::Auth::cloudflare)
+        /// returned them: `None` when there were none.
+        before: Option<CloudflareConfig>,
+        /// The settings after, as stored.
+        after: CloudflareConfig,
+    },
 }
 
 impl AuditEvent {
@@ -192,26 +208,31 @@ impl AuditEvent {
             | Self::LinkRevoked { actor, .. }
             | Self::LinkRedeemed { actor, .. }
             | Self::CredentialChanged { actor, .. } => *actor,
+            #[cfg(feature = "cloudflare")]
+            Self::CloudflareChanged { actor, .. } => *actor,
             Self::ImpersonationStarted { admin, .. } | Self::ImpersonationStopped { admin, .. } => {
                 Actor::user(*admin)
             }
         }
     }
 
-    /// The user the operation acted on.
-    pub fn user(&self) -> UserId {
+    /// The user the operation acted on, or `None` for an operation that
+    /// acts on no user, such as changing the Cloudflare Access settings.
+    pub fn user(&self) -> Option<UserId> {
         match self {
             Self::UserCreated { user, .. }
             | Self::Activated { user, .. }
             | Self::UserDeleted { user, .. }
             | Self::LinkRedeemed { user, .. }
-            | Self::CredentialChanged { user, .. } => user.id,
-            Self::UserUpdated { after, .. } | Self::AccessRevoked { after, .. } => after.id,
+            | Self::CredentialChanged { user, .. } => Some(user.id),
+            Self::UserUpdated { after, .. } | Self::AccessRevoked { after, .. } => Some(after.id),
             Self::SignedOutEverywhere { user, .. }
             | Self::LinkIssued { user, .. }
             | Self::LinkRevoked { user, .. }
             | Self::ImpersonationStarted { user, .. }
-            | Self::ImpersonationStopped { user, .. } => *user,
+            | Self::ImpersonationStopped { user, .. } => Some(*user),
+            #[cfg(feature = "cloudflare")]
+            Self::CloudflareChanged { .. } => None,
         }
     }
 }

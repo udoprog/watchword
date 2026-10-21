@@ -113,12 +113,14 @@ impl Provider {
     }
 
     /// Stores `settings`, with the team domain and audience trimmed, and
-    /// applies them, logging them if they changed. Returns them as stored.
+    /// applies them, logging them if they changed. Returns the settings they
+    /// replaced, as [`settings`](Self::settings) had them, and them as
+    /// stored.
     pub(crate) async fn save(
         &self,
         store: &dyn DynStore,
         mut settings: CloudflareConfig,
-    ) -> Result<CloudflareConfig, StoreError> {
+    ) -> Result<(Option<CloudflareConfig>, CloudflareConfig), StoreError> {
         settings.team_domain = settings.team_domain.trim().to_owned();
         settings.audience = settings.audience.trim().to_owned();
 
@@ -131,8 +133,9 @@ impl Provider {
         store.set_setting(SETTINGS_KEY, &json).await?;
 
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+        let before = state.settings.clone();
         self.apply(&mut state, settings.clone());
-        Ok(settings)
+        Ok((before, settings))
     }
 
     /// Runs with `settings`, logging and rebuilding the verifier only when

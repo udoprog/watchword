@@ -59,6 +59,10 @@ impl Auth {
     /// they are unsafe or let no one sign in; the same settings again change
     /// nothing.
     ///
+    /// Sends [`AuditEvent::CloudflareChanged`] when the settings differ from
+    /// the current ones, naming an admin impersonating `actor` through
+    /// `session`.
+    ///
     /// Admins only: [`AuthError::Forbidden`] unless `actor` is an active
     /// admin. An app moving settings it kept itself onto watchword passes
     /// them to [`AuthBuilder::cloudflare`], where they apply until an admin
@@ -67,11 +71,21 @@ impl Auth {
     pub async fn set_cloudflare(
         &self,
         actor: &User,
+        session: &Session,
         config: CloudflareConfig,
     ) -> Result<CloudflareConfig> {
         require_admin(actor)?;
-        let config = self.inner.cloudflare.save(self.store(), config).await?;
+        let (before, config) = self.inner.cloudflare.save(self.store(), config).await?;
         tracing::info!(user = %actor.id, "Cloudflare Access settings saved");
+
+        if before.as_ref() != Some(&config) {
+            self.audit(AuditEvent::CloudflareChanged {
+                actor: Actor::of(actor, session),
+                before,
+                after: config.clone(),
+            });
+        }
+
         Ok(config)
     }
 

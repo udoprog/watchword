@@ -237,7 +237,10 @@ async fn set_cloudflare_settings(
     Admin(admin): Admin,
     Body(config): Body<crate::types::CloudflareConfig>,
 ) -> Result<Json<crate::types::CloudflareConfig>, Error> {
-    Ok(Json(auth.set_cloudflare(&admin.user, config).await?))
+    Ok(Json(
+        auth.set_cloudflare(&admin.user, &admin.session, config)
+            .await?,
+    ))
 }
 
 async fn me(

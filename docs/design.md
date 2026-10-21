@@ -250,7 +250,7 @@ let auth = Auth::builder_from_store(store).await? // key from the store's `sessi
     .build();
 
 auth.cloudflare().await?;                      // -> Option<CloudflareConfig>, as stored or else as built
-auth.set_cloudflare(&admin, config).await?;    // -> CloudflareConfig as stored; admin; stores and applies
+auth.set_cloudflare(&admin, &session, config).await?;  // -> CloudflareConfig as stored; admin; stores and applies
 auth.bootstrap_admin(&BootstrapAdmin::new(name).public_url(public_url)).await?;  // -> Bootstrap
 auth.recovery_link(name).await?;                // -> Link, for the app's own CLI; no actor
 auth.import_user(&new_user).await?;             // -> User, pending, no link; for imports; no actor
@@ -387,9 +387,10 @@ pub enum AuditEvent {                     // #[non_exhaustive]; sent after the c
     CredentialChanged { actor, user: UserInfo },            // change_password, switch to Google
     ImpersonationStarted { admin: UserId, user: UserId },
     ImpersonationStopped { admin: UserId, user: UserId },
+    CloudflareChanged { actor, before: Option<CloudflareConfig>, after: CloudflareConfig }, // feature `cloudflare`; set_cloudflare, not when unchanged
 }
 AuditEvent::actor() -> Actor              // the admin, for impersonation
-AuditEvent::user() -> UserId              // the user acted on
+AuditEvent::user() -> Option<UserId>      // the user acted on; None for CloudflareChanged
 ```
 
 Sign-ins, sign-outs and reads send none.
@@ -1441,8 +1442,11 @@ once the release is on crates.io.
     written to the store, so an app's environment-provided settings apply
     until an admin saves, and a restart with other environment settings does
     not overwrite what an admin saved. Saving takes the admin as `actor`, per
-    decision 18; reading does not, so an app can read and log them at
-    startup.
+    decision 18, and their session, per decision 25, sending
+    `AuditEvent::CloudflareChanged` with the settings before and after, so
+    an app's audit log records who changed them; reading does not, so an
+    app can read and log them at startup. That event acts on no user, so
+    `AuditEvent::user` returns an `Option`.
 27. **App components follow the context and share the users list.** Apps
     had no supported way to follow auth changes, so they mirrored
     watchword's events into broadcasts of their own: territory turned

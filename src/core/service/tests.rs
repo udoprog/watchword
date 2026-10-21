@@ -260,7 +260,7 @@ async fn operations_send_actor_attributed_audit_events() -> Result<(), Box<dyn s
         }
     );
     assert_eq!(events[1].actor(), by_root);
-    assert_eq!(events[1].user(), pat.id);
+    assert_eq!(events[1].user(), Some(pat.id));
 
     let promoted = auth
         .set_role(&root, &root_session, pat.id, Role::Admin)
@@ -408,7 +408,7 @@ async fn operations_send_actor_attributed_audit_events() -> Result<(), Box<dyn s
     let events = take();
     assert_eq!(events.len(), 2, "{events:?}");
     assert_eq!(events[0].actor(), Actor::System);
-    assert_eq!(events[0].user(), pat.id);
+    assert_eq!(events[0].user(), Some(pat.id));
     assert!(matches!(events[0], AuditEvent::LinkIssued { .. }));
     assert_eq!(
         events[1],
