@@ -36,6 +36,13 @@ pub struct AuthProviderProps {
     /// Classes added to the splash, sign-in and registration pages.
     #[prop_or_default]
     pub class: Classes,
+    /// The app's sign-in page, such as `/login`: the path watchword's
+    /// `axum08::RequireSession` sends a browser to with a `?next=`. A user
+    /// who is signed in there already goes on to its `?next=`, and one who
+    /// signs in there without one goes to `/`, so the app never renders
+    /// this path itself.
+    #[prop_or_default]
+    pub sign_in_path: Option<AttrValue>,
     /// The app, rendered once a user is signed in.
     #[prop_or_default]
     pub children: Html,
@@ -48,6 +55,14 @@ pub struct AuthProviderProps {
 /// out, it shows [`SignIn`]; on a `/register/{token}` page it shows
 /// [`Register`]. Once a user is signed in it renders its children with an
 /// [`AuthContext`], available through [`use_auth`](super::use_auth).
+///
+/// Signing in returns to a `?next=` in the URL, as watchword's
+/// `axum08::RequireSession` redirects with, before the children are
+/// rendered, so the app's router starts on that page. Only a path on this
+/// origin is followed (never `//host` or a URL with a scheme); any other
+/// `next` is dropped. See also
+/// [`sign_in_path`](AuthProviderProps::sign_in_path). Sign-in with Google
+/// leaves the page, and comes back to `/`.
 ///
 /// With the `musliweb04` feature and a socket handed over with
 /// [`AuthContext::set_socket`], it also follows the server's
@@ -205,6 +220,10 @@ impl Component for AuthProvider {
 
                 self.config = Some(config);
 
+                if self.register_token.is_none() && matches!(me, Some(Ok(..))) {
+                    browser::return_after_sign_in(ctx.props().sign_in_path.as_deref(), true);
+                }
+
                 self.state = match me {
                     _ if self.register_token.is_some() => State::Register,
                     Some(Ok(user)) => State::SignedIn(Rc::new(user)),
@@ -218,6 +237,8 @@ impl Component for AuthProvider {
             Msg::SignedIn(user) => {
                 if self.register_token.take().is_some() {
                     browser::replace_url("/");
+                } else {
+                    browser::return_after_sign_in(ctx.props().sign_in_path.as_deref(), false);
                 }
 
                 self.state = State::SignedIn(Rc::new(user));

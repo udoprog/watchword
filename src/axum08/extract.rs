@@ -16,6 +16,13 @@ use crate::types::{Access, AuthError};
 /// its admin is still an active admin. Since the user (and for an
 /// impersonated session its admin) is read from the store on every request,
 /// a role change or revocation applies to the next one.
+///
+/// Within one request it is read once: the first of [`SignedIn`], [`Admin`],
+/// [`MaybeSignedIn`] and [`require_session`](super::require_session) to load
+/// it leaves it in the request's extensions, and the others take it from
+/// there. So a handler behind `require_session`, or after one of these
+/// extractors, may also take `Extension<SignedIn>`. An extension of this type
+/// that something else inserted is believed the same way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignedIn {
     /// The user, as stored now.
@@ -25,7 +32,9 @@ pub struct SignedIn {
 }
 
 impl SignedIn {
-    async fn load(parts: &mut Parts, auth: &Auth) -> Result<Option<Self>, Error> {
+    /// Loads the request's session, or the one an earlier extractor (or
+    /// [`require_session`](super::require_session)) left in its extensions.
+    pub(super) async fn load(parts: &mut Parts, auth: &Auth) -> Result<Option<Self>, Error> {
         // Another extractor in the same handler may have loaded it already.
         if let Some(signed_in) = parts.extensions.get::<SignedIn>() {
             return Ok(Some(signed_in.clone()));
@@ -90,7 +99,8 @@ where
 
 /// The signed-in user, if there is one, for routes that anyone may use.
 ///
-/// Rejects only when the store fails.
+/// Rejects only when the store fails. A [`SignedIn`] it finds is left in the
+/// request's extensions, as [`SignedIn`] describes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MaybeSignedIn(pub Option<SignedIn>);
 

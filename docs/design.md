@@ -525,6 +525,12 @@ LiveSession(String)                         // the session id; liveness only, ca
 // Routes, merged into the app's router.
 pub fn routes<S>() -> Router<S> where Auth: FromRef<S>, S: Clone + Send + Sync + 'static;
 
+// Gating a whole site, pages included.
+pub fn is_public(path: &str) -> bool;       // `/api/auth/…` and `/register/…`
+let gate = RequireSession::new(auth.clone(), "/login")
+    .public(|path| path.starts_with("/assets/"));   // the app's own public paths
+router.layer(axum::middleware::from_fn_with_state(gate, require_session));
+
 // WebSocket: resolves when the socket's session has ended, for the app's select! loop.
 // In `core` (feature `server`): it takes the user and session, not an axum type.
 let guard = auth.guard(&signed_in.user, &signed_in.session);
@@ -542,6 +548,21 @@ change or revocation applies to the next one. `LiveSession` believes a session
 confirmed live for 10 seconds, for up to 1024 sessions; signing out, revoking or
 deleting through `Auth` ends it there at once, so the 10 seconds only delay
 noticing a session ended in another process.
+
+Each of these, and `require_session`, loads the session once per request and
+leaves the `SignedIn` in the request's extensions, where the others (and an
+`Extension<SignedIn>`) find it.
+
+`require_session` lets through watchword's public paths, the sign-in path and
+the app's own (`public`), and any request with a live session. Otherwise a
+page load (`GET`/`HEAD` outside `/api/` accepting `text/html`) is redirected
+(303) to `{sign_in_path}?next={path and query}`, `next` omitted for `/`, and
+anything else gets 401 (a store failure 500). An `error=` in the requested
+query moves to the sign-in URL's own query, so the Google callback's
+`/?error=…` still reaches the sign-in page. It is a plain `from_fn`
+middleware with its state rather than a `Layer` of its own, since naming a
+layer type would add `tower-layer` and `tower-service` to the public API.
+Decision 24.
 
 The guard (`core::SessionGuard`) subscribes to `AuthEvent`s and sleeps until the
 session expires. On broadcast lag, and every 5 minutes, it re-checks the
@@ -619,8 +640,16 @@ cookies, so the library does not depend on the app's gloo version.
     unreachable.
   - It shows `<SignIn>` when signed out, and `<Register>` on `/register/{token}`.
     Otherwise it renders its children with an `AuthContext`.
-  - Props: `title` (the app's name), and `signed_out_notice`, which overrides
-    the "session has ended" message `watchword-session-ended`.
+  - Props: `title` (the app's name), `signed_out_notice`, which overrides
+    the "session has ended" message `watchword-session-ended`, and
+    `sign_in_path`, the page `RequireSession` redirects to.
+  - Signing in returns to the URL's `?next=` before the children render,
+    so the app's router starts there. Only a same-origin path is followed:
+    it must start with a single `/` and hold no `\` or control character
+    once decoded (no `//host`, `/\host`, `/<tab>/host` or scheme); any other
+    `next` is dropped. On `sign_in_path` a signed-in user goes to `next` or
+    `/`, also when already signed in on load. Google sign-in leaves the page
+    and comes back to `/`.
 - `use_auth() -> AuthContext` gives `user: Rc<UserInfo>`, `config`,
   `is_admin()`, `sign_out()`, `refresh()`, `set_user(UserInfo)` and
   `check_session()`.
@@ -1180,3 +1209,14 @@ once the release is on crates.io.
     across processes is acceptable. A `watch::Receiver` is handed out
     rather than a wrapper type: tokio is already in the API through
     `Auth::events`, and it is what the guard holds.
+24. **A session gate for whole sites, with watchword's public paths
+    built in.** An app that serves its frontend behind a session wrote its
+    own middleware, hard-coding watchword's public prefixes (`/api/auth/`,
+    `/register/`), so a public route watchword added later would have been
+    refused there without any error. `is_public` names them in one place
+    and `require_session` builds the usual gate on it: 401 for the API, a
+    redirect to sign-in with `?next=` for pages. The `next` value is only
+    ever followed by the frontend as a same-origin path, since the sign-in
+    page is reachable by anyone with any query and an unchecked `next`
+    would be an open redirect. The extensions cache of `SignedIn` is now
+    documented, since apps behind the gate rely on it.

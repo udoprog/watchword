@@ -8,7 +8,7 @@ use phrasebook01::{Catalog, Lang, Phrasebook, Phrases, Source, check};
 
 use super::account::account_change;
 use super::admin_users::{link_url, matches_filter, page_bounds, relative_time};
-use super::browser::{register_token_from_path, strip_query_param};
+use super::browser::{register_token_from_path, return_url, safe_next, strip_query_param};
 use super::cloudflare_settings::header_unverified;
 use super::form::identity_change;
 use super::http::{CreatedUser, Error};
@@ -48,6 +48,100 @@ fn register_token() {
     assert_eq!(register_token_from_path("/register/a/b"), None);
     assert_eq!(register_token_from_path("/"), None);
     assert_eq!(register_token_from_path("/users/register/abc"), None);
+}
+
+#[test]
+fn next_only_same_origin_paths() {
+    assert_eq!(safe_next("/notes").as_deref(), Some("/notes"));
+    assert_eq!(safe_next("/").as_deref(), Some("/"));
+    assert_eq!(
+        safe_next("%2Fnotes%3Fq%3D1%23top").as_deref(),
+        Some("/notes?q=1#top")
+    );
+    assert_eq!(safe_next("/a%20b/%C3%A5").as_deref(), Some("/a b/\u{e5}"));
+    // Escapes decode once, so one left encoded stays in the path.
+    assert_eq!(safe_next("/%252F%252Fhost").as_deref(), Some("/%2F%2Fhost"));
+
+    // Another host, a scheme, or not a path at all.
+    for bad in [
+        "",
+        "notes",
+        "//evil.example",
+        "%2F%2Fevil.example",
+        "/%2Fevil.example",
+        "/\\evil.example",
+        "/%5Cevil.example",
+        "\\/evil.example",
+        "%5C%5Cevil.example",
+        "https://evil.example",
+        "https%3A%2F%2Fevil.example",
+        "javascript:alert(1)",
+        "/%09/evil.example",
+        "/%0A/evil.example",
+        "/\t/evil.example",
+        "%20//evil.example",
+        "/%",
+        "/%zz",
+        "/%FF",
+    ] {
+        assert_eq!(safe_next(bad), None, "{bad:?}");
+    }
+}
+
+#[test]
+fn return_after_sign_in() {
+    let login = Some("/login");
+
+    // Signing in follows a same-origin `next`, wherever it is.
+    assert_eq!(
+        return_url("/login", "?next=/notes%3Fq%3D1", "", login, false).as_deref(),
+        Some("/notes?q=1")
+    );
+    assert_eq!(
+        return_url("/login", "?error=x&next=/notes", "", None, false).as_deref(),
+        Some("/notes")
+    );
+    assert_eq!(
+        return_url("/elsewhere", "?next=/notes", "", login, false).as_deref(),
+        Some("/notes")
+    );
+
+    // On the sign-in page without a usable one, to `/`.
+    assert_eq!(
+        return_url("/login", "", "", login, false).as_deref(),
+        Some("/")
+    );
+    assert_eq!(
+        return_url("/login", "?next=//evil.example", "", login, false).as_deref(),
+        Some("/")
+    );
+
+    // Elsewhere an unusable one is dropped, and without one nothing moves.
+    assert_eq!(
+        return_url(
+            "/notes",
+            "?a=1&next=https://evil.example",
+            "#x",
+            login,
+            false
+        )
+        .as_deref(),
+        Some("/notes?a=1#x")
+    );
+    assert_eq!(return_url("/notes", "?a=1", "", login, false), None);
+    assert_eq!(return_url("/login", "", "", None, false), None);
+
+    // Already signed in on load, only the sign-in page moves.
+    assert_eq!(
+        return_url("/login", "?next=/notes", "", login, true).as_deref(),
+        Some("/notes")
+    );
+    assert_eq!(
+        return_url("/login", "", "", login, true).as_deref(),
+        Some("/")
+    );
+    assert_eq!(return_url("/search", "?next=/notes", "", login, true), None);
+    assert_eq!(return_url("/login", "?next=/notes", "", None, true), None);
 }
 
 #[test]

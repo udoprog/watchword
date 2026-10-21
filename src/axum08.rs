@@ -47,10 +47,16 @@
 //! [`SessionGuard::user`](crate::core::SessionGuard::user) and
 //! [`watch_user`](crate::core::SessionGuard::watch_user).
 //!
+//! To gate a whole site, pages included, layer [`require_session`] on the
+//! router: it lets watchword's [public](is_public) routes through, answers
+//! 401 to API requests and sends a browser to the sign-in page with a
+//! `?next=` back to the page it asked for (see [`RequireSession`]).
+//!
 //! The design is in `docs/design.md`, section 2.5.
 
 mod error;
 mod extract;
+mod gate;
 #[cfg(feature = "google")]
 mod google;
 mod live;
@@ -60,5 +66,6 @@ mod routes;
 mod tests;
 
 pub use self::extract::{Admin, LiveSession, MaybeSignedIn, SignedIn};
+pub use self::gate::{RequireSession, is_public, require_session};
 pub(crate) use self::live::LiveCache;
 pub use self::routes::routes;

@@ -1183,5 +1183,6 @@ mod cloudflare {
         assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
     }
 }
+mod gate;
 #[cfg(feature = "google")]
 mod google;
