@@ -27,10 +27,14 @@ impl AuthBuilder {
 
     /// Points the Google client at other endpoints, such as a
     /// [`FakeGoogle`](crate::google::fake::FakeGoogle), so an app can test
-    /// signing in with Google offline (feature `test-util`). The default is
-    /// Google's own, [`Endpoints::default`](crate::google::Endpoints).
+    /// signing in with Google offline (features `test-util` and `google`).
+    /// The default is Google's own,
+    /// [`Endpoints::default`](crate::google::Endpoints).
     #[cfg(any(test, feature = "test-util"))]
-    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "test-util")))]
+    #[cfg_attr(
+        watchword_docsrs,
+        doc(cfg(all(feature = "google", feature = "test-util")))
+    )]
     pub fn google_endpoints(mut self, endpoints: crate::google::Endpoints) -> Self {
         self.google_endpoints = endpoints;
         self

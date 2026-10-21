@@ -47,10 +47,11 @@ struct Answer {
 }
 
 impl Answer {
-    /// The `name=value` of the response's `Set-Cookie`.
+    /// The `Cookie` header a browser sends back for the response's
+    /// `Set-Cookie`.
     fn cookie(&self) -> String {
         let set = self.headers[header::SET_COOKIE].to_str().unwrap();
-        set.split(';').next().unwrap().to_owned()
+        cookie::Cookie::parse(set).unwrap().stripped().to_string()
     }
 
     fn error(&self) -> &str {

@@ -45,7 +45,7 @@ it chooses.
 | `google` | [`google`] | Google OAuth: `GoogleConfig::new` for `AuthBuilder::google`; with `axum08`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
 | `axum08` | [`axum08`] | for axum 0.8: the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors and `routes()` for the `/api/auth` JSON routes, plus the Cloudflare and Google routes when those features are on (implies `server`) |
 | `sqll014` | [`sqll014`] | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA` for a new database, its ordered `MIGRATIONS` (the first tables and every upgrade since) for an app's migration runner, `check_schema` to fail at startup on missing tables or columns, and watchword-core's `sqll014` (sqll's bind and column traits on `UserId`, `Role`, `Access` and `Method`) (implies `server`). It takes sqll with `derive`, `pool`, `typed` and `threadsafe` only; the app names `bundled` or links its own SQLite |
-| `test-util` | [`google::fake`] | for an app's tests: `AuthBuilder::google_endpoints`, and with `axum08` `FakeGoogle`, a local fake Google to sign in through offline (implies `google`) |
+| `test-util` | [`store_suite!`], [`google::fake`] | for an app's tests: `Auth::test_user` and `Auth::test_session`, an active user and a session without signing in; `store_suite!`, watchword's store conformance suite, to run over the app's own `Store` or migrated `SqllStore`; with `google`, `AuthBuilder::google_endpoints`, and with `google` and `axum08` also `FakeGoogle`, a local fake Google to sign in through offline (implies `server`) |
 | `phrasebook01` | [`phrasebook01`] | `L10N`, watchword's messages (the text of the `yew023` components) as a [phrasebook] 0.1 catalog, for a native tool such as an app's localization checker that needs them without building yew, from the [watchword-core] crate (implies `std`) |
 | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `AdminCloudflare`, `CloudflareSettings`, the `http` client and `L10N`, the components' messages as a [phrasebook] catalog, from the [watchword-yew023] crate (implies `std` and `phrasebook01`) |
 
@@ -109,6 +109,7 @@ downloading it unless it is installed or already in trunk's cache.
 [`musliweb04`]: https://docs.rs/watchword/latest/watchword/musliweb04/index.html
 [`phrasebook01`]: https://docs.rs/watchword/latest/watchword/phrasebook01/index.html
 [`sqll014`]: https://docs.rs/watchword/latest/watchword/sqll014/index.html
+[`store_suite!`]: https://docs.rs/watchword/latest/watchword/macro.store_suite.html
 [`store`]: https://docs.rs/watchword/latest/watchword/store/index.html
 [`types`]: https://docs.rs/watchword/latest/watchword/types/index.html
 [`yew023`]: https://docs.rs/watchword/latest/watchword/yew023/index.html

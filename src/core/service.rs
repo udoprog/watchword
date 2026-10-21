@@ -625,6 +625,17 @@ impl Auth {
         HeaderValue::try_from(cookie.to_string()).expect("session cookies are valid header values")
     }
 
+    /// The `Cookie` request header that carries the session `session_id`:
+    /// the `name=value` pair of [`set_cookie`](Auth::set_cookie) without its
+    /// attributes, as a browser sends it back. For a test or a client that
+    /// makes requests as a session, such as one from `Auth::test_session`
+    /// (feature `test-util`).
+    pub fn cookie_header(&self, session_id: &str) -> HeaderValue {
+        let cookie = session_cookie(&self.inner.cookie.name, &self.inner.key, session_id, false);
+        HeaderValue::try_from(cookie.stripped().to_string())
+            .expect("session cookies are valid header values")
+    }
+
     /// The `Set-Cookie` value that removes the session cookie.
     pub fn clear_cookie(&self, headers: &HeaderMap) -> HeaderValue {
         let cookie = Cookie::build((self.inner.cookie.name.clone(), ""))
@@ -1804,6 +1815,9 @@ mod cloudflare;
 
 #[cfg(feature = "google")]
 mod google;
+
+#[cfg(any(test, feature = "test-util"))]
+mod test_util;
 
 #[cfg(test)]
 mod tests;

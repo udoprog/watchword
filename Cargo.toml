@@ -37,7 +37,7 @@ cloudflare = ["server", "dep:aws-lc-rs", "dep:reqwest", "dep:serde_json"]
 google = ["server", "dep:reqwest", "dep:serde_json", "dep:url", "dep:lru", "axum08?/query"]
 axum08 = ["server", "dep:axum08", "watchword-core/axum08", "musli-web04?/ws"]
 sqll014 = ["server", "dep:sqll014", "watchword-core/sqll014"]
-test-util = ["google", "axum08?/http1"]
+test-util = ["server", "axum08?/http1"]
 phrasebook01 = ["std", "watchword-core/phrasebook01"]
 yew023 = ["std", "phrasebook01", "dep:watchword-yew023"]
 
@@ -69,7 +69,7 @@ lru = { version = "0.18.5", optional = true }
 
 # axum08; `tokio` for `ConnectInfo`, the app picks `http1`/`http2` and the rest
 # (`google` adds `query` for the callback, `test-util` adds `http1` for the
-# `FakeGoogle` `axum::serve`).
+# `FakeGoogle` `axum::serve`, which also needs `google`).
 axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["tokio"], optional = true }
 
 # musliweb04; with axum08 its `ws` server side

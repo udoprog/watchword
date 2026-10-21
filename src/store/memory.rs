@@ -452,10 +452,10 @@ impl Store for MemoryStore {
 mod tests {
     use super::*;
     use crate::core::{Auth, generate_session_key};
-    use crate::store::suite::{TestResult, store_suite};
+    use crate::store::suite::TestResult;
     use crate::types::Role;
 
-    store_suite!(MemoryStore::new());
+    crate::store_suite!(MemoryStore::new());
 
     /// A user who registered with Google before subjects were recorded, which
     /// no `Store` method produces, so it is set up in the store's data.

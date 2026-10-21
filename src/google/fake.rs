@@ -1,5 +1,5 @@
-//! A fake Google for testing Google sign-in offline (features `test-util`
-//! and `axum08`).
+//! A fake Google for testing Google sign-in offline (features `test-util`,
+//! `google` and `axum08`).
 //!
 //! [`FakeGoogle::start`] serves the token and tokeninfo endpoints on a local
 //! port; point the service at it with

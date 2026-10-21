@@ -1,11 +1,13 @@
-//! Tests of [`Auth`] over any [`Store`], so that every store runs the same
-//! suite: `store_suite!(expr)` defines one `#[tokio::test]` per test, each
-//! over a fresh store made by `expr` (evaluated inside the async test, so it
-//! may `.await`).
+//! The store conformance suite: tests of [`Auth`] over any [`Store`], run
+//! with [`store_suite!`](crate::store_suite).
+//!
+//! The functions are public for the macro only; their names and set change
+//! between releases as the suite grows.
 
 use std::borrow::ToOwned;
 use std::boxed::Box;
 use std::error::Error as StdError;
+use std::future::Future;
 use std::net::IpAddr;
 use std::string::String;
 use std::time::Duration;
@@ -23,14 +25,56 @@ use crate::types::{
     RegisterRequest, Role, UserChange, UserId,
 };
 
-pub(crate) type TestResult = Result<(), Box<dyn StdError>>;
+/// The result of a test in the suite.
+pub type TestResult = Result<(), Box<dyn StdError>>;
 
 const PASSWORD: &str = "correct horse battery staple";
 const ADMIN: &str = "admin@example.com";
 
+/// Runs one test of the suite on a current-thread tokio runtime with time
+/// and I/O enabled, as `#[tokio::test]` would.
+pub fn run<F>(test: F) -> TestResult
+where
+    F: Future<Output = TestResult>,
+{
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(test)
+}
+
+/// Defines the store conformance suite over a [`Store`](crate::store::Store):
+/// one `#[test]` function per test of [`Auth`](crate::core::Auth) that depends on what
+/// a store keeps, each over a fresh store made by the expression given. The
+/// expression is evaluated inside the test's async context, so it may
+/// `.await`, and the store must be `Clone`, its clones sharing their records.
+///
+/// This is how watchword tests `MemoryStore` and `SqllStore`, and how an app
+/// tests its own `Store`, or `SqllStore` over its own migrated schema, rather
+/// than re-testing watchword's sign-in and user-management rules itself.
+/// Each test runs on a current-thread tokio runtime of its own, so the app
+/// needs no tokio of its own for it. New tests are added in minor releases.
+///
+/// Needs the `test-util` feature.
+///
+/// In an app's tests:
+///
+/// ```
+/// #[cfg(test)]
+/// mod store_tests {
+///     use watchword::MemoryStore;
+///
+///     // An app passes its own store, such as
+///     // `SqllStore::new(open_scratch_pool().await?)`.
+///     watchword::store_suite!(MemoryStore::new());
+/// }
+/// # fn main() {}
+/// ```
+#[macro_export]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "test-util")))]
 macro_rules! store_suite {
     ($open:expr) => {
-        $crate::store::suite::store_suite! {
+        $crate::store_suite! {
             @tests $open,
             revoked_users_cannot_get_a_session_through_any_login_path,
             revoked_google_user_cannot_sign_in_with_old_method,
@@ -80,15 +124,13 @@ macro_rules! store_suite {
 
     (@tests $open:expr, $($name:ident),* $(,)?) => {
         $(
-            #[tokio::test]
-            async fn $name() -> $crate::store::suite::TestResult {
-                $crate::store::suite::$name($open).await
+            #[test]
+            fn $name() -> $crate::store::suite::TestResult {
+                $crate::store::suite::run(async { $crate::store::suite::$name($open).await })
             }
         )*
     };
 }
-
-pub(crate) use store_suite;
 
 fn ip() -> IpAddr {
     IpAddr::from([192, 0, 2, 1])
@@ -287,9 +329,7 @@ where
     }
 }
 
-pub(crate) async fn revoked_users_cannot_get_a_session_through_any_login_path<S>(
-    store: S,
-) -> TestResult
+pub async fn revoked_users_cannot_get_a_session_through_any_login_path<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -343,7 +383,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn revoked_google_user_cannot_sign_in_with_old_method<S>(store: S) -> TestResult
+pub async fn revoked_google_user_cannot_sign_in_with_old_method<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -366,7 +406,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn unregistered_users_cannot_sign_in<S>(store: S) -> TestResult
+pub async fn unregistered_users_cannot_sign_in<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -401,7 +441,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn reinvited_users_can_register_again<S>(store: S) -> TestResult
+pub async fn reinvited_users_can_register_again<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -436,7 +476,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn google_login_only_matches_google_registrations<S>(store: S) -> TestResult
+pub async fn google_login_only_matches_google_registrations<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -474,7 +514,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn registered_users_only_accept_reset_tokens<S>(store: S) -> TestResult
+pub async fn registered_users_only_accept_reset_tokens<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -536,7 +576,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn pending_and_reinvited_users_get_registration_tokens<S>(store: S) -> TestResult
+pub async fn pending_and_reinvited_users_get_registration_tokens<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -556,7 +596,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn replacing_credentials_through_google_ends_sessions<S>(store: S) -> TestResult
+pub async fn replacing_credentials_through_google_ends_sessions<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -600,7 +640,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn google_users_are_bound_by_subject<S>(store: S) -> TestResult
+pub async fn google_users_are_bound_by_subject<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -642,7 +682,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn replacing_credentials_replaces_the_google_subject<S>(store: S) -> TestResult
+pub async fn replacing_credentials_replaces_the_google_subject<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -691,7 +731,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn a_google_account_binds_only_one_user<S>(store: S) -> TestResult
+pub async fn a_google_account_binds_only_one_user<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -801,7 +841,7 @@ where
     Ok(link)
 }
 
-pub(crate) async fn bootstraps_an_admin_into_an_empty_store<S>(store: S) -> TestResult
+pub async fn bootstraps_an_admin_into_an_empty_store<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -846,7 +886,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn bootstraps_an_admin_by_login<S>(store: S) -> TestResult
+pub async fn bootstraps_an_admin_by_login<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -885,7 +925,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn bootstrap_is_skipped_once_users_exist<S>(store: S) -> TestResult
+pub async fn bootstrap_is_skipped_once_users_exist<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -929,7 +969,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn bootstrap_reissues_an_expired_link<S>(store: S) -> TestResult
+pub async fn bootstrap_reissues_an_expired_link<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -976,7 +1016,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn bootstrap_reissues_a_pruned_link<S>(store: S) -> TestResult
+pub async fn bootstrap_reissues_a_pruned_link<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1012,7 +1052,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn bootstrap_leaves_a_pending_admin_to_an_active_admin<S>(store: S) -> TestResult
+pub async fn bootstrap_leaves_a_pending_admin_to_an_active_admin<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1063,7 +1103,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn recovery_links_reset_register_and_restore<S>(store: S) -> TestResult
+pub async fn recovery_links_reset_register_and_restore<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1120,7 +1160,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn imports_users_without_a_link<S>(store: S) -> TestResult
+pub async fn imports_users_without_a_link<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1155,7 +1195,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn imports_follow_the_identity_rules<S>(store: S) -> TestResult
+pub async fn imports_follow_the_identity_rules<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1206,7 +1246,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn finds_users_by_login_or_email<S>(store: S) -> TestResult
+pub async fn finds_users_by_login_or_email<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1231,7 +1271,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn builder_from_store_keeps_the_session_key<S>(store: S) -> TestResult
+pub async fn builder_from_store_keeps_the_session_key<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1239,15 +1279,13 @@ where
     let offline = Auth::builder_from_store(store).await?.build();
 
     // A cookie one signs, the other accepts.
-    let cookie = server.set_cookie(&http::HeaderMap::new(), "session-id");
-    let cookie = cookie.to_str()?.split(';').next().ok_or("empty cookie")?;
     let mut headers = http::HeaderMap::new();
-    headers.insert(http::header::COOKIE, cookie.parse()?);
+    headers.insert(http::header::COOKIE, server.cookie_header("session-id"));
     assert_eq!(offline.session_id(&headers).as_deref(), Some("session-id"));
     Ok(())
 }
 
-pub(crate) async fn password_sign_in_by_login_or_email<S>(store: S) -> TestResult
+pub async fn password_sign_in_by_login_or_email<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1287,7 +1325,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn password_sign_in_by_email_only_without_logins<S>(store: S) -> TestResult
+pub async fn password_sign_in_by_email_only_without_logins<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1308,7 +1346,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn password_sign_in_is_throttled<S>(store: S) -> TestResult
+pub async fn password_sign_in_is_throttled<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1330,7 +1368,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn registering_ends_other_sessions<S>(store: S) -> TestResult
+pub async fn registering_ends_other_sessions<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1369,7 +1407,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn links_expire_and_are_single_use<S>(store: S) -> TestResult
+pub async fn links_expire_and_are_single_use<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1411,7 +1449,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn issuing_a_link_uses_up_earlier_ones<S>(store: S) -> TestResult
+pub async fn issuing_a_link_uses_up_earlier_ones<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1430,7 +1468,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn changing_the_password_keeps_this_session<S>(store: S) -> TestResult
+pub async fn changing_the_password_keeps_this_session<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1480,7 +1518,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn sessions_expire_and_are_pruned<S>(store: S) -> TestResult
+pub async fn sessions_expire_and_are_pruned<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1502,7 +1540,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn long_expired_links_are_pruned<S>(store: S) -> TestResult
+pub async fn long_expired_links_are_pruned<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1549,7 +1587,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn the_builder_prunes_on_a_timer<S>(store: S) -> TestResult
+pub async fn the_builder_prunes_on_a_timer<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1580,7 +1618,7 @@ where
     Err("the expired session and link were not pruned".into())
 }
 
-pub(crate) async fn sign_out_and_sign_out_everywhere<S>(store: S) -> TestResult
+pub async fn sign_out_and_sign_out_everywhere<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1606,7 +1644,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn admin_operations_need_an_admin<S>(store: S) -> TestResult
+pub async fn admin_operations_need_an_admin<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1806,7 +1844,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn admins_cannot_act_on_themselves<S>(store: S) -> TestResult
+pub async fn admins_cannot_act_on_themselves<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1866,7 +1904,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn update_user_rules<S>(store: S) -> TestResult
+pub async fn update_user_rules<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -1982,7 +2020,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn identity_rules<S>(store: S) -> TestResult
+pub async fn identity_rules<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -2082,7 +2120,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn delete_user_removes_sessions_and_links<S>(store: S) -> TestResult
+pub async fn delete_user_removes_sessions_and_links<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -2106,7 +2144,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn impersonation<S>(store: S) -> TestResult
+pub async fn impersonation<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -2225,7 +2263,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn events_are_sent<S>(store: S) -> TestResult
+pub async fn events_are_sent<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -2288,7 +2326,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn users_lists_live_links<S>(store: S) -> TestResult
+pub async fn users_lists_live_links<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -2310,7 +2348,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn activation_only_changes_pending_users<S>(store: S) -> TestResult
+pub async fn activation_only_changes_pending_users<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {
@@ -2335,7 +2373,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn credentials_are_not_set_on_revoked_users<S>(store: S) -> TestResult
+pub async fn credentials_are_not_set_on_revoked_users<S>(store: S) -> TestResult
 where
     S: Store + Clone,
 {

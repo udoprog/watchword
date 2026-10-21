@@ -129,7 +129,7 @@ without its default features, so the time zone databases it does not need for
 | `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, its `SCHEMA`, `MIGRATIONS` and `check_schema`, and watchword-core's `sqll014`: the sqll column traits on `UserId` (an integer with the same bits), `Role`, `Access` and `Method` (their names) | sqll 0.14 (`derive`, `pool`, `typed`, `threadsafe`; no default features, the app picks `bundled`) |
 | `phrasebook01` | `std` + `watchword::phrasebook01` (watchword-core's): `L10N`, the components' messages as a phrasebook catalog, without yew, for native tools such as an l10n checker | phrasebook 0.1 (no features) |
 | `yew023` | `std` + `phrasebook01` + watchword-yew023: components, context, hook, HTTP client, and `L10N` re-exported | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.1 (`yew023`) |
-| `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum08` also `google::fake::FakeGoogle` (see 2.4) | nothing more |
+| `test-util` | `server` + for apps' tests: `Auth::test_user` and `Auth::test_session` (2.2), the store conformance suite as `store_suite!` (2.3); with `google` also `AuthBuilder::google_endpoints`, and with `google` and `axum08` `google::fake::FakeGoogle` (2.4) | nothing more |
 | `musliweb04` *(2.7)* | `alloc` + `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
 
 The modules are `watchword::{types, core, store, cloudflare, google, axum08,
@@ -326,6 +326,19 @@ registered, and a revoked one are refused with `Forbidden`. Around them,
 impersonated, `cloudflare_available(&headers)` answers `AuthConfig::cloudflare`,
 and `session_id`, `set_cookie`, `clear_cookie` and `client_address` read and
 write the cookie and the client's address for a framework integration.
+`cookie_header(session_id)` is the request's `Cookie` header for a session
+(`set_cookie`'s `name=value` pair without its attributes), for a test or a
+client making requests as that session, so none splits a `Set-Cookie` by hand.
+
+For an app's tests, the `test-util` feature adds two helpers that skip the
+sign-in routes. `test_user(&new, password)` creates an active user with that
+password, as `import_user` followed by setting the password does (the same
+checks, events and audit events, with no actor), hashed at bcrypt's lowest
+cost so that signing in with it is quick and short test passwords are
+accepted. `test_session(&user)` creates and stores an ordinary session for the
+user, to pass as the actor's session or to send with `cookie_header`; it is
+created whatever the user's access, and `session` and the extractors judge it
+like any other. Neither may be reachable from a request.
 
 Operations fail with `core::Error`: either an `AuthError` to answer the request
 with (`Error::auth_error`), or an internal failure (store, hashing, a blocking
@@ -464,7 +477,15 @@ pub enum Credential { Password(String /* hash */), Google { sub: String, email: 
 Store failures are a `StoreError`, which boxes any error.
 
 The library ships `MemoryStore`, used by its own tests and the example app, and,
-behind `sqll014`, `SqllStore`. The crate's store test suite runs against both.
+behind `sqll014`, `SqllStore`. The crate's store conformance suite, the
+tests of `Auth`'s rules that depend on what a store keeps, runs against both.
+With `test-util` it is public as `watchword::store_suite!(expr)`, which
+defines one `#[test]` per test, each over a fresh store from `expr`
+(evaluated in the test's async context, so it may `.await`) on a
+current-thread tokio runtime of its own. An app runs it over its own `Store`,
+or over `SqllStore` on its own migrated schema, instead of re-testing
+watchword's sign-in and user-management behaviour; the functions it calls
+are hidden, and new tests arrive in minor releases.
 
 `SqllStore` works on a sqll `Pool`. It exports its statement collections,
 `watchword::sqll014::Read` and `watchword::sqll014::Write`. An app nests these
@@ -565,7 +586,7 @@ ignores the app's own tables and columns.
   Google's endpoints are `google::Endpoints` (`auth`, `token`, `tokeninfo`),
   whose `Default` is Google's own; production always uses it. For an app to
   test a Google sign-in, registration through a link, or switching to Google
-  without the network, the `test-util` feature adds
+  without the network, `test-util` with `google` adds
   `AuthBuilder::google_endpoints(Endpoints)`, and with `axum08` also
   `google::fake::FakeGoogle`: a local server on `127.0.0.1:0` serving the
   token and tokeninfo endpoints for one `GoogleConfig`. The test plays the
@@ -1426,3 +1447,18 @@ once the release is on crates.io.
     `Connection::require_admin`, not a mirrored event. `AdminUsers.me`
     becomes `Option` (breaking for struct-literal props; `html!` users are
     unaffected through yew's `T -> Option<T>` prop conversion).
+28. **`test-util` is for any app's tests, not only Google's.** It began as
+    the fake Google and implied `google`, so apps without Google wrote their
+    own sign-in helpers: each turned a `Set-Cookie` into a `Cookie` by
+    splitting at `;`, built sessions by hand, precomputed bcrypt hashes for
+    speed, and re-tested watchword's login, throttling and registration
+    rules. Now `test-util` implies only `server` and carries `test_user`,
+    `test_session` and the store suite, while the Google parts need `google`
+    as well, so an app's tests do not pull in reqwest for a provider it does
+    not use. That breaks an app that took `test-util` alone for
+    `google_endpoints` or `FakeGoogle`; it adds `google`. `cookie_header` is
+    under `server` rather than `test-util`, since a client making requests
+    as a session needs it too. The store suite is exported as a macro over
+    hidden functions rather than as named public tests, so it can grow
+    without each test becoming API; it runs each test on its own runtime so
+    an app needs no tokio `macros` for it.

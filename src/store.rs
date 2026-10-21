@@ -23,8 +23,11 @@ use crate::types::{Access, Conflict, Method, NewUser, Role, UserChange, UserId, 
 
 mod memory;
 
-#[cfg(test)]
-pub(crate) mod suite;
+// The store conformance suite, run through `store_suite!`; its functions are
+// public only for the macro.
+#[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
+pub mod suite;
 
 pub use self::memory::MemoryStore;
 
@@ -114,7 +117,7 @@ pub struct Session {
     pub expires_at: Timestamp,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-util"))]
 impl Session {
     /// A session for `user` that is not stored, for operations that take
     /// the actor's session only to attribute their audit events.

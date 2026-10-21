@@ -12,6 +12,13 @@ pub fn hash_password(password: &str) -> Result<String, PasswordError> {
     bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(PasswordError)
 }
 
+/// Hashes at bcrypt's lowest cost, which is quick to hash and to check, for
+/// test users.
+#[cfg(any(test, feature = "test-util"))]
+pub(crate) fn hash_password_cheaply(password: &str) -> Result<String, PasswordError> {
+    bcrypt::hash(password, 4).map_err(PasswordError)
+}
+
 /// A malformed hash verifies as false.
 pub fn verify_password(password: &str, hash: &str) -> bool {
     bcrypt::verify(password, hash).unwrap_or(false)

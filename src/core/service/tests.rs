@@ -35,7 +35,10 @@ fn cookies_round_trip() {
     assert!(!set.contains("Secure"), "{set}");
     assert!(!set.contains("Expires"), "{set}");
 
-    let value = set.split(';').next().unwrap();
+    let value = auth.cookie_header("abc_-123");
+    let value = value.to_str().unwrap();
+    assert!(set.starts_with(&format!("{value};")), "{set}");
+    assert!(!value.contains(';'), "{value}");
     let request = headers(&[(header::COOKIE.as_str(), &format!("other=1; {value}"))]);
     assert_eq!(auth.session_id(&request).as_deref(), Some("abc_-123"));
 
@@ -415,5 +418,60 @@ async fn operations_send_actor_attributed_audit_events() -> Result<(), Box<dyn s
         }
     );
     assert_eq!(Actor::System.responsible(), None);
+    Ok(())
+}
+
+/// A test user signs in with their password and a test session acts for
+/// them, in the service and through the `Cookie` header.
+#[tokio::test]
+async fn test_users_and_sessions() -> Result<(), Box<dyn std::error::Error>> {
+    let auth = auth(CookieConfig::default());
+
+    let new = NewUser {
+        login: Some(" alice ".into()),
+        email: Some("Alice@Example.com".into()),
+        role: Role::Admin,
+    };
+
+    let alice = auth.test_user(&new, "pw").await?;
+    assert_eq!(alice.login.as_deref(), Some("alice"));
+    assert_eq!(alice.email.as_deref(), Some("alice@example.com"));
+    assert_eq!(alice.role, Role::Admin);
+    assert_eq!(alice.access, Access::Active);
+    assert_eq!(alice.method, Method::Password);
+
+    let login = LoginRequest {
+        login: "alice@example.com".into(),
+        password: "pw".into(),
+    };
+    let (signed_in, _) = auth
+        .sign_in_password(IpAddr::from([127, 0, 0, 1]), &login)
+        .await?;
+    assert_eq!(signed_in, alice);
+
+    let taken = auth.test_user(&new, "pw").await.unwrap_err();
+    assert!(
+        matches!(taken.auth_error(), Some(AuthError::Conflict(_))),
+        "{taken}"
+    );
+
+    let session = auth.test_session(&alice).await?;
+    let request = headers(&[(
+        header::COOKIE.as_str(),
+        auth.cookie_header(&session.id).to_str()?,
+    )]);
+    let id = auth.session_id(&request).ok_or("no session cookie")?;
+    assert_eq!(
+        auth.session(&id).await?,
+        Some((alice.clone(), session.clone()))
+    );
+
+    // The session acts as the admin.
+    let bob = NewUser {
+        login: Some("bob".into()),
+        email: None,
+        role: Role::Regular,
+    };
+    auth.create_user(&alice, &session, &bob).await?;
     Ok(())
 }

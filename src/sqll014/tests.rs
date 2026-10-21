@@ -6,9 +6,9 @@ use sqll014::{Connection, OpenOptions, PoolBuilder};
 
 use super::*;
 use crate::core::{Auth, generate_session_key, new_session_id};
-use crate::store::suite::{TestResult, store_suite};
+use crate::store::suite::TestResult;
 
-store_suite!(store(&scratch_uri(), true));
+crate::store_suite!(store(&scratch_uri(), true));
 
 /// A new in-memory database's URI, shared by every connection that opens it
 /// while one is open.
