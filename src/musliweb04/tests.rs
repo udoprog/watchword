@@ -453,7 +453,7 @@ async fn updates_follow_the_session() {
     assert!(tokio::time::timeout(BRIEFLY, regular.next()).await.is_err());
 
     let erin_changed = auth
-        .set_role(&root.user, erin.user.id, Role::Admin)
+        .set_role(&root.user, &root.session, erin.user.id, Role::Admin)
         .await
         .unwrap();
     let next = tokio::time::timeout(WAIT, regular.next()).await.unwrap();
@@ -492,7 +492,11 @@ async fn updates_resync_after_a_lag() {
         } else {
             Role::Regular
         };
-        last = Some(auth.set_role(&root.user, ada.user.id, role).await.unwrap());
+        last = Some(
+            auth.set_role(&root.user, &root.session, ada.user.id, role)
+                .await
+                .unwrap(),
+        );
     }
 
     let next = tokio::time::timeout(WAIT, updates.next()).await.unwrap();
