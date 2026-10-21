@@ -1345,8 +1345,8 @@ once the release is on crates.io.
     watchword's types combines its handler with `Connection` through
     `ws::Handler::or` instead. Either way musli-web checks at compile time that
     no id is used twice, though `Or`'s check runs only when a binary is built,
-    so such an app adds a `const` `IdSet` assertion. Until 0.3 the app forwarded the ids its own `Request` did
-    not know (`Unknown(id)`), from before musli-web could compose lists; that
+    so such an app adds a `const` `IdSet` assertion. Until 0.3 the app
+    forwarded the ids its own `Request` did not know (`Unknown(id)`), from before musli-web could compose lists; that
     checked nothing. Making apps pin their own ids instead would renumber
     their existing protocols. The band is part of the wire format: a released
     id never changes meaning.

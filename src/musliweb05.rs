@@ -52,10 +52,11 @@
 //! endpoints' requests on one socket, running the same operations as the HTTP
 //! routes, called from the app's handler (its `handle`, in the arm of the
 //! included list) or, without the include, combined with it as a
-//! `ws::Handler` through `ws::Handler::or`, and turns each [`AuthEvent`](crate::AuthEvent) into the
-//! [`AuthUpdate`] that socket may see. Its `updates` are the socket loop's
-//! whole auth arm: an `Updates` holds the session's guard and the event
-//! receiver and yields the updates to broadcast until the session ends. Its
+//! `ws::Handler` through `ws::Handler::or`, and turns each
+//! [`AuthEvent`](crate::AuthEvent) into the [`AuthUpdate`] that socket may
+//! see. Its `updates` are the socket loop's whole auth arm: an `Updates`
+//! holds the session's guard and the event receiver and yields the updates to
+//! broadcast until the session ends. Its
 //! `signed_in` and `require_admin` gate the app's own requests on that socket
 //! with the same checks and [`AuthError`]s as watchword's. A request that
 //! fails answers the client with a `RequestError`, which sends a refusal as
