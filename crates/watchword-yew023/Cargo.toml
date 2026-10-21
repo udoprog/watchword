@@ -20,17 +20,15 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(watchword_docsrs)'] }
 all-features = true
 rustdoc-args = ["--cfg", "watchword_docsrs"]
 
-# yew, `Rc` and `HashMap` need std, so everything the crate provides is behind
-# `std`; `alloc` alone provides nothing yet.
 [features]
 default = ["std"]
 std = ["alloc", "watchword-core/std", "watchword-core/phrasebookcatalog01", "serde/std", "jiff/std", "musli-web05?/std"]
 alloc = ["watchword-core/alloc", "serde/alloc", "jiff/alloc"]
 musliweb05 = ["std", "dep:musli-web05", "watchword-core/musliweb05"]
 
-# yew's macros expand to `::yew::` paths, so the dependency key must stay `yew`.
 [dependencies]
 watchword-core = { path = "../watchword-core", version = "=0.3.0", default-features = false }
+# yew's macros expand to `::yew::` paths, so the dependency key must stay `yew`.
 yew = "0.23.0"
 gloo-net = { version = "0.7.0", default-features = false, features = ["http", "json"] }
 jiff = { version = "0.2.37", default-features = false, features = ["js"] }

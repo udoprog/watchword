@@ -130,10 +130,10 @@ without its default features, so the time zone databases it does not need for
 | `alloc` | the rest of `types`: the wire types, `AuthError`, `validate_password`, `normalize_email` | their `alloc` |
 | `std` *(default)* | `alloc`, and std for the dependencies (and watchword-yew023) | their `std` |
 | `musli02` | `Encode`/`Decode` on the types, so an app can embed them in its own WebSocket messages | musli-core 0.2 |
-| `server` | `std` + `core` (hashing, ids, cookies, the `Auth` service, throttle, events, bootstrap, `SessionGuard`) and `store` (`Store`, `MemoryStore`) | base64, bcrypt, cookie, hmac, http, rand, sha2, tokio (rt, sync, time), tracing |
+| `server` | `std` + `core` (hashing, ids, cookies, the `Auth` service, throttle, events, bootstrap, `SessionGuard`) and `store` (`Store`, `MemoryStore`) | base64, bcrypt, cookie, hmac, http, rand, sha2, tokio (rt, sync, time, and macros for `SessionGuard`'s `select!`), tracing (`std`, so events reach a scoped subscriber) |
 | `cloudflare` | `server` + the Cloudflare Access provider | aws-lc-rs, reqwest, serde_json |
 | `google` | `server` + the Google OAuth provider (`GoogleConfig`) | reqwest, serde_json, url, lru |
-| `axum08` | `server` + extractors and `routes()` for axum 0.8 | axum 0.8 |
+| `axum08` | `server` + extractors and `routes()` for axum 0.8 | axum 0.8 (`tokio`, for `ConnectInfo`; the app picks `http1`/`http2`, `google` adds `query` for its callback, and `test-util` adds `http1` for `FakeGoogle`'s `axum::serve`) |
 | `sqll015` | watchword-core's `sqll015`: the sqll column traits on `UserId` (an integer with the same bits), `Role`, `Access` and `Method` (their names), for an app's own `Store` over SQLite (2.3); no storage of its own | sqll 0.15 through watchword-core (`threadsafe`; the app picks `bundled`) |
 | `phrasebookcatalog01` | `watchword::phrasebookcatalog01` (watchword-core's): `L10N`, the components' messages as a phrasebook-catalog catalog, without yew or `std`, for native tools such as an l10n checker | phrasebook-catalog 0.1 (no features) |
 | `yew023` | `std` + `phrasebookcatalog01` + watchword-yew023: components, context, hook, HTTP client, and `L10N` re-exported | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.2 (`yew023`) |

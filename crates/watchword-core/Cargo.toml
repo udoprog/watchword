@@ -20,8 +20,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(watchword_docsrs)'] }
 all-features = true
 rustdoc-args = ["--cfg", "watchword_docsrs"]
 
-# Builds for wasm32-unknown-unknown with any feature but `axum08` and
-# `sqll015`, and with `--no-default-features` without `std` or `alloc`.
 [features]
 default = ["std"]
 std = ["alloc", "serde/std", "jiff/std", "thiserror/std", "musli-core02?/std", "musli-web05?/std"]
@@ -32,7 +30,6 @@ axum08 = ["std", "dep:axum08"]
 sqll015 = ["std", "dep:sqll015"]
 phrasebookcatalog01 = ["dep:phrasebookcatalog01"]
 
-# jiff without its time zone databases: only `Timestamp` is used.
 [dependencies]
 jiff = { version = "0.2.37", default-features = false, features = ["serde"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
@@ -41,14 +38,11 @@ thiserror = { version = "2.0.18", default-features = false }
 musli-core02 = { package = "musli-core", version = "0.2.0", default-features = false, optional = true }
 musli-web05 = { package = "musli-web", version = "0.5.0", default-features = false, features = ["api"], optional = true }
 axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["json"], optional = true }
-# Only its traits. `threadsafe` because sqll-sys builds with nothing but
-# `bundled` without it; the app picks the linking and anything else it needs.
+# `threadsafe`, or an app's `bundled` sqll-sys builds SQLite with SQLITE_THREADSAFE=0.
 sqll015 = { package = "sqll", version = "0.15.0", default-features = false, features = ["threadsafe"], optional = true }
-# `Catalog`, `Lang` and `Source`: const, `no_std` and without `alloc`.
 phrasebookcatalog01 = { package = "phrasebook-catalog", version = "0.1.0", optional = true }
 
 [dev-dependencies]
-# `check::catalog` on `L10N`.
 phrasebook = "0.2.0"
 musli = { version = "0.2.0", features = ["storage", "wire", "descriptive", "json"] }
 serde_json = "1.0.151"
