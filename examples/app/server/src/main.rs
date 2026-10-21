@@ -120,18 +120,21 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
-/// Google from `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, with the
-/// callback at the library's fixed path under the public URL.
-fn google_config(public_url: &Url) -> Option<GoogleConfig> {
-    let client_id = std::env::var("GOOGLE_CLIENT_ID").ok()?;
-    let client_secret = std::env::var("GOOGLE_CLIENT_SECRET").ok()?;
-    let redirect_url = public_url.join(auth::google::REDIRECT_PATH).ok()?;
+/// Google from `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, both or neither,
+/// with the callback at the library's fixed path under the public URL.
+fn google_config(public_url: &Url) -> Result<Option<GoogleConfig>, String> {
+    let client_id = std::env::var("GOOGLE_CLIENT_ID").ok();
+    let client_secret = std::env::var("GOOGLE_CLIENT_SECRET").ok();
 
-    Some(GoogleConfig {
-        client_id,
-        client_secret,
-        redirect_url,
-    })
+    let (client_id, client_secret) = match (client_id, client_secret) {
+        (Some(id), Some(secret)) => (id, secret),
+        (None, None) => return Ok(None),
+        _ => return Err("set both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or neither".into()),
+    };
+
+    GoogleConfig::new(client_id, client_secret, public_url)
+        .map(Some)
+        .map_err(|e| format!("Google sign-in: {e}"))
 }
 
 /// The initial Cloudflare Access settings, from the environment.
@@ -172,7 +175,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => format!("http://{}", args.bind).parse()?,
     };
 
-    let google = google_config(&public_url);
+    let google = match google_config(&public_url) {
+        Ok(google) => google,
+        Err(error) => {
+            eprintln!("error: {error}");
+            std::process::exit(2);
+        }
+    };
     let cloudflare = cloudflare_config();
 
     tracing::info!(

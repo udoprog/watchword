@@ -11,14 +11,11 @@
 //! ```no_run
 //! # async fn test() -> std::io::Result<()> {
 //! use watchword::google::fake::{FakeAccount, FakeGoogle};
-//! use watchword::google::{GoogleConfig, REDIRECT_PATH, Url};
+//! use watchword::google::{GoogleConfig, Url};
 //! use watchword::{Auth, MemoryStore, generate_session_key};
 //!
-//! let config = GoogleConfig {
-//!     client_id: "client".to_owned(),
-//!     client_secret: "secret".to_owned(),
-//!     redirect_url: Url::parse(&format!("https://app.example{REDIRECT_PATH}")).unwrap(),
-//! };
+//! let public_url = Url::parse("https://app.example").unwrap();
+//! let config = GoogleConfig::new("client", "secret", &public_url).unwrap();
 //!
 //! let google = FakeGoogle::start(&config).await?;
 //!

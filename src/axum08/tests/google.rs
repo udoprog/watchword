@@ -14,11 +14,9 @@ fn redirect_url() -> Url {
 }
 
 async fn google_auth() -> (Auth, FakeGoogle) {
-    let config = GoogleConfig {
-        client_id: "client".to_owned(),
-        client_secret: "secret".to_owned(),
-        redirect_url: redirect_url(),
-    };
+    let public_url = Url::parse("https://app.example").unwrap();
+    let config = GoogleConfig::new("client", "secret", &public_url).unwrap();
+    assert_eq!(config.redirect_url, redirect_url());
 
     let google = FakeGoogle::start(&config).await.unwrap();
 

@@ -455,7 +455,14 @@ ignores the app's own tables and columns.
   - Registration through a link, and "switch to Google" from the account page.
   - One Google account binds only one user.
 
-  The provider takes a `GoogleConfig { client_id, client_secret, redirect_url }`.
+  The provider takes a `GoogleConfig { client_id, client_secret, redirect_url }`,
+  built with `GoogleConfig::new(client_id, client_secret, public_url: &Url) ->
+  Result<GoogleConfig, GoogleConfigError>`: it refuses an empty id or secret
+  and a public URL that is not `http`/`https` or has a path, query or fragment,
+  and derives `redirect_url` as `REDIRECT_PATH` under the public URL, so the
+  path cannot be set wrong. The fields stay public for a callback reached some
+  other way (a proxy stripping a prefix), where the provider only warns when
+  the path is not `REDIRECT_PATH`.
   It is reached only through the routes (2.5); the callback redirects to `/` on
   success, or to `/?error=auth-failed` or `/?error=user-not-found` on failure.
 

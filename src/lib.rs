@@ -38,7 +38,7 @@
 //! | `musliweb04` | [`musliweb04`] | for musli-web 0.4: the account and user-management endpoints and the `AuthBroadcast` of live auth changes, as API types an app carries on its own musli-web WebSocket, with their ids pinned in 32000–32255; with `axum08`, `Connection`, which answers those endpoints on one socket and turns `AuthEvent`s into the updates it may see; with `yew023`, `AuthContext::set_socket`, through which the components follow those broadcasts (implies `alloc` and `musli01`) |
 //! | `server` | [`core`], [`store`] | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin) and `Auth::guard` for WebSocket sessions; the `Store` trait and `MemoryStore` (implies `std`) |
 //! | `cloudflare` | [`cloudflare`] | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
-//! | `google` | [`google`] | Google OAuth: `GoogleConfig` for `AuthBuilder::google`; with `axum08`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
+//! | `google` | [`google`] | Google OAuth: `GoogleConfig::new` for `AuthBuilder::google`; with `axum08`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
 //! | `axum08` | [`axum08`] | for axum 0.8: the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors and `routes()` for the `/api/auth` JSON routes, plus the Cloudflare and Google routes when those features are on (implies `server`) |
 //! | `sqll014` | [`sqll014`] | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA` for a new database, its ordered `MIGRATIONS` (the first tables and every upgrade since) for an app's migration runner, and `check_schema` to fail at startup on missing tables or columns (implies `server`). It takes sqll with `derive`, `pool`, `typed` and `threadsafe` only; the app names `bundled` or links its own SQLite |
 //! | `test-util` | [`google::fake`] | for an app's tests: `AuthBuilder::google_endpoints`, and with `axum08` `FakeGoogle`, a local fake Google to sign in through offline (implies `google`) |
@@ -189,4 +189,4 @@ pub use self::store::{MemoryStore, Store};
 
 #[cfg(feature = "google")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "google")))]
-pub use self::google::GoogleConfig;
+pub use self::google::{GoogleConfig, GoogleConfigError};

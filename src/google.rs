@@ -1,6 +1,7 @@
 //! Signing in with Google OAuth (the `google` feature).
 //!
-//! This is the OAuth authorization-code flow. Configure it with
+//! This is the OAuth authorization-code flow. Configure it with a
+//! [`GoogleConfig::new`], built from the app's public URL, passed to
 //! [`AuthBuilder::google`](crate::AuthBuilder::google); the `axum08` feature
 //! serves its routes:
 //!
@@ -58,6 +59,11 @@ const MAX_PENDING: NonZeroUsize = NonZeroUsize::new(10_000).unwrap();
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The OAuth client registered with Google.
+///
+/// Build it with [`GoogleConfig::new`] from the app's public URL, which
+/// derives the [`redirect_url`](Self::redirect_url) the `axum08` routes serve
+/// the callback at. The fields stay public for an app whose callback is
+/// reached some other way, such as behind a proxy that strips a path prefix.
 #[derive(Clone, PartialEq, Eq)]
 pub struct GoogleConfig {
     /// The OAuth client id.
@@ -68,6 +74,84 @@ pub struct GoogleConfig {
     /// such as `https://example.com/api/auth/google/redirect`. Its path must
     /// be [`REDIRECT_PATH`].
     pub redirect_url: Url,
+}
+
+impl GoogleConfig {
+    /// The client `client_id` with `client_secret`, which Google redirects
+    /// back to at [`REDIRECT_PATH`] under `public_url`, the URL the app is
+    /// reached at, such as `https://example.com`.
+    ///
+    /// The client id and secret must not be empty, and the public URL must be
+    /// an `http` or `https` URL with no path (beyond `/`), query or
+    /// fragment, since the callback is served at the root.
+    ///
+    /// ```
+    /// use watchword::google::{GoogleConfig, Url};
+    ///
+    /// let public_url = Url::parse("https://example.com").unwrap();
+    /// let config = GoogleConfig::new("client", "secret", &public_url).unwrap();
+    ///
+    /// assert_eq!(
+    ///     config.redirect_url.as_str(),
+    ///     "https://example.com/api/auth/google/redirect"
+    /// );
+    /// ```
+    pub fn new(
+        client_id: impl Into<String>,
+        client_secret: impl Into<String>,
+        public_url: &Url,
+    ) -> Result<Self, GoogleConfigError> {
+        let client_id = client_id.into();
+        let client_secret = client_secret.into();
+
+        if client_id.is_empty() {
+            return Err(GoogleConfigError::EmptyClientId);
+        }
+
+        if client_secret.is_empty() {
+            return Err(GoogleConfigError::EmptyClientSecret);
+        }
+
+        if !matches!(public_url.scheme(), "http" | "https") {
+            return Err(GoogleConfigError::UnsupportedScheme(
+                public_url.scheme().into(),
+            ));
+        }
+
+        if public_url.path() != "/"
+            || public_url.query().is_some()
+            || public_url.fragment().is_some()
+        {
+            return Err(GoogleConfigError::NotRoot);
+        }
+
+        let mut redirect_url = public_url.clone();
+        redirect_url.set_path(REDIRECT_PATH);
+
+        Ok(Self {
+            client_id,
+            client_secret,
+            redirect_url,
+        })
+    }
+}
+
+/// Why [`GoogleConfig::new`] refused its settings.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum GoogleConfigError {
+    /// The client id is empty.
+    #[error("the Google client id is empty")]
+    EmptyClientId,
+    /// The client secret is empty.
+    #[error("the Google client secret is empty")]
+    EmptyClientSecret,
+    /// The public URL's scheme is neither `http` nor `https`.
+    #[error("the public URL's scheme {0:?} is neither http nor https")]
+    UnsupportedScheme(String),
+    /// The public URL has a path, query or fragment.
+    #[error("the public URL must have no path, query or fragment")]
+    NotRoot,
 }
 
 impl fmt::Debug for GoogleConfig {
@@ -452,6 +536,56 @@ mod tests {
         let state = get("state").unwrap();
         assert_eq!(provider.take(state), Some(Flow::SignIn));
         assert_eq!(provider.take(state), None);
+    }
+
+    #[test]
+    fn new_derives_the_redirect_url() {
+        for public in [
+            "https://example.com",
+            "https://example.com/",
+            "http://localhost:8080",
+        ] {
+            let config =
+                GoogleConfig::new("client", "secret", &Url::parse(public).unwrap()).unwrap();
+            assert_eq!(config.client_id, "client");
+            assert_eq!(config.client_secret, "secret");
+            assert_eq!(config.redirect_url.path(), REDIRECT_PATH);
+            assert_eq!(
+                config.redirect_url.origin(),
+                Url::parse(public).unwrap().origin()
+            );
+        }
+    }
+
+    #[test]
+    fn new_rejects_bad_settings() {
+        let url = |s| Url::parse(s).unwrap();
+        let ok = url("https://example.com");
+
+        assert_eq!(
+            GoogleConfig::new("", "secret", &ok),
+            Err(GoogleConfigError::EmptyClientId)
+        );
+        assert_eq!(
+            GoogleConfig::new("client", "", &ok),
+            Err(GoogleConfigError::EmptyClientSecret)
+        );
+        assert_eq!(
+            GoogleConfig::new("client", "secret", &url("ftp://example.com")),
+            Err(GoogleConfigError::UnsupportedScheme("ftp".to_owned()))
+        );
+
+        for public in [
+            "https://example.com/app",
+            "https://example.com/?a=b",
+            "https://example.com/#top",
+        ] {
+            assert_eq!(
+                GoogleConfig::new("client", "secret", &url(public)),
+                Err(GoogleConfigError::NotRoot),
+                "{public}"
+            );
+        }
     }
 
     #[test]
