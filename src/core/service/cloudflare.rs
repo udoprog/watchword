@@ -12,7 +12,7 @@ use std::vec::Vec;
 
 use http::HeaderMap;
 
-use super::{Auth, AuthBuilder, AuthEvent, Result};
+use super::{Actor, AuditEvent, Auth, AuthBuilder, AuthEvent, Result};
 use crate::store::{Session, User};
 use crate::types::{Access, AuthError, CloudflareConfig};
 
@@ -80,6 +80,11 @@ impl Auth {
             if activated {
                 tracing::info!(user = %user.id, "Cloudflare Access activated a pending user");
                 self.emit(AuthEvent::UserChanged(user.info()));
+
+                self.audit(AuditEvent::Activated {
+                    actor: Actor::System,
+                    user: user.info(),
+                });
             }
         }
 

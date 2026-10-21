@@ -286,7 +286,7 @@ async fn update_account(
         return Err(AuthError::Invalid(Invalid::RoleNotChangeable).into());
     }
 
-    let user = auth.update_user(&user, user.id, &change).await?;
+    let user = auth.update_user(&user, &session, user.id, &change).await?;
     Ok(Json(auth.session_info(&user, &session).await?))
 }
 
@@ -302,7 +302,7 @@ async fn create_user(
     Admin(admin): Admin,
     Body(new): Body<NewUser>,
 ) -> Result<Json<CreatedUser>, Error> {
-    let (entry, link) = auth.create_user(&admin.user, &new).await?;
+    let (entry, link) = auth.create_user(&admin.user, &admin.session, &new).await?;
     Ok(Json(CreatedUser { entry, link }))
 }
 
@@ -312,7 +312,9 @@ async fn update_user(
     Id(id): Id,
     Body(change): Body<UserChange>,
 ) -> Result<Json<UserInfo>, Error> {
-    let user = auth.update_user(&admin.user, id, &change).await?;
+    let user = auth
+        .update_user(&admin.user, &admin.session, id, &change)
+        .await?;
     Ok(Json(user.info()))
 }
 
@@ -321,7 +323,7 @@ async fn delete_user(
     Admin(admin): Admin,
     Id(id): Id,
 ) -> Result<StatusCode, Error> {
-    auth.delete_user(&admin.user, id).await?;
+    auth.delete_user(&admin.user, &admin.session, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -330,7 +332,9 @@ async fn issue_link(
     Admin(admin): Admin,
     Id(id): Id,
 ) -> Result<Json<Link>, Error> {
-    Ok(Json(auth.issue_link(&admin.user, id).await?))
+    Ok(Json(
+        auth.issue_link(&admin.user, &admin.session, id).await?,
+    ))
 }
 
 async fn revoke_link(
@@ -338,7 +342,7 @@ async fn revoke_link(
     Admin(admin): Admin,
     Id(id): Id,
 ) -> Result<StatusCode, Error> {
-    auth.revoke_link(&admin.user, id).await?;
+    auth.revoke_link(&admin.user, &admin.session, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -347,7 +351,8 @@ async fn sign_out_everywhere(
     Admin(admin): Admin,
     Id(id): Id,
 ) -> Result<StatusCode, Error> {
-    auth.sign_out_everywhere(&admin.user, id).await?;
+    auth.sign_out_everywhere(&admin.user, &admin.session, id)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -356,7 +361,7 @@ async fn revoke_access(
     Admin(admin): Admin,
     Id(id): Id,
 ) -> Result<Json<UserInfo>, Error> {
-    let user = auth.revoke_access(&admin.user, id).await?;
+    let user = auth.revoke_access(&admin.user, &admin.session, id).await?;
     Ok(Json(user.info()))
 }
 

@@ -40,7 +40,10 @@ async fn pending(auth: &Auth, admin: &SignedIn, login: &str, role: Role) -> (Use
         email: None,
         role,
     };
-    let (entry, link) = auth.create_user(&admin.user, &new).await.unwrap();
+    let (entry, link) = auth
+        .create_user(&admin.user, &admin.session, &new)
+        .await
+        .unwrap();
     (entry.user, link.token)
 }
 
@@ -133,14 +136,19 @@ async fn an_admin_sees_real_operations() {
         email: None,
         role: Role::Regular,
     };
-    let (entry, _) = auth.create_user(&root.user, &new).await.unwrap();
+    let (entry, _) = auth
+        .create_user(&root.user, &root.session, &new)
+        .await
+        .unwrap();
     let event = events.recv().await.unwrap();
     assert_eq!(
         conn.update(&event).await.unwrap(),
         Some(AuthUpdate::UserCreated(entry.user.clone()))
     );
 
-    auth.delete_user(&root.user, entry.user.id).await.unwrap();
+    auth.delete_user(&root.user, &root.session, entry.user.id)
+        .await
+        .unwrap();
     let mut updates = Vec::new();
 
     while let Ok(event) = events.try_recv() {
@@ -182,7 +190,7 @@ async fn me_follows_a_role_change() {
     let conn = Connection::new(auth.clone(), &erin);
 
     let promoted = auth
-        .set_role(&root.user, erin.user.id, Role::Admin)
+        .set_role(&root.user, &root.session, erin.user.id, Role::Admin)
         .await
         .unwrap();
     let me = AuthEvent::UserChanged(promoted.info());
@@ -244,7 +252,7 @@ async fn a_demoted_admin_stops_seeing_the_user_list() {
     assert_eq!(conn.update(&event).await.unwrap(), Some(update));
 
     let demoted = auth
-        .set_role(&root.user, ada.user.id, Role::Regular)
+        .set_role(&root.user, &root.session, ada.user.id, Role::Regular)
         .await
         .unwrap();
 
@@ -269,7 +277,10 @@ async fn an_ended_session_sees_nothing() {
     let (erin, _) = pending(&auth, &root, "erin", Role::Regular).await;
     let conn = Connection::new(auth.clone(), &ada);
 
-    let revoked = auth.revoke_access(&root.user, ada.user.id).await.unwrap();
+    let revoked = auth
+        .revoke_access(&root.user, &root.session, ada.user.id)
+        .await
+        .unwrap();
 
     let me = AuthEvent::UserChanged(revoked.info());
     assert_eq!(conn.update(&me).await.unwrap(), None);
@@ -313,7 +324,7 @@ async fn a_lag_resyncs_an_admin_and_refreshes_anyone_else() {
     // The missed change itself shows in the user carried.
     let conn = Connection::new(auth.clone(), &ada);
     let demoted = auth
-        .set_role(&root.user, ada.user.id, Role::Regular)
+        .set_role(&root.user, &root.session, ada.user.id, Role::Regular)
         .await
         .unwrap();
     assert_eq!(
@@ -349,7 +360,9 @@ async fn a_lag_on_an_ended_session_sends_nothing() {
     let ada = user(&auth, &root, "ada", Role::Admin).await;
 
     let conn = Connection::new(auth.clone(), &ada);
-    auth.revoke_access(&root.user, ada.user.id).await.unwrap();
+    auth.revoke_access(&root.user, &root.session, ada.user.id)
+        .await
+        .unwrap();
     assert_eq!(conn.lagged().await.unwrap(), None);
 
     let conn = Connection::new(auth.clone(), &root);
@@ -386,12 +399,12 @@ async fn the_checks_follow_the_stored_user() {
         Some(AuthError::Forbidden)
     );
 
-    auth.set_role(&root.user, erin.user.id, Role::Admin)
+    auth.set_role(&root.user, &root.session, erin.user.id, Role::Admin)
         .await
         .unwrap();
     assert_eq!(conn.require_admin().await.unwrap().id, erin.user.id);
 
-    auth.set_role(&root.user, erin.user.id, Role::Regular)
+    auth.set_role(&root.user, &root.session, erin.user.id, Role::Regular)
         .await
         .unwrap();
     assert_eq!(

@@ -4,6 +4,7 @@
 //!
 //! Needs the `server` feature. Nothing here depends on a web framework.
 
+mod audit;
 mod cookie;
 mod guard;
 mod password;
@@ -11,6 +12,7 @@ mod service;
 mod session;
 mod throttle;
 
+pub use self::audit::{Actor, AuditEvent};
 pub use self::cookie::{generate_session_key, session_cookie, verify_session_cookie};
 pub use self::guard::SessionGuard;
 pub use self::password::{PasswordError, dummy_hash, hash_password, verify_password};

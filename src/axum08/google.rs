@@ -38,9 +38,9 @@ async fn register(State(auth): State<Auth>, Token(token): Token) -> Result<Redir
 
 async fn link(
     State(auth): State<Auth>,
-    SignedIn { user, .. }: SignedIn,
+    SignedIn { user, session }: SignedIn,
 ) -> Result<Redirect, Error> {
-    Ok(Redirect::to(auth.google_link(&user)?.as_str()))
+    Ok(Redirect::to(auth.google_link(&user, &session)?.as_str()))
 }
 
 async fn callback(

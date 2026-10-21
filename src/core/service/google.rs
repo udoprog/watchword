@@ -79,16 +79,20 @@ impl Auth {
         }))
     }
 
-    /// Starts switching the signed-in `user` to Google. Refused for a user
-    /// who is not active, such as one being impersonated while pending.
-    pub(crate) fn google_link(&self, user: &User) -> Result<Url> {
+    /// Starts switching the `user` signed in with `session` to Google.
+    /// Refused for a user who is not active, such as one being impersonated
+    /// while pending.
+    pub(crate) fn google_link(&self, user: &User, session: &Session) -> Result<Url> {
         let provider = self.google_provider()?;
 
         if user.access != crate::types::Access::Active {
             return Err(AuthError::Forbidden.into());
         }
 
-        Ok(provider.start(Flow::Link { user: user.id }))
+        Ok(provider.start(Flow::Link {
+            user: user.id,
+            impersonator: session.impersonator,
+        }))
     }
 
     /// Completes a flow Google redirected back from, returning the user and
@@ -139,7 +143,10 @@ impl Auth {
         let result = match &flow {
             Flow::SignIn => self.sign_in_google(sub, email).await,
             Flow::Register { token } => self.register_google(token, sub, email).await,
-            Flow::Link { user } => match self.switch_to_google(*user, None, sub, email).await {
+            Flow::Link { user, impersonator } => match self
+                .switch_to_google(*user, *impersonator, None, sub, email)
+                .await
+            {
                 Ok(user) => self
                     .create_session(user.id)
                     .await

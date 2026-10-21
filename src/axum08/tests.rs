@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use super::{LiveSession, SignedIn, routes};
-use crate::store::User;
+use crate::store::{Session, User};
 use crate::types::{
     Access, CreatedUser, LoginRequest, Method as UserMethod, RegisterRequest, Role, UserChange,
     UserInfo,
@@ -710,6 +710,7 @@ async fn impersonation_ends_with_its_admin() {
     let created = auth
         .create_user(
             &root,
+            &Session::unstored(&root),
             &crate::NewUser {
                 login: Some("boss".to_owned()),
                 email: None,
@@ -736,13 +737,17 @@ async fn impersonation_ends_with_its_admin() {
         login: Some(Some("chief".to_owned())),
         ..UserChange::default()
     };
-    auth.update_user(&root, boss_id, &rename).await.unwrap();
+    auth.update_user(&root, &Session::unstored(&root), boss_id, &rename)
+        .await
+        .unwrap();
     assert!(tokio::time::timeout(BRIEFLY, guard.ended()).await.is_err());
     let answer = call(&app, Method::GET, me, Some(&as_pat), None).await;
     assert_eq!(answer.status, StatusCode::OK);
 
     // Demoting boss ends it, but not boss's own session.
-    auth.set_role(&root, boss_id, Role::Regular).await.unwrap();
+    auth.set_role(&root, &Session::unstored(&root), boss_id, Role::Regular)
+        .await
+        .unwrap();
     tokio::time::timeout(WAIT, guard.ended()).await.unwrap();
     let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
     assert_eq!(tile.status, StatusCode::UNAUTHORIZED);
@@ -752,7 +757,9 @@ async fn impersonation_ends_with_its_admin() {
     assert_eq!(answer.status, StatusCode::OK);
 
     // Promoting boss again does not bring it back.
-    auth.set_role(&root, boss_id, Role::Admin).await.unwrap();
+    auth.set_role(&root, &Session::unstored(&root), boss_id, Role::Admin)
+        .await
+        .unwrap();
     let answer = call(&app, Method::GET, me, Some(&as_pat), None).await;
     assert_eq!(answer.status, StatusCode::UNAUTHORIZED);
 
@@ -766,7 +773,9 @@ async fn impersonation_ends_with_its_admin() {
     let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
     assert_eq!(tile.status, StatusCode::OK);
 
-    auth.revoke_access(&root, boss_id).await.unwrap();
+    auth.revoke_access(&root, &Session::unstored(&root), boss_id)
+        .await
+        .unwrap();
     tokio::time::timeout(WAIT, guard.ended()).await.unwrap();
     let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
     assert_eq!(tile.status, StatusCode::UNAUTHORIZED);
@@ -852,6 +861,7 @@ async fn guard_follows_user_changes() {
     let (pat, _) = auth
         .create_user(
             &root.user,
+            &root.session,
             &crate::NewUser {
                 login: Some("pat".to_owned()),
                 email: None,
@@ -868,7 +878,7 @@ async fn guard_follows_user_changes() {
         login: Some(Some("patty".to_owned())),
         ..UserChange::default()
     };
-    auth.update_user(&root.user, pat.user.id, &rename)
+    auth.update_user(&root.user, &root.session, pat.user.id, &rename)
         .await
         .unwrap();
     assert!(
@@ -881,7 +891,7 @@ async fn guard_follows_user_changes() {
         login: Some(Some("boss".to_owned())),
         ..UserChange::default()
     };
-    auth.update_user(&root.user, root.user.id, &rename)
+    auth.update_user(&root.user, &root.session, root.user.id, &rename)
         .await
         .unwrap();
     let info = tokio::time::timeout(WAIT, guard.changed()).await.unwrap();
@@ -912,6 +922,7 @@ async fn guard_keeps_the_user_as_last_seen() {
     let (ada, token) = auth
         .create_user(
             &root.user,
+            &root.session,
             &crate::NewUser {
                 login: Some("ada".to_owned()),
                 email: None,
@@ -932,7 +943,7 @@ async fn guard_keeps_the_user_as_last_seen() {
     assert!(watched.borrow().is_admin());
 
     let demoted = auth
-        .set_role(&root.user, ada.user.id, Role::Regular)
+        .set_role(&root.user, &root.session, ada.user.id, Role::Regular)
         .await
         .unwrap();
 
@@ -969,6 +980,7 @@ async fn guard_ends_on_delete_and_expiry() {
     let (pat, _) = auth
         .create_user(
             &root.user,
+            &root.session,
             &crate::NewUser {
                 login: Some("pat".to_owned()),
                 email: None,
@@ -992,7 +1004,9 @@ async fn guard_ends_on_delete_and_expiry() {
     };
     let guard = auth.guard(&root.user, &root.session);
     assert!(tokio::time::timeout(BRIEFLY, guard.ended()).await.is_err());
-    auth.delete_user(&pat, root.user.id).await.unwrap();
+    auth.delete_user(&pat, &Session::unstored(&pat), root.user.id)
+        .await
+        .unwrap();
     tokio::time::timeout(WAIT, guard.ended()).await.unwrap();
 
     let gone = auth.guard(&root.user, &root.session);

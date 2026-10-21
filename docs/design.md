@@ -231,6 +231,7 @@ let auth = Auth::builder_from_store(store).await? // key from the store's `sessi
     .google(google_config)                      // feature `google`; Option
     .impersonation(true)
     .prune_every(Some(Duration::from_secs(3600)))  // run `prune` now and hourly; default None
+    .audit(|event: &AuditEvent| { /* send to the app's audit log */ })  // repeatable
     .build();
 
 auth.set_cloudflare(Option<CloudflareConfig>);  // when an admin changes the settings
@@ -295,7 +296,12 @@ them from its own handlers or tests: `sign_in_password`, `sign_in_cloudflare`,
 `sign_out`, `register_info`, `register`, `change_password`, `users`,
 `create_user`, `issue_link`, `revoke_link`, `sign_out_everywhere`,
 `revoke_access`, `set_role`, `update_user`, `delete_user`, `impersonate` and
-`stop_impersonating`. Each one enforces the rules of section 3: who may act on
+`stop_impersonating`. Those that change something on a signed-in user's
+behalf take the actor and the session they signed in with
+(`create_user(&admin, &session, &new)`, `set_role(&admin, &session, id,
+role)`, and so on; `change_password` and `impersonate` already did), so their
+audit events name an admin impersonating the actor; `users` only reads, and
+takes the actor alone. Each one enforces the rules of section 3: who may act on
 whom, never on oneself, token usability, and ending sessions. An admin
 operation needs an *active* admin as its actor: a pending admin, who has not
 registered, and a revoked one are refused with `Forbidden`. Around them,
@@ -327,6 +333,37 @@ pub enum AuthEvent {
     UserDeleted(UserId),
 }
 ```
+
+`AuthEvent`s say what state changed, for sockets that follow it. For an
+app's audit log, `AuthBuilder::audit` hooks receive an `AuditEvent` per
+operation instead, saying who acted on whom (decision 25):
+
+```rust
+pub enum Actor {                          // #[non_exhaustive]
+    User { user: UserId, impersonator: Option<UserId> },   // Actor::of(&user, &session)
+    System,                               // bootstrap, recovery_link, import_user, Cloudflare activation
+}
+Actor::responsible() -> Option<UserId>    // the impersonator if any, else the user
+
+pub enum AuditEvent {                     // #[non_exhaustive]; sent after the change is stored
+    UserCreated { actor, user: UserInfo },                  // create_user, bootstrap_admin, import_user
+    UserUpdated { actor, before: UserInfo, after: UserInfo }, // update_user, set_role; not when unchanged
+    AccessRevoked { actor, before: UserInfo, after: UserInfo },
+    Activated { actor, user: UserInfo },                    // Cloudflare Access activated a pending user
+    UserDeleted { actor, user: UserInfo },                  // as they were
+    SignedOutEverywhere { actor, user: UserId },
+    LinkIssued { actor, user: UserId, expires_at: Timestamp }, // also by create_user, bootstrap, recovery
+    LinkRevoked { actor, user: UserId },
+    LinkRedeemed { actor, user: UserInfo },                 // registered or reset with a link
+    CredentialChanged { actor, user: UserInfo },            // change_password, switch to Google
+    ImpersonationStarted { admin: UserId, user: UserId },
+    ImpersonationStopped { admin: UserId, user: UserId },
+}
+AuditEvent::actor() -> Actor              // the admin, for impersonation
+AuditEvent::user() -> UserId              // the user acted on
+```
+
+Sign-ins, sign-outs and reads send none.
 
 An impersonated session also ends with its admin's standing (decision 12): a
 `UserChanged` of the admin that leaves them not an active admin, or their
@@ -1252,3 +1289,24 @@ once the release is on crates.io.
     page is reachable by anyone with any query and an unchecked `next`
     would be an open redirect. The extensions cache of `SignedIn` is now
     documented, since apps behind the gate rely on it.
+25. **Audit events are their own type, delivered by a hook.** Apps keep
+    audit logs of admin actions, and `AuthEvent` said what changed but not
+    who changed it or what it was before, so army reconstructed them by
+    parsing request paths and diffing its users table around each request.
+    Putting an actor on `AuthEvent` instead was rejected for three reasons.
+    An `AuthEvent` describes an effect, and one operation sends several
+    (revoking sends `UserSessionsEnded` and `UserChanged`), where an audit
+    log wants one entry per operation with its before and after. Operations
+    that change nothing a socket sees (issuing or revoking a link,
+    impersonating) would wake every socket's guard for nothing. And the
+    broadcast drops events for a receiver that falls 256 behind, which the
+    guard survives by re-checking, but an audit log cannot. So `AuditEvent`
+    is a separate `#[non_exhaustive]` enum, and `AuthBuilder::audit` hooks
+    are called synchronously after each change is stored, so none is missed;
+    a hook that writes to a database forwards the event to a task through
+    an unbounded channel. The actor includes the impersonating admin, which
+    is why the changing operations now take the actor's session: an admin
+    impersonating another admin, or a user whose password an impersonating
+    admin changes, is otherwise recorded as the wrong person. Sign-ins and
+    sign-outs are left out for now; adding them is a new variant, not a
+    breaking change.

@@ -114,6 +114,23 @@ pub struct Session {
     pub expires_at: Timestamp,
 }
 
+#[cfg(test)]
+impl Session {
+    /// A session for `user` that is not stored, for operations that take
+    /// the actor's session only to attribute their audit events.
+    pub(crate) fn unstored(user: &User) -> Self {
+        let now = Timestamp::now();
+
+        Self {
+            id: "unstored".into(),
+            user: user.id,
+            impersonator: None,
+            created_at: now,
+            expires_at: now,
+        }
+    }
+}
+
 /// A registration or reset link's token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {

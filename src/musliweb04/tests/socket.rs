@@ -507,7 +507,7 @@ async fn a_demoted_admin_is_refused_on_an_open_socket() {
     let users: Vec<UserEntry> = client.send(UsersRequest).await.unwrap();
     assert_eq!(users.len(), 2);
 
-    auth.set_role(&root.user, ada.user.id, Role::Regular)
+    auth.set_role(&root.user, &root.session, ada.user.id, Role::Regular)
         .await
         .unwrap();
     assert_eq!(
@@ -517,7 +517,7 @@ async fn a_demoted_admin_is_refused_on_an_open_socket() {
     let me: UserInfo = client.send(MeRequest).await.unwrap();
     assert_eq!(me.role, Role::Regular);
 
-    auth.set_role(&root.user, ada.user.id, Role::Admin)
+    auth.set_role(&root.user, &root.session, ada.user.id, Role::Admin)
         .await
         .unwrap();
     let users: Vec<UserEntry> = client.send(UsersRequest).await.unwrap();
@@ -537,7 +537,9 @@ async fn an_ended_session_is_unauthorized() {
     let ada_client = server.client(&ada).await;
     let erin_client = server.client(&erin).await;
 
-    auth.revoke_access(&root.user, ada.user.id).await.unwrap();
+    auth.revoke_access(&root.user, &root.session, ada.user.id)
+        .await
+        .unwrap();
     auth.sign_out(&erin.session.id).await.unwrap();
 
     for client in [&ada_client, &erin_client] {

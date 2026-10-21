@@ -300,7 +300,10 @@ impl Connection {
                         return Err(AuthError::Invalid(Invalid::RoleNotChangeable).into());
                     }
 
-                    let user = self.auth.update_user(&user, user.id, &change).await?;
+                    let user = self
+                        .auth
+                        .update_user(&user, &session, user.id, &change)
+                        .await?;
                     self.auth.session_info(&user, &session).await
                 };
 
@@ -337,8 +340,8 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.require_admin().await?;
-                    let (entry, link) = self.auth.create_user(&admin, &new).await?;
+                    let (admin, session) = self.admin_session().await?;
+                    let (entry, link) = self.auth.create_user(&admin, &session, &new).await?;
                     Ok(CreatedUser { entry, link })
                 };
 
@@ -350,8 +353,8 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.require_admin().await?;
-                    let user = self.auth.update_user(&admin, id, &change).await?;
+                    let (admin, session) = self.admin_session().await?;
+                    let user = self.auth.update_user(&admin, &session, id, &change).await?;
                     Ok(user.info())
                 };
 
@@ -363,8 +366,8 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.require_admin().await?;
-                    self.auth.delete_user(&admin, id).await
+                    let (admin, session) = self.admin_session().await?;
+                    self.auth.delete_user(&admin, &session, id).await
                 };
 
                 respond(outgoing, response.await)
@@ -375,8 +378,8 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.require_admin().await?;
-                    self.auth.issue_link(&admin, id).await
+                    let (admin, session) = self.admin_session().await?;
+                    self.auth.issue_link(&admin, &session, id).await
                 };
 
                 respond(outgoing, response.await)
@@ -387,8 +390,8 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.require_admin().await?;
-                    self.auth.revoke_link(&admin, id).await
+                    let (admin, session) = self.admin_session().await?;
+                    self.auth.revoke_link(&admin, &session, id).await
                 };
 
                 respond(outgoing, response.await)
@@ -399,8 +402,8 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.require_admin().await?;
-                    self.auth.sign_out_everywhere(&admin, id).await
+                    let (admin, session) = self.admin_session().await?;
+                    self.auth.sign_out_everywhere(&admin, &session, id).await
                 };
 
                 respond(outgoing, response.await)
@@ -411,8 +414,8 @@ impl Connection {
                 };
 
                 let response = async {
-                    let admin = self.require_admin().await?;
-                    let user = self.auth.revoke_access(&admin, id).await?;
+                    let (admin, session) = self.admin_session().await?;
+                    let user = self.auth.revoke_access(&admin, &session, id).await?;
                     Ok(user.info())
                 };
 
@@ -460,13 +463,19 @@ impl Connection {
     /// the next request. Like [`signed_in`](Connection::signed_in), a store
     /// failure is an error of its own, not a refusal.
     pub async fn require_admin(&self) -> Result<User> {
-        let (user, _) = self.signed_in().await?;
+        let (user, _) = self.admin_session().await?;
+        Ok(user)
+    }
+
+    /// As [`require_admin`](Connection::require_admin), with the session.
+    async fn admin_session(&self) -> Result<(User, Session)> {
+        let (user, session) = self.signed_in().await?;
 
         if user.access != Access::Active || !user.is_admin() {
             return Err(AuthError::Forbidden.into());
         }
 
-        Ok(user)
+        Ok((user, session))
     }
 }
 

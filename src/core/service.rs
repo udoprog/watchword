@@ -20,9 +20,9 @@ use tokio::time::MissedTickBehavior;
 
 use super::throttle::LoginThrottle;
 use super::{
-    PasswordError, TOKEN_LIFETIME, dummy_hash, generate_session_key, hash_password, is_expired,
-    new_session_id, new_token, session_cookie, session_expiry, token_expiry, verify_password,
-    verify_session_cookie,
+    Actor, AuditEvent, PasswordError, TOKEN_LIFETIME, dummy_hash, generate_session_key,
+    hash_password, is_expired, new_session_id, new_token, session_cookie, session_expiry,
+    token_expiry, verify_password, verify_session_cookie,
 };
 use crate::store::{Credential, DynStore, Session, Store, StoreError, Token, TokenKind, User};
 use crate::types::{
@@ -36,6 +36,9 @@ const SESSION_KEY: &str = "session_key";
 
 /// How many [`AuthEvent`]s a slow receiver may fall behind before it lags.
 const EVENT_CAPACITY: usize = 256;
+
+/// A hook added with [`AuthBuilder::audit`].
+type AuditHook = Box<dyn Fn(&AuditEvent) + Send + Sync>;
 
 /// When the session cookie is limited to HTTPS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -277,6 +280,7 @@ pub struct AuthBuilder {
     trusted_proxies: Vec<IpAddr>,
     impersonation: bool,
     prune_every: Option<Duration>,
+    audit: Vec<AuditHook>,
     #[cfg(feature = "cloudflare")]
     cloudflare: Option<crate::types::CloudflareConfig>,
     #[cfg(feature = "google")]
@@ -348,6 +352,48 @@ impl AuthBuilder {
         self
     }
 
+    /// Calls `hook` with an [`AuditEvent`] for each operation that changes
+    /// a user, their links or their sessions on someone's behalf, saying who
+    /// acted, for an app's audit log. Calling it again adds another hook.
+    ///
+    /// The hook runs synchronously, after the change is stored and before
+    /// the operation returns, so no event is missed, unlike a slow
+    /// [`events`](Auth::events) receiver, which lags. It must not block: to
+    /// write to a database, send the event on to a task, such as through an
+    /// unbounded channel.
+    ///
+    /// ```
+    /// use watchword::{AuditEvent, Auth, MemoryStore};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AuditEvent>();
+    ///
+    /// let auth = Auth::builder_from_store(MemoryStore::new())
+    ///     .await?
+    ///     .audit(move |event| {
+    ///         // The receiver is gone only when the app is shutting down.
+    ///         let _ = tx.send(event.clone());
+    ///     })
+    ///     .build();
+    ///
+    /// tokio::spawn(async move {
+    ///     while let Some(event) = rx.recv().await {
+    ///         // Write `event.actor()`, `event.user()` and the event to the log.
+    ///         # let _ = event;
+    ///     }
+    /// });
+    /// # let _ = auth;
+    /// # Ok(()) }
+    /// ```
+    pub fn audit<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(&AuditEvent) + Send + Sync + 'static,
+    {
+        self.audit.push(Box::new(hook));
+        self
+    }
+
     /// Builds the service.
     ///
     /// # Panics
@@ -364,6 +410,7 @@ impl AuthBuilder {
                 cookie: self.cookie,
                 logins: self.logins,
                 impersonation: self.impersonation,
+                audit: self.audit,
                 throttle: LoginThrottle::new(&self.trusted_proxies),
                 events,
                 #[cfg(feature = "cloudflare")]
@@ -411,7 +458,10 @@ async fn prune_periodically(inner: Weak<Inner>, period: Duration) {
 ///
 /// Operations that act on behalf of a signed-in user take that user as
 /// `actor`, as loaded for the current request. Admin operations refuse a
-/// non-admin actor with [`AuthError::Forbidden`].
+/// non-admin actor with [`AuthError::Forbidden`]. Operations that change
+/// something also take the `session` the actor signed in with, so that the
+/// [`AuditEvent`]s they send name an admin impersonating the actor
+/// ([`Actor::User::impersonator`](Actor::User)).
 #[derive(Clone)]
 pub struct Auth {
     inner: Arc<Inner>,
@@ -423,6 +473,7 @@ struct Inner {
     cookie: CookieConfig,
     logins: bool,
     impersonation: bool,
+    audit: Vec<AuditHook>,
     throttle: LoginThrottle,
     events: broadcast::Sender<AuthEvent>,
     /// The Cloudflare Access settings and their log-once warnings.
@@ -452,6 +503,7 @@ impl Auth {
             trusted_proxies: Vec::new(),
             impersonation: false,
             prune_every: None,
+            audit: Vec::new(),
             #[cfg(feature = "cloudflare")]
             cloudflare: None,
             #[cfg(feature = "google")]
@@ -530,6 +582,12 @@ impl Auth {
 
         // Nobody listening is fine.
         let _ = self.inner.events.send(event);
+    }
+
+    fn audit(&self, event: AuditEvent) {
+        for hook in &self.inner.audit {
+            hook(&event);
+        }
     }
 
     /// The address a request from `peer` with `headers` is throttled by:
@@ -873,6 +931,10 @@ impl Auth {
             keep: Some(session.id.clone()),
         });
         self.emit(AuthEvent::UserChanged(user.info()));
+        self.audit(AuditEvent::LinkRedeemed {
+            actor: Actor::user(user.id),
+            user: user.info(),
+        });
         Ok((user, session))
     }
 
@@ -947,6 +1009,7 @@ impl Auth {
     pub(crate) async fn switch_to_google(
         &self,
         id: UserId,
+        impersonator: Option<UserId>,
         keep: Option<&str>,
         sub: &str,
         email: &str,
@@ -967,11 +1030,19 @@ impl Auth {
             email,
         };
 
-        self.set_credential(id, &cred, keep).await
+        let actor = Actor::User {
+            user: id,
+            impersonator,
+        };
+
+        self.set_credential(actor, id, &cred, keep).await
     }
 
+    /// Sets the user's credential for `actor`, ending their sessions except
+    /// `keep`.
     async fn set_credential(
         &self,
+        actor: Actor,
         id: UserId,
         cred: &Credential,
         keep: Option<&str>,
@@ -989,6 +1060,10 @@ impl Auth {
             keep: keep.map(str::to_owned),
         });
         self.emit(AuthEvent::UserChanged(user.info()));
+        self.audit(AuditEvent::CredentialChanged {
+            actor,
+            user: user.info(),
+        });
         Ok(user)
     }
 
@@ -1022,7 +1097,9 @@ impl Auth {
 
         let hash = hash_blocking(&change.new_password).await?;
 
-        self.set_credential(user.id, &Credential::Password(hash), Some(&session.id))
+        let cred = Credential::Password(hash);
+
+        self.set_credential(Actor::of(user, session), user.id, &cred, Some(&session.id))
             .await
     }
 
@@ -1046,9 +1123,14 @@ impl Auth {
     ///
     /// [`AuthError::Invalid`] without a login or email (an email when logins
     /// are not used), [`AuthError::Conflict`] when either is taken.
-    pub async fn create_user(&self, actor: &User, new: &NewUser) -> Result<(UserEntry, Link)> {
+    pub async fn create_user(
+        &self,
+        actor: &User,
+        session: &Session,
+        new: &NewUser,
+    ) -> Result<(UserEntry, Link)> {
         require_admin(actor)?;
-        let (user, link) = self.create_pending(new).await?;
+        let (user, link) = self.create_pending(Actor::of(actor, session), new).await?;
 
         let entry = UserEntry {
             user: user.info(),
@@ -1058,11 +1140,17 @@ impl Auth {
         Ok((entry, link))
     }
 
-    async fn create_pending(&self, new: &NewUser) -> Result<(User, Link)> {
+    async fn create_pending(&self, actor: Actor, new: &NewUser) -> Result<(User, Link)> {
         let now = Timestamp::now();
         let user = self.create(new, now).await?;
-        let link = self.issue(&user, now).await?;
         self.emit(AuthEvent::UserCreated(user.info()));
+
+        self.audit(AuditEvent::UserCreated {
+            actor,
+            user: user.info(),
+        });
+
+        let link = self.issue(actor, &user, now).await?;
         Ok((user, link))
     }
 
@@ -1090,13 +1178,14 @@ impl Auth {
     /// Issues a new link to the user `id`, using up their earlier ones: a
     /// reset link for an active user, a registration link otherwise. A
     /// revoked user regains access by registering with it. Admins only.
-    pub async fn issue_link(&self, actor: &User, id: UserId) -> Result<Link> {
+    pub async fn issue_link(&self, actor: &User, session: &Session, id: UserId) -> Result<Link> {
         require_admin(actor)?;
         let user = self.user(id).await?;
-        self.issue(&user, Timestamp::now()).await
+        self.issue(Actor::of(actor, session), &user, Timestamp::now())
+            .await
     }
 
-    async fn issue(&self, user: &User, now: Timestamp) -> Result<Link> {
+    async fn issue(&self, actor: Actor, user: &User, now: Timestamp) -> Result<Link> {
         let kind = match user.access {
             Access::Active => TokenKind::Reset,
             Access::Pending | Access::Revoked => TokenKind::Registration,
@@ -1112,6 +1201,12 @@ impl Auth {
 
         self.store().create_token(&token, now).await?;
 
+        self.audit(AuditEvent::LinkIssued {
+            actor,
+            user: user.id,
+            expires_at: token.expires_at,
+        });
+
         Ok(Link {
             token: token.id,
             expires_at: token.expires_at,
@@ -1119,16 +1214,27 @@ impl Auth {
     }
 
     /// Uses up the user's links, so none of them works. Admins only.
-    pub async fn revoke_link(&self, actor: &User, id: UserId) -> Result<()> {
+    pub async fn revoke_link(&self, actor: &User, session: &Session, id: UserId) -> Result<()> {
         require_admin(actor)?;
         self.user(id).await?;
         self.store().use_up_tokens(id, Timestamp::now()).await?;
+
+        self.audit(AuditEvent::LinkRevoked {
+            actor: Actor::of(actor, session),
+            user: id,
+        });
+
         Ok(())
     }
 
     /// Ends all of the user's sessions; they can sign in again. Admins
     /// only, and not on their own account.
-    pub async fn sign_out_everywhere(&self, actor: &User, id: UserId) -> Result<()> {
+    pub async fn sign_out_everywhere(
+        &self,
+        actor: &User,
+        session: &Session,
+        id: UserId,
+    ) -> Result<()> {
         require_admin(actor)?;
         not_self(actor, id)?;
         self.user(id).await?;
@@ -1137,6 +1243,12 @@ impl Auth {
             user: id,
             keep: None,
         });
+
+        self.audit(AuditEvent::SignedOutEverywhere {
+            actor: Actor::of(actor, session),
+            user: id,
+        });
+
         Ok(())
     }
 
@@ -1144,9 +1256,12 @@ impl Auth {
     /// password is cleared, their links are used up and their sessions end.
     /// A new link restores access. Admins only, and not on their own
     /// account.
-    pub async fn revoke_access(&self, actor: &User, id: UserId) -> Result<User> {
+    pub async fn revoke_access(&self, actor: &User, session: &Session, id: UserId) -> Result<User> {
         require_admin(actor)?;
         not_self(actor, id)?;
+
+        // For the audit event; the store decides whether the user exists.
+        let before = self.store().user(id).await?;
 
         if !self.store().revoke(id, Timestamp::now()).await? {
             return Err(AuthError::NotFound.into());
@@ -1158,11 +1273,24 @@ impl Auth {
             keep: None,
         });
         self.emit(AuthEvent::UserChanged(user.info()));
+
+        self.audit(AuditEvent::AccessRevoked {
+            actor: Actor::of(actor, session),
+            before: before.as_ref().unwrap_or(&user).info(),
+            after: user.info(),
+        });
+
         Ok(user)
     }
 
     /// Sets the user's role. Admins only, and not their own role.
-    pub async fn set_role(&self, actor: &User, id: UserId, role: Role) -> Result<User> {
+    pub async fn set_role(
+        &self,
+        actor: &User,
+        session: &Session,
+        id: UserId,
+        role: Role,
+    ) -> Result<User> {
         require_admin(actor)?;
 
         let change = UserChange {
@@ -1170,7 +1298,7 @@ impl Auth {
             ..UserChange::default()
         };
 
-        self.update_user(actor, id, &change).await
+        self.update_user(actor, session, id, &change).await
     }
 
     /// Changes the user's login, email or role.
@@ -1180,7 +1308,13 @@ impl Auth {
     /// is the one Google verified, so it cannot be changed this way. The
     /// user must keep a login or an email (an email when logins are not
     /// used). [`AuthError::Conflict`] when the login or email is taken.
-    pub async fn update_user(&self, actor: &User, id: UserId, change: &UserChange) -> Result<User> {
+    pub async fn update_user(
+        &self,
+        actor: &User,
+        session: &Session,
+        id: UserId,
+        change: &UserChange,
+    ) -> Result<User> {
         let own = actor.id == id;
 
         if !own {
@@ -1219,6 +1353,8 @@ impl Auth {
         let email = change.email.as_ref().unwrap_or(&user.email);
         self.check_identity(login.as_deref(), email.as_deref())?;
 
+        let before = user.info();
+
         let user = self
             .store()
             .update_user(id, &change)
@@ -1227,14 +1363,27 @@ impl Auth {
             .ok_or(AuthError::NotFound)?;
 
         self.emit(AuthEvent::UserChanged(user.info()));
+        let after = user.info();
+
+        if before != after {
+            self.audit(AuditEvent::UserUpdated {
+                actor: Actor::of(actor, session),
+                before,
+                after,
+            });
+        }
+
         Ok(user)
     }
 
     /// Deletes the user, with their sessions and links. Admins only, and not
     /// their own account.
-    pub async fn delete_user(&self, actor: &User, id: UserId) -> Result<()> {
+    pub async fn delete_user(&self, actor: &User, session: &Session, id: UserId) -> Result<()> {
         require_admin(actor)?;
         not_self(actor, id)?;
+
+        // For the audit event; the store decides whether the user exists.
+        let before = self.store().user(id).await?;
 
         if !self.store().delete_user(id).await? {
             return Err(AuthError::NotFound.into());
@@ -1245,6 +1394,16 @@ impl Auth {
             keep: None,
         });
         self.emit(AuthEvent::UserDeleted(id));
+
+        // Deleted by another process between the two calls, if `None`: then
+        // this call did not delete them, but the store said it did.
+        if let Some(before) = before {
+            self.audit(AuditEvent::UserDeleted {
+                actor: Actor::of(actor, session),
+                user: before.info(),
+            });
+        }
+
         Ok(())
     }
 
@@ -1285,6 +1444,12 @@ impl Auth {
         let mut new = Self::new_session(user.id, Timestamp::now());
         new.impersonator = Some(actor.id);
         let new = self.insert_session(new).await?;
+
+        self.audit(AuditEvent::ImpersonationStarted {
+            admin: actor.id,
+            user: user.id,
+        });
+
         Ok((user, new))
     }
 
@@ -1310,6 +1475,12 @@ impl Auth {
 
         self.sign_out(&session.id).await?;
         let new = self.create_session(admin.id).await?;
+
+        self.audit(AuditEvent::ImpersonationStopped {
+            admin: admin.id,
+            user: session.user,
+        });
+
         Ok((admin, new))
     }
 
@@ -1380,7 +1551,7 @@ impl Auth {
                 role: Role::Admin,
             };
 
-            let (_, link) = self.create_pending(&new).await?;
+            let (_, link) = self.create_pending(Actor::System, &new).await?;
             log_bootstrap_link(name, "registration", public_url, &link);
             return Ok(Bootstrap::Created(link));
         }
@@ -1421,7 +1592,7 @@ impl Auth {
             return Ok(Bootstrap::Pending { expires_at });
         }
 
-        let link = self.issue(&user, now).await?;
+        let link = self.issue(Actor::System, &user, now).await?;
         log_bootstrap_link(name, "new registration", public_url, &link);
         Ok(Bootstrap::Reissued(link))
     }
@@ -1450,7 +1621,7 @@ impl Auth {
     pub async fn recovery_link(&self, name: &str) -> Result<Link> {
         let user = self.find_user(name).await?.ok_or(AuthError::NotFound)?;
 
-        let link = self.issue(&user, Timestamp::now()).await?;
+        let link = self.issue(Actor::System, &user, Timestamp::now()).await?;
         tracing::info!(
             "Recovery: issued a link for {}, which works until {}",
             user.info().name(),
@@ -1462,8 +1633,8 @@ impl Auth {
     /// Creates a pending user without issuing them a link, for an app's own
     /// import or backup-restore tool. It validates and normalizes `new` as
     /// [`create_user`](Auth::create_user) does and sends
-    /// [`AuthEvent::UserCreated`], but acts as the system, so it needs no
-    /// actor; never expose it to a request.
+    /// [`AuthEvent::UserCreated`] and [`AuditEvent::UserCreated`], but acts
+    /// as the system, so it needs no actor; never expose it to a request.
     ///
     /// The user signs in once they have a link, from
     /// [`issue_link`](Auth::issue_link) or
@@ -1474,6 +1645,12 @@ impl Auth {
     pub async fn import_user(&self, new: &NewUser) -> Result<User> {
         let user = self.create(new, Timestamp::now()).await?;
         self.emit(AuthEvent::UserCreated(user.info()));
+
+        self.audit(AuditEvent::UserCreated {
+            actor: Actor::System,
+            user: user.info(),
+        });
+
         Ok(user)
     }
 }

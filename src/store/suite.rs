@@ -114,6 +114,8 @@ struct Env<S> {
     store: S,
     auth: Auth,
     admin: User,
+    /// A session for `admin`, not stored, to act from.
+    admin_session: Session,
 }
 
 async fn env<S>(store: S) -> Result<Env<S>, Box<dyn StdError>>
@@ -144,8 +146,14 @@ where
         .expect("no conflict");
     store.set_access(admin.id, Access::Active).await?;
     let admin = store.user(admin.id).await?.expect("admin");
+    let admin_session = Session::unstored(&admin);
 
-    Ok(Env { store, auth, admin })
+    Ok(Env {
+        store,
+        auth,
+        admin,
+        admin_session,
+    })
 }
 
 impl<S> Env<S>
@@ -164,12 +172,19 @@ where
             role: Role::Regular,
         };
 
-        let (entry, link) = self.auth.create_user(&self.admin, &new).await?;
+        let (entry, link) = self
+            .auth
+            .create_user(&self.admin, &self.admin_session, &new)
+            .await?;
         Ok((self.reload(entry.user.id).await?, link.token))
     }
 
     async fn issue(&self, id: UserId) -> Result<String, Box<dyn StdError>> {
-        Ok(self.auth.issue_link(&self.admin, id).await?.token)
+        Ok(self
+            .auth
+            .issue_link(&self.admin, &self.admin_session, id)
+            .await?
+            .token)
     }
 
     /// Whether `token` can currently be used.
@@ -251,7 +266,7 @@ where
         assert!(self.google_login(email).await.is_err(), "google login");
         assert!(
             self.auth
-                .switch_to_google(user.id, None, &sub(email), email)
+                .switch_to_google(user.id, None, None, &sub(email), email)
                 .await
                 .is_err(),
             "switch to google"
@@ -296,8 +311,12 @@ where
         sessions.push(env.session(user.id).await?);
     }
 
-    env.auth.revoke_access(&env.admin, plain.id).await?;
-    env.auth.revoke_access(&env.admin, google.id).await?;
+    env.auth
+        .revoke_access(&env.admin, &env.admin_session, plain.id)
+        .await?;
+    env.auth
+        .revoke_access(&env.admin, &env.admin_session, google.id)
+        .await?;
 
     for (user, token) in [&plain, &google].into_iter().zip(&tokens) {
         let user = env.reload(user.id).await?;
@@ -389,7 +408,9 @@ where
     let env = env(store).await?;
 
     let user = env.google_user("back@example.com").await?;
-    env.auth.revoke_access(&env.admin, user.id).await?;
+    env.auth
+        .revoke_access(&env.admin, &env.admin_session, user.id)
+        .await?;
     assert!(env.google_login("back@example.com").await.is_err());
 
     let token = env.issue(user.id).await?;
@@ -402,7 +423,9 @@ where
 
     // The same holds with a password.
     let user = env.password_user("plain@example.com").await?;
-    env.auth.revoke_access(&env.admin, user.id).await?;
+    env.auth
+        .revoke_access(&env.admin, &env.admin_session, user.id)
+        .await?;
     let token = env.issue(user.id).await?;
     let request = RegisterRequest {
         password: "another password".to_owned(),
@@ -434,6 +457,7 @@ where
         .auth
         .switch_to_google(
             user.id,
+            None,
             None,
             &sub("password@example.com"),
             "password@example.com",
@@ -523,7 +547,9 @@ where
     assert!(env.usable(&token).await);
 
     let user = env.password_user("back@example.com").await?;
-    env.auth.revoke_access(&env.admin, user.id).await?;
+    env.auth
+        .revoke_access(&env.admin, &env.admin_session, user.id)
+        .await?;
     let token = env.issue(user.id).await?;
     assert_eq!(env.token_kind(&token).await?, TokenKind::Registration);
     assert!(env.usable(&token).await);
@@ -547,6 +573,7 @@ where
     env.auth
         .switch_to_google(
             user.id,
+            None,
             Some(&current),
             &sub("switch@example.com"),
             "switch@example.com",
@@ -602,7 +629,9 @@ where
         email: Some(Some("changed@example.com".to_owned())),
         ..UserChange::default()
     };
-    env.auth.update_user(&env.admin, user.id, &change).await?;
+    env.auth
+        .update_user(&env.admin, &env.admin_session, user.id, &change)
+        .await?;
     assert!(env.google_login("changed@example.com").await.is_err());
     let (found, _) = env
         .auth
@@ -650,7 +679,7 @@ where
 
     // Switching back to Google binds the account used to switch.
     env.auth
-        .switch_to_google(user.id, None, "sub:switched", "reset@example.com")
+        .switch_to_google(user.id, None, None, "sub:switched", "reset@example.com")
         .await?;
     assert_eq!(
         env.reload(user.id).await?.google_sub.as_deref(),
@@ -687,7 +716,7 @@ where
     let plain = env.password_user("plain@example.com").await?;
     assert!(
         env.auth
-            .switch_to_google(plain.id, None, &taken, "plain@example.com")
+            .switch_to_google(plain.id, None, None, &taken, "plain@example.com")
             .await
             .is_err()
     );
@@ -700,7 +729,7 @@ where
     assert_eq!(
         refused(
             env.auth
-                .switch_to_google(plain.id, None, "sub:other", "first@example.com")
+                .switch_to_google(plain.id, None, None, "sub:other", "first@example.com")
                 .await
         ),
         AuthError::Conflict(Conflict::Email)
@@ -996,7 +1025,10 @@ where
         email: None,
         role: Role::Admin,
     };
-    let (entry, _) = env.auth.create_user(&env.admin, &new).await?;
+    let (entry, _) = env
+        .auth
+        .create_user(&env.admin, &env.admin_session, &new)
+        .await?;
     expire_links(&env.store, entry.user.id).await?;
 
     let root = BootstrapAdmin::login("root");
@@ -1065,7 +1097,9 @@ where
     assert_eq!(env.reload(pending.id).await?.access, Access::Pending);
 
     // A revoked user regains access by registering with one.
-    env.auth.revoke_access(&env.admin, active.id).await?;
+    env.auth
+        .revoke_access(&env.admin, &env.admin_session, active.id)
+        .await?;
     let link = env.auth.recovery_link("user@example.com").await?;
     assert_eq!(env.token_kind(&link.token).await?, TokenKind::Registration);
     let request = RegisterRequest {
@@ -1224,7 +1258,10 @@ where
         email: Some(" Alice@Example.com ".to_owned()),
         role: Role::Regular,
     };
-    let (entry, link) = env.auth.create_user(&env.admin, &new).await?;
+    let (entry, link) = env
+        .auth
+        .create_user(&env.admin, &env.admin_session, &new)
+        .await?;
     assert_eq!(entry.user.login.as_deref(), Some("alice"));
     assert_eq!(entry.user.email.as_deref(), Some("alice@example.com"));
 
@@ -1385,7 +1422,9 @@ where
     assert!(!env.usable(&first).await);
     assert!(env.usable(&second).await);
 
-    env.auth.revoke_link(&env.admin, user.id).await?;
+    env.auth
+        .revoke_link(&env.admin, &env.admin_session, user.id)
+        .await?;
     assert!(!env.usable(&second).await);
     assert_eq!(env.reload(user.id).await?.access, Access::Pending);
     Ok(())
@@ -1556,7 +1595,9 @@ where
     assert!(!env.live(&a).await?);
     assert!(env.live(&b).await?);
 
-    env.auth.sign_out_everywhere(&env.admin, user.id).await?;
+    env.auth
+        .sign_out_everywhere(&env.admin, &env.admin_session, user.id)
+        .await?;
     assert!(!env.live(&b).await?);
     assert!(!env.live(&c).await?);
 
@@ -1587,23 +1628,70 @@ where
 
     let forbidden = AuthError::Forbidden;
     assert_eq!(refused(env.auth.users(&user).await), forbidden);
-    assert_eq!(refused(env.auth.create_user(&user, &new).await), forbidden);
-    assert_eq!(refused(env.auth.issue_link(&user, id).await), forbidden);
-    assert_eq!(refused(env.auth.revoke_link(&user, id).await), forbidden);
     assert_eq!(
-        refused(env.auth.sign_out_everywhere(&user, id).await),
-        forbidden
-    );
-    assert_eq!(refused(env.auth.revoke_access(&user, id).await), forbidden);
-    assert_eq!(
-        refused(env.auth.set_role(&user, id, Role::Admin).await),
+        refused(
+            env.auth
+                .create_user(&user, &Session::unstored(&user), &new)
+                .await
+        ),
         forbidden
     );
     assert_eq!(
-        refused(env.auth.update_user(&user, id, &change).await),
+        refused(
+            env.auth
+                .issue_link(&user, &Session::unstored(&user), id)
+                .await
+        ),
         forbidden
     );
-    assert_eq!(refused(env.auth.delete_user(&user, id).await), forbidden);
+    assert_eq!(
+        refused(
+            env.auth
+                .revoke_link(&user, &Session::unstored(&user), id)
+                .await
+        ),
+        forbidden
+    );
+    assert_eq!(
+        refused(
+            env.auth
+                .sign_out_everywhere(&user, &Session::unstored(&user), id)
+                .await
+        ),
+        forbidden
+    );
+    assert_eq!(
+        refused(
+            env.auth
+                .revoke_access(&user, &Session::unstored(&user), id)
+                .await
+        ),
+        forbidden
+    );
+    assert_eq!(
+        refused(
+            env.auth
+                .set_role(&user, &Session::unstored(&user), id, Role::Admin)
+                .await
+        ),
+        forbidden
+    );
+    assert_eq!(
+        refused(
+            env.auth
+                .update_user(&user, &Session::unstored(&user), id, &change)
+                .await
+        ),
+        forbidden
+    );
+    assert_eq!(
+        refused(
+            env.auth
+                .delete_user(&user, &Session::unstored(&user), id)
+                .await
+        ),
+        forbidden
+    );
     let theirs = env.plain_session(user.id).await?;
     assert_eq!(
         refused(env.auth.impersonate(&user, &theirs, id).await),
@@ -1612,7 +1700,11 @@ where
 
     // Nor can a user make themselves an admin.
     assert_eq!(
-        refused(env.auth.set_role(&user, user.id, Role::Admin).await),
+        refused(
+            env.auth
+                .set_role(&user, &Session::unstored(&user), user.id, Role::Admin)
+                .await
+        ),
         forbidden
     );
     let promote = UserChange {
@@ -1620,7 +1712,11 @@ where
         ..UserChange::default()
     };
     assert_eq!(
-        refused(env.auth.update_user(&user, user.id, &promote).await),
+        refused(
+            env.auth
+                .update_user(&user, &Session::unstored(&user), user.id, &promote)
+                .await
+        ),
         forbidden
     );
     assert_eq!(env.reload(user.id).await?.role, Role::Regular);
@@ -1631,16 +1727,34 @@ where
         email: Some("second@example.com".to_owned()),
         role: Role::Admin,
     };
-    let (entry, link) = env.auth.create_user(&env.admin, &new_admin).await?;
+    let (entry, link) = env
+        .auth
+        .create_user(&env.admin, &env.admin_session, &new_admin)
+        .await?;
     let pending = env.reload(entry.user.id).await?;
     assert_eq!(refused(env.auth.users(&pending).await), forbidden);
-    assert_eq!(refused(env.auth.issue_link(&pending, id).await), forbidden);
     assert_eq!(
-        refused(env.auth.issue_link(&pending, pending.id).await),
+        refused(
+            env.auth
+                .issue_link(&pending, &Session::unstored(&pending), id)
+                .await
+        ),
         forbidden
     );
     assert_eq!(
-        refused(env.auth.create_user(&pending, &new).await),
+        refused(
+            env.auth
+                .issue_link(&pending, &Session::unstored(&pending), pending.id)
+                .await
+        ),
+        forbidden
+    );
+    assert_eq!(
+        refused(
+            env.auth
+                .create_user(&pending, &Session::unstored(&pending), &new)
+                .await
+        ),
         forbidden
     );
 
@@ -1648,24 +1762,45 @@ where
         password: PASSWORD.to_owned(),
     };
     env.auth.register(&link.token, &request).await?;
-    env.auth.revoke_access(&env.admin, pending.id).await?;
+    env.auth
+        .revoke_access(&env.admin, &env.admin_session, pending.id)
+        .await?;
     let revoked = env.reload(pending.id).await?;
     assert_eq!(revoked.role, Role::Admin);
     assert_eq!(refused(env.auth.users(&revoked).await), forbidden);
-    assert_eq!(refused(env.auth.delete_user(&revoked, id).await), forbidden);
+    assert_eq!(
+        refused(
+            env.auth
+                .delete_user(&revoked, &Session::unstored(&revoked), id)
+                .await
+        ),
+        forbidden
+    );
 
     // Unknown users are not found.
     let missing = UserId(u64::MAX);
     assert_eq!(
-        refused(env.auth.issue_link(&env.admin, missing).await),
+        refused(
+            env.auth
+                .issue_link(&env.admin, &env.admin_session, missing)
+                .await
+        ),
         AuthError::NotFound
     );
     assert_eq!(
-        refused(env.auth.delete_user(&env.admin, missing).await),
+        refused(
+            env.auth
+                .delete_user(&env.admin, &env.admin_session, missing)
+                .await
+        ),
         AuthError::NotFound
     );
     assert_eq!(
-        refused(env.auth.revoke_access(&env.admin, missing).await),
+        refused(
+            env.auth
+                .revoke_access(&env.admin, &env.admin_session, missing)
+                .await
+        ),
         AuthError::NotFound
     );
     Ok(())
@@ -1680,19 +1815,35 @@ where
 
     let forbidden = AuthError::Forbidden;
     assert_eq!(
-        refused(env.auth.set_role(&env.admin, me, Role::Regular).await),
+        refused(
+            env.auth
+                .set_role(&env.admin, &env.admin_session, me, Role::Regular)
+                .await
+        ),
         forbidden
     );
     assert_eq!(
-        refused(env.auth.revoke_access(&env.admin, me).await),
+        refused(
+            env.auth
+                .revoke_access(&env.admin, &env.admin_session, me)
+                .await
+        ),
         forbidden
     );
     assert_eq!(
-        refused(env.auth.sign_out_everywhere(&env.admin, me).await),
+        refused(
+            env.auth
+                .sign_out_everywhere(&env.admin, &env.admin_session, me)
+                .await
+        ),
         forbidden
     );
     assert_eq!(
-        refused(env.auth.delete_user(&env.admin, me).await),
+        refused(
+            env.auth
+                .delete_user(&env.admin, &env.admin_session, me)
+                .await
+        ),
         forbidden
     );
     let mine = env.plain_session(me).await?;
@@ -1707,7 +1858,10 @@ where
 
     // Admins can change the role of others.
     let user = env.password_user("user@example.com").await?;
-    let user = env.auth.set_role(&env.admin, user.id, Role::Admin).await?;
+    let user = env
+        .auth
+        .set_role(&env.admin, &env.admin_session, user.id, Role::Admin)
+        .await?;
     assert_eq!(user.role, Role::Admin);
     Ok(())
 }
@@ -1727,13 +1881,20 @@ where
         email: Some(Some(" New@Example.com ".to_owned())),
         role: None,
     };
-    let updated = env.auth.update_user(&user, user.id, &change).await?;
+    let updated = env
+        .auth
+        .update_user(&user, &Session::unstored(&user), user.id, &change)
+        .await?;
     assert_eq!(updated.login.as_deref(), Some("user"));
     assert_eq!(updated.email.as_deref(), Some("new@example.com"));
 
     // But not another user's.
     assert_eq!(
-        refused(env.auth.update_user(&user, google.id, &change).await),
+        refused(
+            env.auth
+                .update_user(&user, &Session::unstored(&user), google.id, &change)
+                .await
+        ),
         AuthError::Forbidden
     );
 
@@ -1743,7 +1904,11 @@ where
         ..UserChange::default()
     };
     assert_eq!(
-        refused(env.auth.update_user(&user, user.id, &taken).await),
+        refused(
+            env.auth
+                .update_user(&user, &Session::unstored(&user), user.id, &taken)
+                .await
+        ),
         AuthError::Conflict(Conflict::Login)
     );
     let taken = UserChange {
@@ -1751,7 +1916,11 @@ where
         ..UserChange::default()
     };
     assert_eq!(
-        refused(env.auth.update_user(&user, user.id, &taken).await),
+        refused(
+            env.auth
+                .update_user(&user, &Session::unstored(&user), user.id, &taken)
+                .await
+        ),
         AuthError::Conflict(Conflict::Email)
     );
 
@@ -1761,12 +1930,19 @@ where
         ..UserChange::default()
     };
     assert!(matches!(
-        refused(env.auth.update_user(&google, google.id, &change).await),
+        refused(
+            env.auth
+                .update_user(&google, &Session::unstored(&google), google.id, &change)
+                .await
+        ),
         AuthError::Invalid(Invalid::EmailManagedByGoogle)
     ));
 
     // An admin may change it, and it is then the user's.
-    let updated = env.auth.update_user(&env.admin, google.id, &change).await?;
+    let updated = env
+        .auth
+        .update_user(&env.admin, &env.admin_session, google.id, &change)
+        .await?;
     assert_eq!(updated.email.as_deref(), Some("elsewhere@example.com"));
 
     // A user keeps at least one of login and email; a blank email clears it.
@@ -1774,14 +1950,21 @@ where
         email: Some(Some("  ".to_owned())),
         ..UserChange::default()
     };
-    let updated = env.auth.update_user(&user, user.id, &clear_email).await?;
+    let updated = env
+        .auth
+        .update_user(&user, &Session::unstored(&user), user.id, &clear_email)
+        .await?;
     assert_eq!(updated.email, None);
     let clear_login = UserChange {
         login: Some(None),
         ..UserChange::default()
     };
     assert!(matches!(
-        refused(env.auth.update_user(&user, user.id, &clear_login).await),
+        refused(
+            env.auth
+                .update_user(&user, &Session::unstored(&user), user.id, &clear_login)
+                .await
+        ),
         AuthError::Invalid(Invalid::LoginOrEmailRequired)
     ));
     let blank_login = UserChange {
@@ -1789,7 +1972,11 @@ where
         ..UserChange::default()
     };
     assert!(matches!(
-        refused(env.auth.update_user(&user, user.id, &blank_login).await),
+        refused(
+            env.auth
+                .update_user(&user, &Session::unstored(&user), user.id, &blank_login)
+                .await
+        ),
         AuthError::Invalid(Invalid::LoginEmpty)
     ));
     Ok(())
@@ -1807,7 +1994,11 @@ where
         role: Role::Regular,
     };
     assert!(matches!(
-        refused(env.auth.create_user(&env.admin, &nameless).await),
+        refused(
+            env.auth
+                .create_user(&env.admin, &env.admin_session, &nameless)
+                .await
+        ),
         AuthError::Invalid(Invalid::LoginOrEmailRequired)
     ));
 
@@ -1816,9 +2007,15 @@ where
         email: None,
         role: Role::Regular,
     };
-    env.auth.create_user(&env.admin, &login_only).await?;
+    env.auth
+        .create_user(&env.admin, &env.admin_session, &login_only)
+        .await?;
     assert_eq!(
-        refused(env.auth.create_user(&env.admin, &login_only).await),
+        refused(
+            env.auth
+                .create_user(&env.admin, &env.admin_session, &login_only)
+                .await
+        ),
         AuthError::Conflict(Conflict::Login)
     );
 
@@ -1828,7 +2025,11 @@ where
         role: Role::Regular,
     };
     assert_eq!(
-        refused(env.auth.create_user(&env.admin, &email).await),
+        refused(
+            env.auth
+                .create_user(&env.admin, &env.admin_session, &email)
+                .await
+        ),
         AuthError::Conflict(Conflict::Email)
     );
 
@@ -1837,7 +2038,10 @@ where
         .logins(false)
         .build();
     assert!(matches!(
-        refused(auth.create_user(&env.admin, &login_only).await),
+        refused(
+            auth.create_user(&env.admin, &env.admin_session, &login_only)
+                .await
+        ),
         AuthError::Invalid(Invalid::LoginsDisabled)
     ));
     let both = NewUser {
@@ -1846,13 +2050,17 @@ where
         role: Role::Regular,
     };
     assert!(matches!(
-        refused(auth.create_user(&env.admin, &both).await),
+        refused(
+            auth.create_user(&env.admin, &env.admin_session, &both)
+                .await
+        ),
         AuthError::Invalid(Invalid::LoginsDisabled)
     ));
 
     let (entry, _) = auth
         .create_user(
             &env.admin,
+            &env.admin_session,
             &NewUser {
                 login: None,
                 ..both
@@ -1865,7 +2073,10 @@ where
         ..UserChange::default()
     };
     assert!(matches!(
-        refused(auth.update_user(&env.admin, user.id, &clear).await),
+        refused(
+            auth.update_user(&env.admin, &env.admin_session, user.id, &clear)
+                .await
+        ),
         AuthError::Invalid(Invalid::EmailRequired)
     ));
     Ok(())
@@ -1881,7 +2092,9 @@ where
     let session = env.session(user.id).await?;
     let link = env.issue(user.id).await?;
 
-    env.auth.delete_user(&env.admin, user.id).await?;
+    env.auth
+        .delete_user(&env.admin, &env.admin_session, user.id)
+        .await?;
     assert!(env.store.user(user.id).await?.is_none());
     assert!(env.store.session(&session).await?.is_none());
     assert!(env.store.token(&link).await?.is_none());
@@ -1943,7 +2156,9 @@ where
     // An admin acting as another admin cannot impersonate from there, so
     // stopping always leads back to the admin who started.
     let other = env.password_user("other@example.com").await?;
-    env.auth.set_role(&env.admin, other.id, Role::Admin).await?;
+    env.auth
+        .set_role(&env.admin, &env.admin_session, other.id, Role::Admin)
+        .await?;
     let other = env.reload(other.id).await?;
     let (_, as_other) = env.auth.impersonate(&env.admin, &mine, other.id).await?;
     assert_eq!(
@@ -2039,10 +2254,14 @@ where
     env.auth.sign_out(&session.id).await?;
     assert_eq!(events.try_recv()?, AuthEvent::SessionEnded(session.id));
 
-    env.auth.set_role(&env.admin, user.id, Role::Admin).await?;
+    env.auth
+        .set_role(&env.admin, &env.admin_session, user.id, Role::Admin)
+        .await?;
     assert!(matches!(events.try_recv()?, AuthEvent::UserChanged(info) if info.role == Role::Admin));
 
-    env.auth.revoke_access(&env.admin, user.id).await?;
+    env.auth
+        .revoke_access(&env.admin, &env.admin_session, user.id)
+        .await?;
     assert_eq!(
         events.try_recv()?,
         AuthEvent::UserSessionsEnded {
@@ -2054,7 +2273,9 @@ where
         matches!(events.try_recv()?, AuthEvent::UserChanged(info) if info.access == Access::Revoked)
     );
 
-    env.auth.delete_user(&env.admin, user.id).await?;
+    env.auth
+        .delete_user(&env.admin, &env.admin_session, user.id)
+        .await?;
     assert_eq!(
         events.try_recv()?,
         AuthEvent::UserSessionsEnded {

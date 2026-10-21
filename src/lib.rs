@@ -36,7 +36,7 @@
 //! | `std` *(default)* | | `alloc`, and the standard library for the dependencies that have it |
 //! | `musli01` | | musli 0.1 `Encode`/`Decode` on the types |
 //! | `musliweb04` | [`musliweb04`] | for musli-web 0.4: the account and user-management endpoints and the `AuthBroadcast` of live auth changes, as API types an app carries on its own musli-web WebSocket, with their ids pinned in 32000–32255; with `axum08`, `Connection`, which answers those endpoints on one socket and turns `AuthEvent`s into the updates it may see; with `yew023`, `AuthContext::set_socket`, through which the components follow those broadcasts (implies `alloc` and `musli01`) |
-//! | `server` | [`core`], [`store`] | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin) and `Auth::guard` for WebSocket sessions; the `Store` trait and `MemoryStore` (implies `std`) |
+//! | `server` | [`core`], [`store`] | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s and actor-attributed `AuditEvent`s, bootstrap admin) and `Auth::guard` for WebSocket sessions; the `Store` trait and `MemoryStore` (implies `std`) |
 //! | `cloudflare` | [`cloudflare`] | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
 //! | `google` | [`google`] | Google OAuth: `GoogleConfig::new` for `AuthBuilder::google`; with `axum08`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
 //! | `axum08` | [`axum08`] | for axum 0.8: the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors and `routes()` for the `/api/auth` JSON routes, plus the Cloudflare and Google routes when those features are on (implies `server`) |
@@ -177,10 +177,10 @@ pub use self::types::{
 #[cfg(feature = "server")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "server")))]
 pub use self::core::{
-    Auth, AuthBuilder, AuthEvent, Bootstrap, BootstrapAdmin, CookieConfig, PasswordError,
-    SESSION_LIFETIME, Secure, SessionGuard, TOKEN_LIFETIME, dummy_hash, generate_session_key,
-    hash_password, is_expired, load_or_create_key, new_session_id, new_token, session_cookie,
-    session_expiry, token_expiry, verify_password, verify_session_cookie,
+    Actor, AuditEvent, Auth, AuthBuilder, AuthEvent, Bootstrap, BootstrapAdmin, CookieConfig,
+    PasswordError, SESSION_LIFETIME, Secure, SessionGuard, TOKEN_LIFETIME, dummy_hash,
+    generate_session_key, hash_password, is_expired, load_or_create_key, new_session_id, new_token,
+    session_cookie, session_expiry, token_expiry, verify_password, verify_session_cookie,
 };
 
 #[cfg(feature = "server")]

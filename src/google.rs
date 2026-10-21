@@ -198,8 +198,12 @@ pub(crate) enum Flow {
     SignIn,
     /// Register, or reset the credential, with the link `token`.
     Register { token: String },
-    /// Switch the signed-in user to Google.
-    Link { user: UserId },
+    /// Switch the signed-in user to Google, for an admin impersonating them
+    /// if any.
+    Link {
+        user: UserId,
+        impersonator: Option<UserId>,
+    },
 }
 
 /// Flows started but not yet returned from Google, keyed by their `state`
