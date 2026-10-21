@@ -84,8 +84,9 @@ sqll014 = { package = "sqll", version = "0.14.7", default-features = false, feat
 watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.2.1", default-features = false, optional = true }
 
 [dev-dependencies]
-# `serve` and `query` in the axum08 and musliweb04 socket tests.
-axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["tokio", "http1", "query"] }
+# `serve` and `query` in the axum08 and musliweb04 socket tests, `macros` for
+# the `FromRef` derive in the axum08 docs.
+axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["tokio", "http1", "query", "macros"] }
 # The musliweb04 socket tests: a real axum server and tungstenite client.
 musli-web04 = { package = "musli-web", version = "0.4.11", default-features = false, features = ["axum08", "tungstenite030"] }
 musli = "0.1.9"

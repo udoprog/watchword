@@ -53,17 +53,41 @@
 //!
 //! ## Using it
 //!
-//! Add it from crates.io with the features each crate needs. The package and
-//! the library are both named `watchword`; a dependency key of `auth` keeps
-//! code referring to it as `auth`:
+//! Add it from crates.io with the features each crate needs. An app whose
+//! frontend talks to its server over a [musli-web] 0.4 WebSocket, as the
+//! [example app](#example-app) does, takes `musliweb04` on both sides: the
+//! server answers the components' requests and sends them live updates on
+//! that socket, and the frontend hands the socket to the components. An app
+//! that uses only HTTP leaves it out of both.
 //!
 //! ```toml
+//! # The server crate.
 //! [dependencies]
-//! # Server crate.
-//! auth = { package = "watchword", version = "0.1", features = ["axum08", "cloudflare"] }
-//! # Frontend crate.
-//! auth = { package = "watchword", version = "0.1", features = ["yew023"] }
+//! watchword = { version = "0.2", features = ["axum08", "cloudflare", "google", "musliweb04"] }
+//!
+//! [dev-dependencies]
+//! watchword = { version = "0.2", features = ["test-util"] }
 //! ```
+//!
+//! ```toml
+//! # The frontend crate, built for wasm32-unknown-unknown.
+//! [dependencies]
+//! watchword = { version = "0.2", features = ["yew023", "musliweb04"] }
+//! ```
+//!
+//! Take only the sign-in methods the app offers: `cloudflare` and `google`
+//! each add one, and password sign-in is always there. `sqll014` adds a store
+//! over SQLite; without it the app implements [`Store`] over its own database.
+//! `test-util`, under `dev-dependencies`, gives the app's tests users and
+//! sessions without going through sign-in, and the store conformance suite.
+//!
+//! The examples here refer to the crate as `watchword`. An app may give the
+//! dependency a shorter key, such as `auth = { package = "watchword", ... }`,
+//! and then writes `auth::` where these docs write `watchword::`.
+//!
+//! Then build an `Auth` over a store and serve its routes, as the [`axum08`]
+//! module shows, and wrap the frontend in `AuthProvider`, as the [`yew023`]
+//! module shows.
 //!
 //! <br>
 //!
@@ -108,8 +132,10 @@
 //! [`sqll014`]: https://docs.rs/watchword/latest/watchword/sqll014/index.html
 //! [`store_suite!`]: https://docs.rs/watchword/latest/watchword/macro.store_suite.html
 //! [`store`]: https://docs.rs/watchword/latest/watchword/store/index.html
+//! [`Store`]: https://docs.rs/watchword/latest/watchword/store/trait.Store.html
 //! [`types`]: https://docs.rs/watchword/latest/watchword/types/index.html
 //! [`yew023`]: https://docs.rs/watchword/latest/watchword/yew023/index.html
+//! [musli-web]: https://docs.rs/musli-web
 //! [phrasebook]: https://docs.rs/phrasebook
 //! [trunk]: https://trunkrs.dev
 //! [watchword-core]: https://docs.rs/watchword-core

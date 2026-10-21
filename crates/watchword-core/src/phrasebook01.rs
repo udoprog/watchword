@@ -32,7 +32,7 @@ use phrasebook01::{Catalog, Lang, Source};
 ///     .language(Lang::EN_US, "English")
 ///     .language(SV_SE, "Svenska")
 ///     .catalog(&APP)
-///     .catalog(&auth::phrasebook01::L10N)
+///     .catalog(&watchword::phrasebook01::L10N)
 ///     .build();
 /// ```
 ///

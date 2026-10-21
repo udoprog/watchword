@@ -4,8 +4,7 @@
 //!
 //! Every extractor and the routes need [`Auth`](crate::Auth) to be
 //! extractable from the app's state, through `FromRef`. An app whose state
-//! *is* the `Auth` gets that for free; otherwise derive or implement
-//! `FromRef<AppState> for Auth`.
+//! *is* the `Auth` gets that for free, as below.
 //!
 //! ```no_run
 //! # extern crate axum08 as axum;
@@ -30,6 +29,39 @@
 //! axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await
 //! # }
 //! ```
+//!
+//! An app with state of its own keeps the `Auth` in a field of it and
+//! derives `FromRef` (axum's `macros` feature), which makes each field
+//! extractable on its own:
+//!
+//! ```no_run
+//! # extern crate axum08 as axum;
+//! use axum::Router;
+//! use axum::extract::{FromRef, State};
+//! use axum::routing::get;
+//! use watchword::axum08::{SignedIn, routes};
+//! use watchword::Auth;
+//!
+//! #[derive(Clone, FromRef)]
+//! struct AppState {
+//!     auth: Auth,
+//!     title: String,
+//! }
+//!
+//! async fn hello(State(title): State<String>, user: SignedIn) -> String {
+//!     format!("{title}: hello {}", user.user.id)
+//! }
+//!
+//! fn app(state: AppState) -> Router {
+//!     Router::new()
+//!         .route("/api/hello", get(hello))
+//!         .merge(routes())
+//!         .with_state(state)
+//! }
+//! ```
+//!
+//! Without the derive, write `impl FromRef<AppState> for Auth`, returning a
+//! clone of the field.
 //!
 //! Errors are answered as an [`AuthError`](crate::AuthError) JSON body with
 //! its [status](crate::AuthError::status), and internal failures (such as

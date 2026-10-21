@@ -11,11 +11,13 @@ client for watchword's `/api/auth` routes. Built for
 `wasm32-unknown-unknown`.
 
 Apps take it through watchword's `yew023` feature, as `watchword::yew023`,
-so a frontend needs only one dependency:
+so a frontend needs only one dependency. A frontend that talks to its
+server over a [musli-web] 0.4 WebSocket also takes `musliweb04`, so the
+components use that socket (see [below](#with-a-musli-web-socket)):
 
 ```toml
 [dependencies]
-auth = { package = "watchword", version = "0.1", features = ["yew023"] }
+watchword = { version = "0.2", features = ["yew023", "musliweb04"] }
 ```
 
 It is a crate of its own because yew's macros expand to `::yew::` paths, so
@@ -166,7 +168,7 @@ let book = Phrasebook::builder()
     .language(Lang::EN_US, "English")
     .language(SV_SE, "Svenska")
     .catalog(&APP)
-    .catalog(&auth::yew023::L10N)
+    .catalog(&watchword::yew023::L10N)
     .build();
 ```
 
