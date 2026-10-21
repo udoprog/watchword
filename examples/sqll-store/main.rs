@@ -9,7 +9,7 @@
 //! tables to the app's.
 //!
 //! Here the tables are `accounts`, `sessions`, `links` and `settings` (see
-//! `migrations/`), and `accounts` has a column watchword knows nothing about,
+//! `migrations/`, and [`migrate`] for how they are kept up to date), and `accounts` has a column watchword knows nothing about,
 //! `display_name`, which has no default: the store fills it when it creates
 //! an account. The store runs on a sqll [`Pool`] whose statement collections
 //! are the app's own, so the app's other statements sit beside the store's in
@@ -46,9 +46,31 @@ use watchword::{
     Access, Auth, BootstrapAdmin, Conflict, Method, NewUser, Role, UserChange, UserId,
 };
 
-/// The app's migrations, in order, as sqll's [`Migrations`] runs them. A new
-/// release of the app only appends to them.
+/// The base schema: the whole of the current schema, edited in place as it
+/// changes.
+const BASE: &str = include_str!("migrations/0000-00-00-00-initial.sql");
+
+/// The dated migrations, in filename order. A change to the schema edits
+/// [`BASE`] and appends a migration here that takes an existing database to
+/// the same place; a migration already released is never edited.
 const MIGRATIONS: &[(&str, &str)] = &[("0001-tables", include_str!("migrations/0001-tables.sql"))];
+
+/// Brings the schema up to date, by whichever of two routes applies.
+///
+/// A new database (one without tables) is built by [`BASE`] alone, and every
+/// migration in [`MIGRATIONS`] is recorded as applied without being run,
+/// since the base already holds what they add. A database that already has
+/// tables runs every migration it has not recorded, in order, and records
+/// each one; the base is never run there, since such a database already has
+/// its tables. sqll's [`Migrations`] runs the check, the base and the
+/// records in one `BEGIN IMMEDIATE` transaction, and each later migration
+/// with its record in another, so two processes starting at once never
+/// apply one twice.
+fn migrate(c: &sqll::Connection) -> sqll::Result<usize> {
+    Migrations::new()
+        .fresh_schema(BASE)
+        .run(c, MIGRATIONS.iter().copied())
+}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn StdError>> {
@@ -108,7 +130,7 @@ impl AppStore {
         let pool = PoolBuilder::new(options, 4)
             .with_write_setup(|c| {
                 c.execute("PRAGMA foreign_keys = ON")?;
-                Migrations::new().run(c, MIGRATIONS.iter().copied())?;
+                migrate(c)?;
                 Ok::<_, sqll::Error>(())
             })
             .with_read_setup(|c| c.execute("PRAGMA foreign_keys = ON"))
@@ -865,6 +887,53 @@ mod tests {
     // watchword's store conformance suite: one test per rule, each over a
     // new database.
     watchword::store_suite!(AppStore::open_scratch()?);
+
+    /// A new database and one upgraded from the oldest schema end up with
+    /// the same schema and the same migrations recorded.
+    #[test]
+    fn fresh_and_upgraded_databases_agree() -> Result<(), Box<dyn StdError>> {
+        let fresh = sqll::Connection::open_in_memory()?;
+        migrate(&fresh)?;
+
+        // The oldest database: the first migration alone, as the app ran it
+        // before the base schema existed.
+        let upgraded = sqll::Connection::open_in_memory()?;
+        Migrations::new().run(&upgraded, MIGRATIONS[..1].iter().copied())?;
+        migrate(&upgraded)?;
+
+        assert_eq!(schema_of(&fresh)?, schema_of(&upgraded)?);
+        assert_eq!(migrations_of(&fresh)?, migrations_of(&upgraded)?);
+        Ok(())
+    }
+
+    /// Every table, index, view and trigger outside the migrations table,
+    /// with its SQL.
+    fn schema_of(c: &sqll::Connection) -> sqll::Result<Vec<(String, String, String)>> {
+        let mut q = c.prepare(
+            "SELECT type, name, coalesce(sql, '') FROM sqlite_master
+             WHERE tbl_name != 'migrations' ORDER BY type, name",
+        )?;
+
+        let mut out = Vec::new();
+
+        while let Some(row) = q.next::<(String, String, String)>()? {
+            out.push(row);
+        }
+
+        Ok(out)
+    }
+
+    /// The ids of the recorded migrations.
+    fn migrations_of(c: &sqll::Connection) -> sqll::Result<Vec<String>> {
+        let mut q = c.prepare("SELECT id FROM migrations ORDER BY id")?;
+        let mut out = Vec::new();
+
+        while let Some(id) = q.next::<String>()? {
+            out.push(id);
+        }
+
+        Ok(out)
+    }
 
     #[tokio::test]
     async fn fills_the_display_name() -> Result<(), Box<dyn StdError>> {

@@ -539,7 +539,10 @@ migrations, and maps its rows into `User`, `Session` and `Token` (decision
 what each method does, and `examples/sqll-store`, a complete store over SQLite
 with sqll 0.15 for an app to start from: a `Pool` whose statement collections
 are the app's own (so the app's statements share its one write connection),
-set up with `sqll::Migrations` in the pool's write setup, every write in the
+migrated in the pool's write setup by `sqll::Migrations` with a complete base
+schema (`fresh_schema`: a new database is built by the base alone and records
+the dated migrations unrun, an existing one runs those it lacks, and a test
+checks that both end with the same schema), every write in the
 write guard's transaction, and an `accounts` table with an app column
 (`display_name`, no default) that the store fills itself. The `sqll015`
 feature gives such a store watchword-core's sqll column traits on `UserId`,

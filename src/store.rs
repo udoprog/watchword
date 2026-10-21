@@ -11,8 +11,8 @@
 //! # Writing a store
 //!
 //! Start from [`examples/sqll-store`], a complete store over SQLite with sqll
-//! 0.15 (a pool, `sqll::Migrations` and the app's own tables), and change the
-//! tables to the app's. [`MemoryStore`] is the reference for what each method
+//! 0.15 (a pool, the app's own tables, and `sqll::Migrations` over a complete
+//! base schema), and change the tables to the app's. [`MemoryStore`] is the reference for what each method
 //! does. Then check the store with the conformance suite,
 //! [`store_suite!`](crate::store_suite) (feature `test-util`), in the app's
 //! tests: it defines one `#[test]` per rule of `Auth` that depends on what a
