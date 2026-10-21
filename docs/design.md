@@ -158,6 +158,7 @@ pub struct UserChange { pub login: Option<Option<String>>, pub email: Option<Opt
 pub struct PasswordChange { pub old_password: Option<String>, pub new_password: String }
 pub struct CloudflareConfig { pub enabled: bool, pub team_domain: String, pub audience: String,
                               pub trust_email_header: bool, pub verify_jwt: bool }
+                              // Default: disabled, header untrusted, verify_jwt on
 pub enum AuthError { Unauthorized, Forbidden, NotFound, Gone, TooManyRequests,
                      Conflict(Conflict), Invalid(Invalid) }   // JSON body of 4xx responses
 pub enum Conflict { Login, Email }

@@ -369,20 +369,52 @@ pub struct PasswordChange {
 }
 
 /// The Cloudflare Access settings an app stores and edits.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// The [`Default`] is the safe starting point for a settings form: sign-in
+/// through Access is disabled, the email header is not trusted, and the
+/// Access JWT is verified once it is enabled, so an app that fills in
+/// [`enabled`], [`team_domain`] and [`audience`] on top of it checks every
+/// request's token.
+///
+/// [`enabled`]: Self::enabled
+/// [`team_domain`]: Self::team_domain
+/// [`audience`]: Self::audience
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]
 #[cfg_attr(feature = "musli01", musli(crate = musli_core01))]
 pub struct CloudflareConfig {
-    /// Signing in through Cloudflare Access is enabled.
+    /// Signing in through Cloudflare Access is enabled. Off by default.
     pub enabled: bool,
     /// The team's host, such as `example.cloudflareaccess.com`.
     pub team_domain: String,
     /// The Access application's audience (AUD) tag.
     pub audience: String,
-    /// Accept the email header that Access sets.
+    /// Accept the email header that Access sets. Off by default.
+    ///
+    /// Without [`verify_jwt`](Self::verify_jwt), anyone who can reach the
+    /// server without going through Cloudflare can sign in as any user by
+    /// sending the header, so turn this on alone only when the server is
+    /// reachable through Cloudflare and nothing else.
     pub trust_email_header: bool,
-    /// Require and verify the Access JWT.
+    /// Require and verify the Access JWT against the team's signing keys
+    /// and the audience. On by default.
+    ///
+    /// Turning it off leaves [`trust_email_header`](Self::trust_email_header)
+    /// as the only way to sign in, with the email header taken on trust.
     pub verify_jwt: bool,
+}
+
+impl Default for CloudflareConfig {
+    /// Disabled, with the email header untrusted and JWT verification on.
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            team_domain: String::new(),
+            audience: String::new(),
+            trust_email_header: false,
+            verify_jwt: true,
+        }
+    }
 }
 
 /// The error of an `/api/auth` route, sent as the JSON body of its 4xx

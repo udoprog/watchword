@@ -20,6 +20,18 @@ fn user() -> UserInfo {
     }
 }
 
+/// The default verifies the Access JWT and trusts nothing else, so an app
+/// that only fills in the domain and audience is safe.
+#[test]
+fn cloudflare_default_verifies_jwt() {
+    let config = CloudflareConfig::default();
+    assert!(!config.enabled);
+    assert!(config.team_domain.is_empty());
+    assert!(config.audience.is_empty());
+    assert!(!config.trust_email_header);
+    assert!(config.verify_jwt);
+}
+
 #[test]
 fn names_round_trip() {
     for role in [Role::Admin, Role::Regular] {
