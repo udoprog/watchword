@@ -289,9 +289,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// The socket then carries:
 ///
 /// - the app's own requests (`api::Request`), answered by [`Handler`];
-/// - watchword's account and admin requests: [`Handler`] hands every id the
-///   app's API does not know to [`Connection::handle`], which answers those
-///   in watchword's band (32000–32255);
+/// - watchword's account and admin requests, which the `api` list includes
+///   as `api::Request::Auth`: [`Handler`] passes them to
+///   [`Connection::handle`];
 /// - watchword's `AuthBroadcast`: [`Connection::updates`] yields the
 ///   `AuthUpdate`s this socket's user may see, until the session ends.
 ///
@@ -383,7 +383,8 @@ impl ws::Handler for Handler {
                 // session is read again, so one that has ended since the
                 // upgrade is refused (`conn.require_admin()` for an admin-only
                 // request). A refusal is `Error::Auth`, which musli-web sends
-                // as the request's error; the loop closes the socket next.
+                // as the request's typed error, the same `AuthError` as
+                // watchword's own requests; the loop closes the socket next.
                 // Any other failure is the app's to log: the client is only
                 // told `internal error`.
                 if let Err(error) = self.conn.signed_in().await {
@@ -401,11 +402,12 @@ impl ws::Handler for Handler {
 
                 Ok(true)
             }
-            // Every id the app's API does not know: watchword answers its
-            // own and returns `Ok(false)` for the rest, which musli-web
-            // reports to the client as an unknown request. `handle` has
-            // already logged a failure, so it is not logged again here.
-            api::Request::Unknown(id) => self.conn.handle(id, incoming, outgoing).await,
+            // watchword's requests. `handle` has already logged an internal
+            // failure, so it is not logged again here.
+            api::Request::Auth(request) => self.conn.handle(request, incoming, outgoing).await,
+            // An id neither list knows, which musli-web reports to the
+            // client as an unknown request.
+            api::Request::Unknown(..) => Ok(false),
         }
     }
 }

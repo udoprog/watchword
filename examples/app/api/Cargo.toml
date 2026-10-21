@@ -8,5 +8,6 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 musli = "0.2.0"
-# `define!` expands to `::musli_web::` paths, so the key is the crate's name.
 musli-web = { version = "0.5.0", default-features = false, features = ["api"] }
+# watchword's endpoints and broadcast, included in the app's list.
+watchword-core = { path = "../../../crates/watchword-core", default-features = false, features = ["musliweb05"] }

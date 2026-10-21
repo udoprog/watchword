@@ -57,7 +57,7 @@ re-exported at the crate root.
 ## Using it
 
 Add it from crates.io with the features each crate needs. An app whose
-frontend talks to its server over a [musli-web] 0.4 WebSocket, as the
+frontend talks to its server over a [musli-web] 0.5 WebSocket, as the
 [example app](#example-app) does, takes `musliweb05` on both sides: the
 server answers the components' requests and sends them live updates on
 that socket, and the frontend hands the socket to the components. An app

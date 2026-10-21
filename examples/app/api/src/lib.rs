@@ -1,11 +1,10 @@
 //! The example app's own musli-web API, shared by its server and frontend.
 //!
 //! Its types take implicit ids, which count up from 1, so they never reach
-//! watchword's band (32000–32255). watchword's endpoints and
-//! `AuthBroadcast` are not listed here: musli-web cannot merge two `define!`
-//! lists, so they are a second list on the same socket. The server delegates
-//! the ids this list does not know, `Request::Unknown(id)`, to
-//! `watchword::musliweb05::Connection::handle`.
+//! watchword's band (32000–32255). The list includes watchword's endpoints
+//! and `AuthBroadcast` as `Auth`, so one socket carries both and musli-web
+//! checks at compile time that no id is used twice. The server passes the
+//! `Request::Auth` requests to `watchword::musliweb05::Connection::handle`.
 
 use musli::{Decode, Encode};
 
@@ -31,4 +30,8 @@ musli_web::api::define! {
         impl Request for StatusRequest;
         type Response<'de> = StatusResponse;
     }
+
+    /// watchword's account and user-management endpoints and its
+    /// `AuthBroadcast`.
+    include watchword_core::musliweb05 as Auth;
 }

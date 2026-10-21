@@ -148,12 +148,10 @@ impl Client {
     /// Like [`http::revoke_access`].
     pub(super) async fn revoke_access(&self, id: UserId) -> Result<(), Error> {
         #[cfg(feature = "musliweb05")]
-        if let Some(socket) = &self.socket {
-            let request = socket.request::<_, UserInfo>(RevokeAccessRequest { id });
-
-            if let Some(result) = request.await {
-                return result.map(drop);
-            }
+        if let Some(socket) = &self.socket
+            && let Some(result) = socket.request(RevokeAccessRequest { id }).await
+        {
+            return result.map(drop);
         }
 
         http::revoke_access(id).await

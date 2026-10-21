@@ -1,13 +1,9 @@
 //! The app's musli-web socket, as handed over with
 //! [`AuthContext::set_socket`](super::AuthContext::set_socket).
 
-use std::cell::{Cell, RefCell};
-use std::future::Future;
-use std::pin::Pin;
+use std::cell::Cell;
 use std::rc::Rc;
-use std::string::String;
 use std::string::ToString;
-use std::task::{Context, Poll, Waker};
 
 use musli_web05::api;
 use musli_web05::web03::prelude::ws;
@@ -92,48 +88,32 @@ impl SocketHandle {
     }
 
     /// Sends `body` over the socket and waits for the answer. `None` when the
-    /// socket is stale, or musli-web refuses to send it (such as while the
-    /// socket reconnects), so that nothing reached the server and the caller
-    /// sends it over HTTP instead.
+    /// socket is stale, or musli-web did not send it since the socket is not
+    /// connected (such as while it reconnects), so that nothing reached the
+    /// server and the caller sends it over HTTP instead.
     ///
-    /// A request the socket fails after sending, such as when it closes
-    /// before the answer or the server answers with a request error, is
-    /// [`Error::Socket`]: the server may have acted on it, so it is not sent
-    /// again.
-    pub(super) async fn request<B, T>(&self, body: B) -> Option<Result<T, Error>>
+    /// A refusal is the server's typed [`AuthError`], as [`Error::Auth`]. A
+    /// request the socket fails otherwise after sending it, such as when it
+    /// closes before the answer or the server fails it with an internal
+    /// error, is [`Error::Socket`]: the server may have acted on it, so it is
+    /// not sent again.
+    pub(super) async fn request<B>(
+        &self,
+        body: B,
+    ) -> Option<Result<<B::Endpoint as api::Endpoint>::Response<'static>, Error>>
     where
         B: api::Request,
-        T: 'static,
-        Result<T, AuthError>: for<'de> api::DecodeBody<'de>,
+        for<'de> <B::Endpoint as api::Endpoint>::Response<'static>: api::DecodeBody<'de>,
     {
         if self.is_stale() {
             return None;
         }
 
-        let slot = Rc::new(Slot::default());
-        let sender = Sender(slot.clone());
-
-        let request = self
-            .handle()
-            .request()
-            .body(body)
-            .on_raw_packet(move |result: Result<ws::RawPacket, ws::Error>| {
-                sender.send(decode(result));
-            })
-            .send();
-
-        // musli-web fails a request it could not send before `send` returns.
-        if !request.is_pending() && slot.value.borrow().as_ref().is_some_and(Result::is_err) {
-            return None;
+        match self.handle().call(body).await {
+            Ok(value) => Some(Ok(value)),
+            Err(error) if error.is_not_connected() => None,
+            Err(error) => Some(Err(request_error(&error))),
         }
-
-        Some(
-            Answer {
-                slot,
-                _request: request,
-            }
-            .await,
-        )
     }
 }
 
@@ -143,81 +123,12 @@ impl PartialEq for SocketHandle {
     }
 }
 
-fn decode<T>(result: Result<ws::RawPacket, ws::Error>) -> Result<T, Error>
-where
-    Result<T, AuthError>: for<'de> api::DecodeBody<'de>,
-{
-    let packet = result.map_err(socket_error)?;
-    packet
-        .decode::<Result<T, AuthError>>()
-        .map_err(socket_error)?
-        .map_err(Error::Auth)
-}
-
-fn socket_error(error: ws::Error) -> Error {
-    Error::Socket(error.to_string())
-}
-
-/// Where a request's callback leaves its answer for [`Answer`].
-struct Slot<T> {
-    value: RefCell<Option<Result<T, Error>>>,
-    waker: RefCell<Option<Waker>>,
-}
-
-impl<T> Default for Slot<T> {
-    fn default() -> Self {
-        Self {
-            value: RefCell::new(None),
-            waker: RefCell::new(None),
-        }
-    }
-}
-
-/// The request's side of a [`Slot`]. musli-web drops a request's callback
-/// without calling it when the socket service itself goes away, so dropping
-/// an unanswered sender answers with an error, rather than leaving the
-/// request waiting forever.
-struct Sender<T>(Rc<Slot<T>>);
-
-impl<T> Sender<T> {
-    fn send(&self, value: Result<T, Error>) {
-        let mut slot = self.0.value.borrow_mut();
-
-        if slot.is_none() {
-            *slot = Some(value);
-            drop(slot);
-
-            if let Some(waker) = self.0.waker.borrow_mut().take() {
-                waker.wake();
-            }
-        }
-    }
-}
-
-impl<T> Drop for Sender<T> {
-    fn drop(&mut self) {
-        self.send(Err(Error::Socket(String::from(
-            "the socket closed before answering",
-        ))));
-    }
-}
-
-/// The answer to a request. Dropping it cancels the request.
-struct Answer<T> {
-    slot: Rc<Slot<T>>,
-    _request: ws::Request,
-}
-
-impl<T> Future for Answer<T> {
-    type Output = Result<T, Error>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(value) = self.slot.value.borrow_mut().take() {
-            return Poll::Ready(value);
-        }
-
-        *self.slot.waker.borrow_mut() = Some(cx.waker().clone());
-        Poll::Pending
+/// The [`Error`] of a request the socket failed after sending it: the
+/// [`AuthError`] the server refused it with, or the socket's error.
+fn request_error(error: &ws::Error) -> Error {
+    match error.server_error::<AuthError>() {
+        Ok(Some(error)) => Error::Auth(error),
+        Ok(None) | Err(..) => Error::Socket(error.to_string()),
     }
 }
 
@@ -273,19 +184,16 @@ fn listen(handle: &ws::Handle, on_update: Callback<AuthUpdate>) -> ws::Listener 
 
 #[cfg(test)]
 mod tests {
-    use std::boxed::Box;
     use std::future::Future;
     use std::pin::pin;
-    use std::rc::Rc;
     use std::task::{Context, Poll, Waker};
 
     use musli_web05::web03::prelude::ws;
     use yew::Callback;
 
-    use watchword_core::UserInfo;
     use watchword_core::musliweb05::MeRequest;
 
-    use super::{Answer, Error, Sender, Slot, SocketHandle, decode};
+    use super::{Error, SocketHandle, request_error};
 
     fn poll<F: Future>(future: F) -> Poll<F::Output> {
         pin!(future).poll(&mut Context::from_waker(Waker::noop()))
@@ -293,9 +201,9 @@ mod tests {
 
     #[test]
     fn unsent_request_falls_back() {
-        // A handle without a service refuses before sending anything.
+        // A handle without a service is not connected, so nothing is sent.
         let socket = SocketHandle::new(ws::Handle::default(), Callback::noop());
-        let answer = poll(socket.request::<_, UserInfo>(MeRequest));
+        let answer = poll(socket.request(MeRequest));
         assert!(matches!(answer, Poll::Ready(None)));
     }
 
@@ -313,49 +221,13 @@ mod tests {
         socket.clone().mark_stale();
         assert!(socket.is_stale());
 
-        let answer = poll(socket.request::<_, UserInfo>(MeRequest));
+        let answer = poll(socket.request(MeRequest));
         assert!(matches!(answer, Poll::Ready(None)));
     }
 
     #[test]
-    fn dropped_request_answers_with_error() {
-        let slot = Rc::new(Slot::<()>::default());
-        let sender = Sender(slot.clone());
-
-        let mut answer = Box::pin(Answer {
-            slot,
-            _request: ws::Request::new(),
-        });
-
-        let mut cx = Context::from_waker(Waker::noop());
-        assert!(answer.as_mut().poll(&mut cx).is_pending());
-
-        drop(sender);
-
-        assert!(matches!(
-            answer.as_mut().poll(&mut cx),
-            Poll::Ready(Err(Error::Socket(..)))
-        ));
-    }
-
-    #[test]
-    fn first_answer_wins() {
-        let slot = Rc::new(Slot::<u32>::default());
-        let sender = Sender(slot.clone());
-        sender.send(Ok(1));
-        drop(sender);
-
-        let answer = Answer {
-            slot,
-            _request: ws::Request::new(),
-        };
-
-        assert!(matches!(poll(answer), Poll::Ready(Ok(1))));
-    }
-
-    #[test]
-    fn empty_packet_is_socket_error() {
-        let result = decode::<UserInfo>(Ok(ws::RawPacket::empty()));
-        assert!(matches!(result, Err(Error::Socket(..))));
+    fn untyped_error_is_socket_error() {
+        let error = request_error(&ws::Error::message("internal error"));
+        assert!(matches!(error, Error::Socket(..)));
     }
 }

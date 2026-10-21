@@ -1,18 +1,22 @@
 //! watchword's account and user-management operations, and its live updates,
-//! as [musli-web] 0.4 API types, so an app can carry them on the musli-web
+//! as [musli-web] 0.5 API types, so an app can carry them on the musli-web
 //! WebSocket it already has.
 //!
-//! The endpoints and [`AuthBroadcast`] form their own `define!` list beside
-//! the app's: one connection carries both, as long as their ids differ.
-//! watchword owns the ids 32000–32255 and pins each of its types to one of
-//! them, so an app's own implicit ids, which count up from 1, never clash with
-//! them. A released id never changes meaning.
+//! The endpoints and [`AuthBroadcast`] form a `define!` list of their own,
+//! which an app includes in its list (`include watchword::musliweb05 as
+//! Auth;`, or `watchword_core::musliweb05` from a wasm-safe `api` crate), so
+//! one connection carries both and musli-web checks at compile time that no
+//! id is used twice. watchword pins each of its types to an id in
+//! 32000–32255, a band an app's own implicit ids, which count up from 1,
+//! never reach. A released id never changes meaning.
 //!
-//! Every response is `Result<T, AuthError>`, so a frontend gets the same
-//! structured [`AuthError`] over the socket as over HTTP. Each request body is
-//! its own type here, since musli-web ties a request type to one endpoint.
+//! A response is the operation's value. A refused request fails with the same
+//! structured [`AuthError`] as over HTTP, sent as musli-web's typed request
+//! error, which the client decodes with `web::Error::server_error`. Each
+//! request body is its own type here, since musli-web ties a request type to
+//! one endpoint.
 //!
-//! | Endpoint | Id | Request | Response's `Ok` |
+//! | Endpoint | Id | Request | Response |
 //! |---|---|---|---|
 //! | [`Me`] | 32000 | [`MeRequest`] | [`UserInfo`] |
 //! | [`UpdateAccount`] | 32001 | [`UserChange`] | [`UserInfo`] |
@@ -34,14 +38,16 @@
 //! wasm-safe `api` crate can use. With `axum08` as well, the server side is
 //! here too: a `Connection` (`musliweb05` and `axum08`) answers the
 //! endpoints' requests on one socket, running the same operations as the HTTP
-//! routes, and turns each [`AuthEvent`](crate::AuthEvent) into the
+//! routes, either from the app's handler (its `handle`, for the requests of
+//! the included list) or combined with it as a `ws::Handler` through
+//! `ws::Handler::or`, and turns each [`AuthEvent`](crate::AuthEvent) into the
 //! [`AuthUpdate`] that socket may see. Its `updates` are the socket loop's
 //! whole auth arm: an `Updates` holds the session's guard and the event
 //! receiver and yields the updates to broadcast until the session ends. Its
 //! `signed_in` and `require_admin` gate the app's own requests on that socket
-//! with the same checks and [`AuthError`]s as watchword's. A request that fails answers the client
-//! with a `RequestError`, which shows a refusal and hides an internal
-//! failure's cause.
+//! with the same checks and [`AuthError`]s as watchword's. A request that
+//! fails answers the client with a `RequestError`, which sends a refusal as
+//! its typed [`AuthError`] and hides an internal failure's cause.
 //!
 //! An app need not mirror watchword's events into broadcasts of its own. On
 //! the page, [`AuthBroadcast`] already reaches watchword-yew023's

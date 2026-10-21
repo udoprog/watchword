@@ -1,18 +1,50 @@
 //! watchword's account and user-management operations, and its live updates,
-//! as [musli-web] 0.4 API types, so an app can carry them on the musli-web
+//! as [musli-web] 0.5 API types, so an app can carry them on the musli-web
 //! WebSocket it already has.
 //!
-//! The endpoints and [`AuthBroadcast`] form their own `define!` list beside
-//! the app's: one connection carries both, as long as their ids differ.
-//! watchword owns the ids 32000–32255 and pins each of its types to one of
-//! them, so an app's own implicit ids, which count up from 1, never clash with
-//! them. A released id never changes meaning.
+//! The endpoints and [`AuthBroadcast`] form a `define!` list of their own,
+//! which an app includes in its list (`include watchword_core::musliweb05 as
+//! Auth;`), so one connection carries both and musli-web checks at compile
+//! time that no id is used twice. watchword pins each of its types to an id in
+//! 32000–32255, a band an app's own implicit ids, which count up from 1, never
+//! reach. A released id never changes meaning.
 //!
-//! Every response is `Result<T, AuthError>`, so a frontend gets the same
-//! structured [`AuthError`] over the socket as over HTTP. Each request body is
-//! its own type here, since musli-web ties a request type to one endpoint.
+//! A response is the operation's value. A refused request fails with the same
+//! structured [`AuthError`] as over HTTP, sent as musli-web's typed request
+//! error, which the client decodes with `web::Error::server_error`; an
+//! internal failure fails with just the message `internal error`. Each request
+//! body is its own type here, since musli-web ties a request type to one
+//! endpoint.
 //!
-//! | Endpoint | Id | Request | Response's `Ok` |
+//! ```
+//! use musli_core02::{Decode, Encode};
+//! use musli_web05::api::Id;
+//! use watchword_core::musliweb05::{self as auth, Me};
+//!
+//! #[derive(Encode, Decode)]
+//! #[musli(crate = musli_core02)]
+//! pub struct StatusRequest;
+//!
+//! musli_web05::api::define! {
+//!     // Only needed since the dependency is renamed, as it is here.
+//!     #![musli(crate = musli_web05)]
+//!
+//!     pub type Status;
+//!
+//!     impl Endpoint for Status {
+//!         impl Request for StatusRequest;
+//!         type Response<'de> = u32;
+//!     }
+//!
+//!     /// watchword's endpoints and broadcast.
+//!     include watchword_core::musliweb05 as Auth;
+//! }
+//!
+//! assert_eq!(Request::from_id(Me::ID), Request::Auth(auth::Request::Me));
+//! assert_eq!(Request::from_id(Status::ID), Request::Status);
+//! ```
+//!
+//! | Endpoint | Id | Request | Response |
 //! |---|---|---|---|
 //! | [`Me`] | 32000 | [`MeRequest`] | [`UserInfo`] |
 //! | [`UpdateAccount`] | 32001 | [`UserChange`] | [`UserInfo`] |
@@ -36,9 +68,11 @@ use alloc::vec::Vec;
 
 use musli_core02::{Decode, Encode};
 
+#[cfg(doc)]
+use crate::AuthError;
 use crate::{
-    AuthError, CloudflareConfig, CreatedUser, Link, NewUser, PasswordChange, UserChange, UserEntry,
-    UserId, UserInfo,
+    CloudflareConfig, CreatedUser, Link, NewUser, PasswordChange, UserChange, UserEntry, UserId,
+    UserInfo,
 };
 
 /// The first id of the band watchword owns.
@@ -49,11 +83,13 @@ pub const LAST_ID: u16 = 32255;
 
 /// Whether `id` is in the band of ids watchword owns, [`FIRST_ID`] to
 /// [`LAST_ID`].
-pub fn is_watchword_id(id: musli_web::api::MessageId) -> bool {
+pub fn is_watchword_id(id: musli_web05::api::MessageId) -> bool {
     (FIRST_ID..=LAST_ID).contains(&id.get())
 }
 
-musli_web::api::define! {
+musli_web05::api::define! {
+    #![musli(crate = musli_web05)]
+
     /// The signed-in user, with [`UserInfo::impersonated_by`] set when an
     /// admin is acting as them. Like `GET /api/auth/me`.
     #[musli(id = 32000)]
@@ -61,7 +97,7 @@ musli_web::api::define! {
 
     impl Endpoint for Me {
         impl Request for MeRequest;
-        type Response<'de> = Result<UserInfo, AuthError>;
+        type Response<'de> = UserInfo;
     }
 
     /// Changes the signed-in user's own login or email. Like
@@ -71,7 +107,7 @@ musli_web::api::define! {
 
     impl Endpoint for UpdateAccount {
         impl Request for UserChange;
-        type Response<'de> = Result<UserInfo, AuthError>;
+        type Response<'de> = UserInfo;
     }
 
     /// Sets or changes the signed-in user's password. Like
@@ -81,7 +117,7 @@ musli_web::api::define! {
 
     impl Endpoint for ChangePassword {
         impl Request for PasswordChange;
-        type Response<'de> = Result<UserInfo, AuthError>;
+        type Response<'de> = UserInfo;
     }
 
     /// Every user, for the admin list. Admins only. Like
@@ -91,7 +127,7 @@ musli_web::api::define! {
 
     impl Endpoint for Users {
         impl Request for UsersRequest;
-        type Response<'de> = Result<Vec<UserEntry>, AuthError>;
+        type Response<'de> = Vec<UserEntry>;
     }
 
     /// Creates a user and their registration link. Admins only. Like
@@ -101,7 +137,7 @@ musli_web::api::define! {
 
     impl Endpoint for CreateUser {
         impl Request for NewUser;
-        type Response<'de> = Result<CreatedUser, AuthError>;
+        type Response<'de> = CreatedUser;
     }
 
     /// Changes another user. Admins only. Like
@@ -111,7 +147,7 @@ musli_web::api::define! {
 
     impl Endpoint for UpdateUser {
         impl Request for UserUpdate;
-        type Response<'de> = Result<UserInfo, AuthError>;
+        type Response<'de> = UserInfo;
     }
 
     /// Deletes another user. Admins only. Like
@@ -121,7 +157,7 @@ musli_web::api::define! {
 
     impl Endpoint for DeleteUser {
         impl Request for DeleteUserRequest;
-        type Response<'de> = Result<(), AuthError>;
+        type Response<'de> = ();
     }
 
     /// Issues a new registration or reset link for a user, replacing any
@@ -131,7 +167,7 @@ musli_web::api::define! {
 
     impl Endpoint for IssueLink {
         impl Request for IssueLinkRequest;
-        type Response<'de> = Result<Link, AuthError>;
+        type Response<'de> = Link;
     }
 
     /// Revokes a user's live link. Admins only. Like
@@ -141,7 +177,7 @@ musli_web::api::define! {
 
     impl Endpoint for RevokeLink {
         impl Request for RevokeLinkRequest;
-        type Response<'de> = Result<(), AuthError>;
+        type Response<'de> = ();
     }
 
     /// Ends every session of another user. Admins only. Like
@@ -151,7 +187,7 @@ musli_web::api::define! {
 
     impl Endpoint for SignOutUser {
         impl Request for SignOutUserRequest;
-        type Response<'de> = Result<(), AuthError>;
+        type Response<'de> = ();
     }
 
     /// Revokes another user's access, so they cannot sign in until issued a
@@ -161,7 +197,7 @@ musli_web::api::define! {
 
     impl Endpoint for RevokeAccess {
         impl Request for RevokeAccessRequest;
-        type Response<'de> = Result<UserInfo, AuthError>;
+        type Response<'de> = UserInfo;
     }
 
     /// The Cloudflare Access settings, as stored, or the [`Default`] when
@@ -171,7 +207,7 @@ musli_web::api::define! {
 
     impl Endpoint for Cloudflare {
         impl Request for CloudflareRequest;
-        type Response<'de> = Result<CloudflareConfig, AuthError>;
+        type Response<'de> = CloudflareConfig;
     }
 
     /// Stores and applies the Cloudflare Access settings, answering with
@@ -181,7 +217,7 @@ musli_web::api::define! {
 
     impl Endpoint for SetCloudflare {
         impl Request for CloudflareConfig;
-        type Response<'de> = Result<CloudflareConfig, AuthError>;
+        type Response<'de> = CloudflareConfig;
     }
 
     /// The live auth changes a connection may see, as [`AuthUpdate`]s.

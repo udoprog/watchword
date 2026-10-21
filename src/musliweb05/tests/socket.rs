@@ -1,22 +1,24 @@
-//! `Connection::handle` over a real WebSocket: an axum server whose handler
-//! delegates the ids its own API does not know, as an app's does, and a
-//! tungstenite client.
+//! `Connection::handle` over a real WebSocket: an axum server whose app
+//! API includes watchword's list and whose handler passes that list's
+//! requests on, as an app's does, and a tungstenite client that signs in with
+//! the session cookie on the upgrade, as a browser does.
 
 use std::borrow::ToOwned;
 use std::future::Future;
 use std::net::SocketAddr;
-use std::string::{String, ToString};
+use std::string::ToString;
 use std::time::Duration;
 use std::vec::Vec;
 
 use axum08::Router;
-use axum08::extract::ws::{WebSocket, WebSocketUpgrade};
-use axum08::extract::{Path, State};
+use axum08::extract::State;
+use axum08::extract::ws::WebSocketUpgrade;
 use axum08::response::Response;
 use axum08::routing::any;
-use musli_web::api::Endpoint;
-use musli_web::client::{self, Handle};
-use musli_web::{tungstenite030, ws};
+use musli_web05::api::{self, Endpoint, Id};
+use musli_web05::client::{self, Handle};
+use musli_web05::ws::Handler as _;
+use musli_web05::{tungstenite030, ws};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
@@ -45,7 +47,7 @@ where
         .expect("timed out")
 }
 
-/// The app's own API, with implicit ids.
+/// The app's own API, with implicit ids, including watchword's.
 mod app {
     use musli::{Decode, Encode};
 
@@ -58,7 +60,9 @@ mod app {
     #[derive(Debug, Encode, Decode)]
     pub struct RefusedRequest;
 
-    musli_web::api::define! {
+    musli_web05::api::define! {
+        #![musli(crate = musli_web05)]
+
         pub type Ping;
 
         impl Endpoint for Ping {
@@ -81,6 +85,9 @@ mod app {
             impl Request for RefusedRequest;
             type Response<'de> = u32;
         }
+
+        /// watchword's endpoints and broadcast.
+        include crate::musliweb05 as Auth;
     }
 }
 
@@ -97,7 +104,9 @@ mod stray {
     #[derive(Debug, Encode, Decode)]
     pub struct MalformedRequest;
 
-    musli_web::api::define! {
+    musli_web05::api::define! {
+        #![musli(crate = musli_web05)]
+
         /// Neither the app's nor watchword's.
         #[musli(id = 500)]
         pub type Outside;
@@ -165,36 +174,94 @@ impl ws::Handler for Handler {
 
                 Err(AuthError::Forbidden.into())
             }
-            app::Request::Unknown(id) => self.conn.handle(id, incoming, outgoing).await,
+            app::Request::Auth(request) => self.conn.handle(request, incoming, outgoing).await,
+            app::Request::Unknown(..) => Ok(false),
         }
     }
 }
 
-/// `/ws/{session}` signs the socket in with the session named in the path,
-/// standing in for the app's cookie. The socket stays open when the session
-/// ends (no guard), so requests made after that reach the handler.
-async fn upgrade(
-    ws: WebSocketUpgrade,
-    State(auth): State<Auth>,
-    Path(session): Path<String>,
-) -> Response {
-    let (user, session) = auth.session(&session).await.unwrap().expect("signed in");
-    let conn = Connection::new(auth, &SignedIn { user, session });
-    ws.on_upgrade(move |socket| connection(socket, conn))
+/// The app's own API, without watchword's, for a handler combined with
+/// [`Connection`] through `ws::Handler::or`.
+mod alone {
+    use musli::{Decode, Encode};
+
+    #[derive(Debug, Encode, Decode)]
+    pub struct PingRequest;
+
+    musli_web05::api::define! {
+        #![musli(crate = musli_web05)]
+
+        pub type Ping;
+
+        impl Endpoint for Ping {
+            impl Request for PingRequest;
+            type Response<'de> = u32;
+        }
+    }
 }
 
-async fn connection(socket: WebSocket, conn: Connection) {
-    let server = musli_web::axum08::server(socket, Handler { conn });
+#[derive(Clone)]
+struct AloneHandler;
 
-    let Ok(mut server) = server.connect().await else {
-        return;
-    };
+impl ws::Handler for AloneHandler {
+    type Id = alone::Request;
+    type Response = Result<bool, RequestError>;
 
-    _ = server.run().await;
+    async fn handle(
+        &self,
+        id: alone::Request,
+        incoming: &mut ws::Incoming<'_>,
+        outgoing: &mut ws::Outgoing<'_>,
+    ) -> Self::Response {
+        match id {
+            alone::Request::Ping => {
+                let Some(alone::PingRequest) = incoming.read() else {
+                    return Ok(false);
+                };
+
+                outgoing.write(9u32);
+                Ok(true)
+            }
+            alone::Request::Unknown(..) => Ok(false),
+        }
+    }
+}
+
+/// `/ws` signs the socket in with the session cookie of the upgrade, as an
+/// app's route does, and `/ws/or` serves `AloneHandler.or(conn)`. The socket
+/// stays open when the session ends (no guard), so requests made after that
+/// reach the handler.
+async fn upgrade(ws: WebSocketUpgrade, State(auth): State<Auth>, signed_in: SignedIn) -> Response {
+    let conn = Connection::new(auth, &signed_in);
+
+    ws.on_upgrade(move |socket| async move {
+        let server = musli_web05::axum08::server(socket, Handler { conn });
+
+        if let Ok(mut server) = server.connect().await {
+            _ = server.run().await;
+        }
+    })
+}
+
+async fn upgrade_or(
+    ws: WebSocketUpgrade,
+    State(auth): State<Auth>,
+    signed_in: SignedIn,
+) -> Response {
+    let conn = Connection::new(auth, &signed_in);
+
+    ws.on_upgrade(move |socket| async move {
+        let server = musli_web05::axum08::server(socket, AloneHandler.or(conn));
+
+        if let Ok(mut server) = server.connect().await {
+            _ = server.run().await;
+        }
+    })
 }
 
 struct Server {
     addr: SocketAddr,
+    auth: Auth,
     task: JoinHandle<()>,
 }
 
@@ -205,20 +272,35 @@ impl Server {
             .unwrap();
         let addr = listener.local_addr().unwrap();
         let app = Router::new()
-            .route("/ws/{session}", any(upgrade))
+            .route("/ws", any(upgrade))
+            .route("/ws/or", any(upgrade_or))
             .with_state(auth.clone());
 
         let task = tokio::spawn(async move {
             axum08::serve(listener, app).await.unwrap();
         });
 
-        Self { addr, task }
+        Self {
+            addr,
+            auth: auth.clone(),
+            task,
+        }
     }
 
     /// A client signed in as `signed_in`, connected.
     async fn client(&self, signed_in: &SignedIn) -> Client {
-        let url = format!("ws://{}/ws/{}", self.addr, signed_in.session.id);
-        let mut service = tungstenite030::connect(url).reconnect(false).build();
+        self.client_at("/ws", signed_in).await
+    }
+
+    /// A client of `path` signed in as `signed_in` with its session cookie
+    /// on the upgrade, connected.
+    async fn client_at(&self, path: &str, signed_in: &SignedIn) -> Client {
+        let url = format!("ws://{}{path}", self.addr);
+        let cookie = self.auth.cookie_header(&signed_in.session.id);
+        let mut service = tungstenite030::connect(url)
+            .header("Cookie", cookie.to_str().unwrap())
+            .reconnect(false)
+            .build();
         let handle = service.handle().clone();
 
         let task = tokio::spawn(async move {
@@ -242,38 +324,41 @@ struct Client {
 }
 
 impl Client {
-    /// Sends `body` and decodes the endpoint's `Result<T, AuthError>`.
+    /// Sends `body` and returns the endpoint's response, or the `AuthError`
+    /// it was refused with.
     async fn send<B, T>(&self, body: B) -> Result<T, AuthError>
     where
-        B: musli_web::api::Request,
-        B::Endpoint: for<'de> Endpoint<Response<'de> = Result<T, AuthError>>,
-        T: for<'de> musli_web::api::DecodeBody<'de>,
+        B: api::Request,
+        B::Endpoint: for<'de> Endpoint<Response<'de> = T>,
+        T: for<'de> api::DecodeBody<'de>,
     {
-        let packet = timeout(self.handle.request().body(body).send())
-            .await
-            .unwrap();
-        packet.decode_any::<Result<T, AuthError>>().unwrap()
+        match timeout(self.handle.call(body)).await {
+            Ok(value) => Ok(value),
+            Err(error) => Err(error
+                .server_error::<AuthError>()
+                .unwrap()
+                .unwrap_or_else(|| panic!("not a refusal: {error}"))),
+        }
     }
 
     /// Sends `body` and returns the `AuthError` it was refused with, if any.
     async fn refused<B, T>(&self, body: B) -> Option<AuthError>
     where
-        B: musli_web::api::Request,
-        B::Endpoint: for<'de> Endpoint<Response<'de> = Result<T, AuthError>>,
-        T: for<'de> musli_web::api::DecodeBody<'de>,
+        B: api::Request,
+        B::Endpoint: for<'de> Endpoint<Response<'de> = T>,
+        T: for<'de> api::DecodeBody<'de>,
     {
         self.send(body).await.err()
     }
 
-    /// Sends `body`, expecting a request error, and returns its message.
-    async fn fail<B>(&self, body: B) -> String
+    /// Sends `body`, expecting a request error, and returns it.
+    async fn fail<B>(&self, body: B) -> client::Error
     where
-        B: musli_web::api::Request,
+        B: api::Request,
     {
-        let error: client::Error = timeout(self.handle.request().body(body).send())
+        timeout(self.handle.request().body(body).send())
             .await
-            .expect_err("a request error");
-        error.as_server_error().expect("a server error").to_owned()
+            .expect_err("a request error")
     }
 }
 
@@ -283,24 +368,44 @@ impl Drop for Client {
     }
 }
 
+/// The app's list routes watchword's ids to the variant it included them
+/// as, and the combined handler routes them to `Connection`.
 #[test]
-fn handles_watchwords_endpoints() {
+fn routes_watchwords_endpoints() {
+    type Or = ws::Or<AloneHandler, Connection>;
+
     for id in 32000..=32012 {
-        let id = musli_web::api::MessageId::new(id).unwrap();
-        assert!(Connection::handles(id), "{id}");
+        let id = api::MessageId::new(id).unwrap();
+        assert!(
+            matches!(app::Request::from_id(id), app::Request::Auth(..)),
+            "{id}"
+        );
+        assert!(
+            matches!(<Or as ws::Handler>::Id::from_id(id), ws::Either::Second(..)),
+            "{id}"
+        );
     }
 
     for id in [1, 500, 31999, 32013, 32254, 32255, 32256] {
-        let id = musli_web::api::MessageId::new(id).unwrap();
-        assert!(!Connection::handles(id), "{id}");
+        let id = api::MessageId::new(id).unwrap();
+        assert!(
+            !matches!(app::Request::from_id(id), app::Request::Auth(..)),
+            "{id}"
+        );
+        assert!(
+            matches!(<Or as ws::Handler>::Id::from_id(id), ws::Either::First(..)),
+            "{id}"
+        );
     }
 
-    assert!(!Connection::handles(
-        <super::super::AuthBroadcast as musli_web::api::Broadcast>::ID
+    let broadcast = <super::super::AuthBroadcast as api::Broadcast>::ID;
+    assert!(matches!(
+        app::Event::from_id(broadcast),
+        app::Event::Auth(..)
     ));
 }
 
-/// The app answers its own ids; watchword answers the band; any other id is
+/// The app answers its own ids and watchword its list; any other id is
 /// unknown to both.
 #[tokio::test]
 async fn delegates_by_id() {
@@ -309,34 +414,80 @@ async fn delegates_by_id() {
     let server = Server::new(&auth).await;
     let client = server.client(&root).await;
 
-    let packet = timeout(client.handle.request().body(app::PingRequest).send())
-        .await
-        .unwrap();
-    assert_eq!(packet.decode().unwrap(), 7);
+    let ping: u32 = timeout(client.handle.call(app::PingRequest)).await.unwrap();
+    assert_eq!(ping, 7);
 
     let me: UserInfo = client.send(MeRequest).await.unwrap();
     assert_eq!(me, root.user.info());
 
     let error = client.fail(stray::OutsideRequest).await;
-    assert!(error.contains("500"), "{error}");
+    let message = error.as_server_error().expect("a server error");
+    assert!(message.contains("500"), "{message}");
     let error = client.fail(stray::InBandRequest).await;
-    assert!(error.contains("32254"), "{error}");
+    let message = error.as_server_error().expect("a server error");
+    assert!(message.contains("32254"), "{message}");
 
     // A body that does not decode is musli-web's request error.
     let error = client.fail(stray::MalformedRequest).await;
-    assert!(!error.is_empty());
+    assert!(!error.as_server_error().expect("a server error").is_empty());
+    assert_eq!(error.server_error::<AuthError>().unwrap(), None);
 
     // The socket is still usable.
     let me: UserInfo = client.send(MeRequest).await.unwrap();
     assert_eq!(me, root.user.info());
 }
 
-/// A `RequestError` shows only a refusal, and keeps the error it holds as
-/// its source, where `find_auth_error` finds the refusal.
+/// `AloneHandler.or(conn)` answers both lists on one socket.
+#[tokio::test]
+async fn combines_with_or() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let erin = user(&auth, &root, "erin", Role::Regular).await;
+    let server = Server::new(&auth).await;
+    let client = server.client_at("/ws/or", &erin).await;
+
+    let ping: u32 = timeout(client.handle.call(alone::PingRequest))
+        .await
+        .unwrap();
+    assert_eq!(ping, 9);
+
+    let me: UserInfo = client.send(MeRequest).await.unwrap();
+    assert_eq!(me, erin.user.info());
+    assert_eq!(
+        client.refused(UsersRequest).await,
+        Some(AuthError::Forbidden)
+    );
+
+    let error = client.fail(stray::OutsideRequest).await;
+    let message = error.as_server_error().expect("a server error");
+    assert!(message.contains("500"), "{message}");
+}
+
+/// The upgrade is signed in by the session cookie, as any route is: without
+/// one it is refused.
+#[tokio::test]
+async fn the_upgrade_needs_the_session_cookie() {
+    let auth = auth();
+    let server = Server::new(&auth).await;
+    let url = format!("ws://{}/ws", server.addr);
+    let mut service = tungstenite030::connect(url).reconnect(false).build();
+    assert!(timeout(service.try_connect()).await.is_err());
+
+    let root = root(&auth).await;
+    let mut service = tungstenite030::connect(format!("ws://{}/ws", server.addr))
+        .header(
+            "Cookie",
+            auth.cookie_header(&root.session.id).to_str().unwrap(),
+        )
+        .reconnect(false)
+        .build();
+    timeout(service.try_connect()).await.unwrap();
+}
+
+/// A `RequestError` keeps the error it holds, and knows a refusal.
 #[test]
 fn request_errors_keep_their_error() {
     let error = RequestError::from(StoreError::new("the disk is full"));
-    assert_eq!(error.to_string(), "internal error");
     assert_eq!(error.auth_error(), None);
     assert_eq!(
         error.error().to_string(),
@@ -344,16 +495,12 @@ fn request_errors_keep_their_error() {
     );
 
     let error = RequestError::from(AuthError::Forbidden);
-    assert_eq!(error.to_string(), AuthError::Forbidden.to_string());
-    assert_eq!(
-        crate::core::Error::find_auth_error(&error),
-        Some(&AuthError::Forbidden)
-    );
+    assert_eq!(error.auth_error(), Some(&AuthError::Forbidden));
 }
 
-/// A `RequestError` answers the client with a refusal's message, and with
-/// only `internal error` for an internal failure, whose cause stays on the
-/// server.
+/// A `RequestError` answers the client with a refusal as its typed
+/// `AuthError` and its text, and with only `internal error` for an internal
+/// failure, whose cause stays on the server.
 #[tokio::test]
 async fn request_errors_hide_internal_causes() {
     let auth = auth();
@@ -362,10 +509,16 @@ async fn request_errors_hide_internal_causes() {
     let client = server.client(&root).await;
 
     let error = client.fail(app::BrokenRequest).await;
-    assert_eq!(error, "internal error");
+    assert_eq!(error.as_server_error(), Some("internal error"));
+    assert_eq!(error.server_error::<AuthError>().unwrap(), None);
 
     let error = client.fail(app::RefusedRequest).await;
-    assert_eq!(error, AuthError::Forbidden.to_string());
+    let message = AuthError::Forbidden.to_string();
+    assert_eq!(error.as_server_error(), Some(message.as_str()));
+    assert_eq!(
+        error.server_error::<AuthError>().unwrap(),
+        Some(AuthError::Forbidden)
+    );
 }
 
 /// Each endpoint runs its operation for the connection's user.

@@ -12,7 +12,7 @@ client for watchword's `/api/auth` routes. Built for
 
 Apps take it through watchword's `yew023` feature, as `watchword::yew023`,
 so a frontend needs only one dependency. A frontend that talks to its
-server over a [musli-web] 0.4 WebSocket also takes `musliweb05`, so the
+server over a [musli-web] 0.5 WebSocket also takes `musliweb05`, so the
 components use that socket (see [below](#with-a-musli-web-socket)):
 
 ```toml
@@ -37,7 +37,7 @@ watchword's.
 |---|---|
 | `std` *(default)* | everything here |
 | `alloc` | nothing yet beyond watchword-core's `alloc` |
-| `musliweb05` | `std` + [`AuthContext::set_socket`]: the components follow a [musli-web] 0.4 socket's broadcasts and send their requests over it; [`AuthContext::on_update`] and `use_auth_update` pass the broadcasts on to the app |
+| `musliweb05` | `std` + [`AuthContext::set_socket`]: the components follow a [musli-web] 0.5 socket's broadcasts and send their requests over it; [`AuthContext::on_update`] and `use_auth_update` pass the broadcasts on to the app |
 
 <br>
 
@@ -129,7 +129,7 @@ as last seen, so the server needs no event mirroring of its own either.
 ## With a musli-web socket
 
 With the `musliweb05` feature (watchword's `musliweb05` and `yew023`
-together), an app that talks to its server over a [musli-web] 0.4
+together), an app that talks to its server over a [musli-web] 0.5
 WebSocket hands its handle to the context once the socket is open inside
 [`AuthProvider`]:
 
@@ -142,11 +142,12 @@ The components then follow the server's `AuthBroadcast`: the context's
 user is replaced when it changes elsewhere, and the shared [`Users`]
 (which [`AdminUsers`] shows) applies users created, changed and deleted
 by others in place, so the app no longer bumps its `refresh` prop. Each
-update is also passed to the app's [`AuthContext::on_update`] listeners. The account and admin requests go over
-the socket too while it is open, and over HTTP while it reconnects;
-signing in and out, registration and impersonation always use HTTP. When
-the socket closes, and every 10 seconds while it stays closed, the
-provider checks the session over HTTP, so a session that ended, whose
+update is also passed to the app's [`AuthContext::on_update`] listeners.
+The account and admin requests go over the socket too while it is open,
+with the same `AuthError`s as over HTTP, and over HTTP when the socket
+could not send them, such as while it reconnects; signing in and out,
+registration and impersonation always use HTTP. When the socket closes, and every 10 seconds while it stays closed,
+the provider checks the session over HTTP, so a session that ended, whose
 upgrade the server now refuses, shows the sign-in page.
 
 <br>

@@ -59,10 +59,6 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "musli02")]
 use musli_core02::{Decode, Encode};
 
-// `define!` expands to `::musli_web::` paths.
-#[cfg(feature = "musliweb05")]
-extern crate musli_web05 as musli_web;
-
 #[cfg(feature = "axum08")]
 mod axum08;
 

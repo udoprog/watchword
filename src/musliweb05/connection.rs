@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use musli_web05::api::{EncodeBody, Id, MessageId};
-use musli_web05::ws::{Incoming, Outgoing};
+use musli_web05::api::EncodeBody;
+use musli_web05::ws::{self, Incoming, Outgoing};
 
 use super::{
     AuthUpdate, CloudflareRequest, DeleteUserRequest, IssueLinkRequest, MeRequest, Request,
@@ -10,7 +10,9 @@ use super::{
 };
 use crate::Auth;
 use crate::axum08::SignedIn;
-use crate::core::{AuthEvent, Error, Result};
+#[cfg(doc)]
+use crate::core::Error;
+use crate::core::{AuthEvent, Result};
 use crate::store::{Session, User};
 use crate::types::{
     Access, AuthError, CloudflareConfig, CreatedUser, Invalid, NewUser, PasswordChange, UserChange,
@@ -52,14 +54,29 @@ use crate::types::{
 /// stands in for those it missed, which is what [`Updates`] does.
 ///
 /// Ending the socket when its session ends stays the job of
-/// [`Auth::guard`], which [`Updates`] holds: no update is sent for it. Cloning a `Connection` is cheap,
-/// so it can sit inside the app's own `ws::Handler`, which hands it the
-/// requests its own API does not know with [`handle`](Connection::handle):
+/// [`Auth::guard`], which [`Updates`] holds: no update is sent for it.
+///
+/// Cloning a `Connection` is cheap, and it is the [`ws::Handler`] of
+/// watchword's endpoints, so it sits beside the app's own handler. An app
+/// whose `define!` list includes watchword's (`include
+/// watchword::musliweb05 as Auth;`) passes that variant's requests to
+/// [`handle`](Connection::handle):
 ///
 /// ```no_run
-/// # mod api { pub enum Request { Unknown(musli_web::api::MessageId) } }
-/// # extern crate musli_web05 as musli_web;
-/// use musli_web::ws;
+/// # mod api {
+/// #     #[derive(musli::Encode, musli::Decode)]
+/// #     pub struct StatusRequest;
+/// #     musli_web05::api::define! {
+/// #         #![musli(crate = musli_web05)]
+/// #         pub type Status;
+/// #         impl Endpoint for Status {
+/// #             impl Request for StatusRequest;
+/// #             type Response<'de> = u32;
+/// #         }
+/// #         include watchword::musliweb05 as Auth;
+/// #     }
+/// # }
+/// use musli_web05::ws;
 /// use watchword::musliweb05::{Connection, RequestError};
 ///
 /// #[derive(Clone)]
@@ -67,19 +84,59 @@ use crate::types::{
 ///     conn: Connection,
 /// }
 ///
-/// impl Handler {
+/// impl ws::Handler for Handler {
+///     type Id = api::Request;
+///     type Response = Result<bool, RequestError>;
+///
 ///     async fn handle(
 ///         &self,
 ///         id: api::Request,
 ///         incoming: &mut ws::Incoming<'_>,
 ///         outgoing: &mut ws::Outgoing<'_>,
-///     ) -> Result<bool, RequestError> {
+///     ) -> Self::Response {
 ///         match id {
 ///             // ... the app's own requests
-///             api::Request::Unknown(id) => self.conn.handle(id, incoming, outgoing).await,
+///             # api::Request::Status => Ok(false),
+///             api::Request::Auth(request) => self.conn.handle(request, incoming, outgoing).await,
+///             api::Request::Unknown(..) => Ok(false),
 ///         }
 ///     }
 /// }
+/// ```
+///
+/// An app whose list does not include watchword's combines the two handlers
+/// instead, with [`ws::Handler::or`], which routes each request by the list
+/// that knows its id and fails to build if the lists share one:
+///
+/// ```no_run
+/// # mod api {
+/// #     #[derive(musli::Encode, musli::Decode)]
+/// #     pub struct StatusRequest;
+/// #     musli_web05::api::define! {
+/// #         #![musli(crate = musli_web05)]
+/// #         pub type Status;
+/// #         impl Endpoint for Status {
+/// #             impl Request for StatusRequest;
+/// #             type Response<'de> = u32;
+/// #         }
+/// #     }
+/// # }
+/// # #[derive(Clone)]
+/// # struct AppHandler;
+/// # impl musli_web05::ws::Handler for AppHandler {
+/// #     type Id = api::Request;
+/// #     type Response = bool;
+/// #     async fn handle(&self, _: Self::Id, _: &mut musli_web05::ws::Incoming<'_>, _: &mut musli_web05::ws::Outgoing<'_>) -> bool { false }
+/// # }
+/// # async fn run(socket: axum08::extract::ws::WebSocket, conn: watchword::musliweb05::Connection) -> Result<(), musli_web05::ws::Error> {
+/// use musli_web05::ws::Handler;
+///
+/// let mut server = musli_web05::axum08::server(socket, AppHandler.or(conn))
+///     .connect()
+///     .await?;
+///
+/// server.run().await
+/// # }
 /// ```
 ///
 /// The app's own requests check their user the way watchword's do, with
@@ -88,23 +145,20 @@ use crate::types::{
 /// for each request and refuse with the same [`AuthError`] as the HTTP
 /// extractors. A refusal is [`Error::Auth`]; any other error is the store
 /// failing. The app's own requests fail with a [`RequestError`] as well,
-/// converted with `?`, and the app logs their internal failures, which
-/// `handle` never sees:
+/// converted with `?`, so a refusal reaches the client as the same typed
+/// [`AuthError`]; the app logs their internal failures, which `handle` never
+/// sees:
 ///
 /// ```no_run
-/// # extern crate musli_web05 as musli_web;
-/// use musli_web::ws;
+/// use musli_web05::ws;
 /// use watchword::core::Error;
 /// use watchword::musliweb05::{Connection, RequestError};
 ///
 /// async fn stats(conn: &Connection, outgoing: &mut ws::Outgoing<'_>) -> Result<bool, RequestError> {
 ///     let admin = match conn.require_admin().await {
 ///         Ok(admin) => admin,
-///         Err(Error::Auth(error)) => {
-///             // Answer with the app's own response type, as a refusal.
-///             # let _ = error;
-///             return Ok(true);
-///         }
+///         // A refusal, sent to the client as its typed `AuthError`.
+///         Err(error @ Error::Auth(..)) => return Err(error.into()),
 ///         Err(error) => {
 ///             tracing::error!("stats failed: {error}");
 ///             return Err(error.into());
@@ -225,49 +279,44 @@ impl Connection {
         }
     }
 
-    /// Whether `id` is one of watchword's endpoints, which
-    /// [`handle`](Connection::handle) answers. For an app that writes its own
-    /// combined `api::Id` rather than delegating its `Unknown` arm.
-    pub fn handles(id: MessageId) -> bool {
-        !matches!(Request::from_id(id), Request::Unknown(_))
-    }
-
-    /// Answers the request `id` if it is one of watchword's endpoints,
-    /// returning `Ok(false)` otherwise, which the app treats as it treats its
-    /// own unknown ids. Call it from the app's `ws::Handler::handle`, in the
-    /// arm for the ids its own API does not know.
+    /// Answers one of watchword's requests. Call it from the app's
+    /// `ws::Handler::handle`, in the arm of the list it included watchword's
+    /// as, or let [`ws::Handler::or`] call it.
     ///
     /// For each request the session and its user are read again through
     /// [`Auth::session`], as the HTTP routes' extractors do, so a session
-    /// that has ended since the socket opened is answered with
+    /// that has ended since the socket opened is refused with
     /// [`AuthError::Unauthorized`], and a role change or revocation applies
     /// to the next request. The request then runs the same [`Auth`]
     /// operation as its HTTP route, with that user as the actor: the admin
-    /// endpoints answer [`AuthError::Forbidden`] unless the user is an admin
-    /// now, and the operations enforce the rest of their rules themselves.
-    /// Without the `cloudflare` feature, the Cloudflare settings endpoints
-    /// answer an admin with [`AuthError::NotFound`].
+    /// endpoints refuse with [`AuthError::Forbidden`] unless the user is an
+    /// admin now, and the operations enforce the rest of their rules
+    /// themselves. Without the `cloudflare` feature, the Cloudflare settings
+    /// endpoints refuse an admin with [`AuthError::NotFound`].
     ///
-    /// The response is the endpoint's `Result<T, AuthError>`, so a refused
-    /// request gets the same [`AuthError`] as over HTTP. A body that does not
-    /// decode is reported to the client by musli-web, as a request error.
+    /// The response is the endpoint's value. A refused request fails with a
+    /// [`RequestError`] that musli-web sends as the typed [`AuthError`], the
+    /// same as over HTTP. A body that does not decode answers `Ok(false)`,
+    /// and musli-web reports the decode error to the client, as it does for
+    /// an [`Unknown`](super::Request::Unknown) id.
     ///
-    /// Errors when the store fails or hashing a password does. The error is
-    /// logged here, at error level with its cause, so the app does not log
-    /// it again; musli-web answers the request with the [`RequestError`]'s
-    /// generic message, `internal error`, the analogue of an HTTP 500.
+    /// Errors when refused, and when the store fails or hashing a password
+    /// does. An internal failure is logged here, at error level with its
+    /// cause, so the app does not log it again; musli-web answers the request
+    /// with the [`RequestError`]'s generic message, `internal error`, the
+    /// analogue of an HTTP 500.
     pub async fn handle(
         &self,
-        id: MessageId,
+        request: Request,
         incoming: &mut Incoming<'_>,
         outgoing: &mut Outgoing<'_>,
     ) -> Result<bool, RequestError> {
-        let result = self
-            .dispatch(Request::from_id(id), incoming, outgoing)
-            .await;
+        let result = self.dispatch(request, incoming, outgoing).await;
 
-        if let Err(error) = &result {
-            tracing::error!(error = ?error, "auth: socket request {id} failed: {error}");
+        if let Err(error) = &result
+            && error.auth_error().is_none()
+        {
+            tracing::error!(error = ?error, "auth: socket request {request:?} failed: {error}");
         }
 
         Ok(result?)
@@ -542,18 +591,28 @@ impl Connection {
     }
 }
 
-/// Writes an operation's result as the endpoint's `Result<T, AuthError>`,
-/// passing an internal failure on as the request's error.
+/// Writes an operation's value as the endpoint's response, passing a
+/// refusal or an internal failure on as the request's error.
 fn respond<T>(outgoing: &mut Outgoing<'_>, result: Result<T>) -> Result<bool>
 where
-    Result<T, AuthError>: EncodeBody,
+    T: EncodeBody,
 {
-    let response = match result {
-        Ok(value) => Ok(value),
-        Err(Error::Auth(error)) => Err(error),
-        Err(error) => return Err(error),
-    };
-
-    outgoing.write(response);
+    outgoing.write(result?);
     Ok(true)
+}
+
+/// watchword's endpoints, for an app that combines its own handler with this
+/// one through [`ws::Handler::or`]. See [`Connection::handle`].
+impl ws::Handler for Connection {
+    type Id = Request;
+    type Response = Result<bool, RequestError>;
+
+    fn handle<'this>(
+        &'this self,
+        id: Request,
+        incoming: &'this mut Incoming<'_>,
+        outgoing: &'this mut Outgoing<'_>,
+    ) -> impl Future<Output = Self::Response> + Send + 'this {
+        Connection::handle(self, id, incoming, outgoing)
+    }
 }

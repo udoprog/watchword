@@ -808,8 +808,8 @@ cookies, so the library does not depend on the app's gloo version.
 ### 2.7 musli-web integration (`musliweb05`)
 
 *Status: built are the types (`watchword::musliweb05`), the server's
-`Connection` (`new`, `update`, `lagged`, `handle`, `handles`, the
-accessors `signed_in`, `require_admin`, `user_id` and `session_id`, and
+`Connection` (`new`, `update`, `lagged`, `handle` and its `ws::Handler`
+impl, the accessors `signed_in`, `require_admin`, `user_id` and `session_id`, and
 `updates`, the socket loop's auth arm as an `Updates`), and the components
 following the broadcasts and sending their requests over the socket
 (`AuthContext::set_socket`). `examples/app` is wired this way and is the
@@ -831,41 +831,51 @@ second transport for the operations that can use it, not a replacement.
   therefore always clash. Explicit ids must be in 1..=32767; musli-web reserves
   the rest.
 - Each call also generates `Request` and `Event` enums implementing
-  `api::Id`, with an `Unknown(MessageId)` arm. There is no syntax for merging
-  two lists.
-- The macro expands to absolute `::musli_web::` paths, so the crate calling it
-  must see musli-web under that name.
+  `api::Id`, with an `Unknown(MessageId)` arm. A list can `include <path> as
+  <Name>;` another list, which becomes a `Name(path::Request)` variant (and
+  the same in `Event`); a list's own ids clashing with an included list's, or
+  two included lists clashing, fail the build.
+- The macro expands to `::musli_web::` paths unless given the crate's path
+  with an inner `#![musli(crate = <path>)]`.
 - On the server, a connection has one `ws::Handler` with one `type Id`;
   `Incoming::read::<T>()` decodes the request body and `Outgoing::write`
-  answers it. `Server::broadcast` takes any `api::Event`, from any `define!`.
+  answers it. `ws::Handler::or` combines two handlers whose lists do not
+  share an id, routing each request to the one whose list knows it.
+  `Server::broadcast` takes any `api::Event`, from any `define!`. A handler
+  error is sent as text if it is `Display`; one that implements
+  `ws::ResponseError` itself also sends a typed payload, which the client
+  decodes with `Error::server_error::<T>()`.
 - On the client, `web03::Handle` is not typed by any API: one handle carries
   requests and broadcasts of any number of `define!` lists, as long as the ids
-  differ. It reconnects by itself, with backoff.
+  differ. `Handle::call(body)` is a future of the decoded response; its error
+  says whether the request was never sent (`is_not_connected`). It reconnects
+  by itself, with backoff.
 
 #### Types: `watchword::musliweb05` (feature `musliweb05`)
 
 The definitions live in watchword-core, which is wasm-safe and is what an
 app's shared `api` crate already depends on (through `watchword` with
 `musli02`). watchword-core depends on musli-web under the versioned key
-`musli-web05` (`default-features = false, features = ["api"]`) and makes the
-macro's paths resolve with `extern crate musli_web05 as musli_web;` at its
-root, under the feature. The module is re-exported as `watchword::musliweb05`.
+`musli-web05` (`default-features = false, features = ["api"]`) and gives the
+macro that path with `#![musli(crate = musli_web05)]`, so no alias is needed.
+The module is re-exported as `watchword::musliweb05`.
 
 ```rust
-musli_web::api::define! {
-    #[musli(id = 32000)] pub type Me;            // MeRequest -> Result<UserInfo, AuthError>, with impersonated_by
-    #[musli(id = 32001)] pub type UpdateAccount; // UserChange -> Result<UserInfo, AuthError>; own login/email
-    #[musli(id = 32002)] pub type ChangePassword;// PasswordChange -> Result<UserInfo, AuthError>
-    #[musli(id = 32003)] pub type Users;         // UsersRequest -> Result<Vec<UserEntry>, AuthError>; admin
-    #[musli(id = 32004)] pub type CreateUser;    // NewUser -> Result<CreatedUser, AuthError>; admin
-    #[musli(id = 32005)] pub type UpdateUser;    // UserUpdate { id, change } -> Result<UserInfo, AuthError>; admin
-    #[musli(id = 32006)] pub type DeleteUser;    // DeleteUserRequest { id } -> Result<(), AuthError>; admin
-    #[musli(id = 32007)] pub type IssueLink;     // IssueLinkRequest { id } -> Result<Link, AuthError>; admin
-    #[musli(id = 32008)] pub type RevokeLink;    // RevokeLinkRequest { id } -> Result<(), AuthError>; admin
-    #[musli(id = 32009)] pub type SignOutUser;   // SignOutUserRequest { id } -> Result<(), AuthError>; admin, sign out everywhere
-    #[musli(id = 32010)] pub type RevokeAccess;  // RevokeAccessRequest { id } -> Result<UserInfo, AuthError>; admin
-    #[musli(id = 32011)] pub type Cloudflare;    // CloudflareRequest -> Result<CloudflareConfig, AuthError>; admin
-    #[musli(id = 32012)] pub type SetCloudflare; // CloudflareConfig -> Result<CloudflareConfig, AuthError>; admin
+musli_web05::api::define! {
+    #![musli(crate = musli_web05)]
+    #[musli(id = 32000)] pub type Me;            // MeRequest -> UserInfo, with impersonated_by
+    #[musli(id = 32001)] pub type UpdateAccount; // UserChange -> UserInfo; own login/email
+    #[musli(id = 32002)] pub type ChangePassword;// PasswordChange -> UserInfo
+    #[musli(id = 32003)] pub type Users;         // UsersRequest -> Vec<UserEntry>; admin
+    #[musli(id = 32004)] pub type CreateUser;    // NewUser -> CreatedUser; admin
+    #[musli(id = 32005)] pub type UpdateUser;    // UserUpdate { id, change } -> UserInfo; admin
+    #[musli(id = 32006)] pub type DeleteUser;    // DeleteUserRequest { id } -> (); admin
+    #[musli(id = 32007)] pub type IssueLink;     // IssueLinkRequest { id } -> Link; admin
+    #[musli(id = 32008)] pub type RevokeLink;    // RevokeLinkRequest { id } -> (); admin
+    #[musli(id = 32009)] pub type SignOutUser;   // SignOutUserRequest { id } -> (); admin, sign out everywhere
+    #[musli(id = 32010)] pub type RevokeAccess;  // RevokeAccessRequest { id } -> UserInfo; admin
+    #[musli(id = 32011)] pub type Cloudflare;    // CloudflareRequest -> CloudflareConfig; admin
+    #[musli(id = 32012)] pub type SetCloudflare; // CloudflareConfig -> CloudflareConfig; admin
     #[musli(id = 32100)] pub type AuthBroadcast; // event AuthUpdate
 }
 
@@ -890,12 +900,15 @@ existing wire types (`UserChange`, `PasswordChange`, `NewUser`,
 `CloudflareConfig`). One shared
 `UserTarget { id }` cannot serve those five endpoints: `define!` implements
 `api::Request` for each request type with its endpoint as `type Endpoint`, so
-a type can be the request of only one endpoint. Every response is
-`Result<T, AuthError>`, which musli encodes (musli-core implements
-`Encode`/`Decode` for `Result`, so it meets `Endpoint::Response`'s bound
-directly), so the frontend gets the same structured `AuthError` it gets over
-HTTP. An internal failure (store, hashing) is an `Err` from the handler, which
-musli-web sends as a request error, the analogue of HTTP 500.
+a type can be the request of only one endpoint. Every response is the
+operation's value. A refusal fails the request with musli-web's typed error,
+carrying the `AuthError`, so the frontend gets the same structured
+`AuthError` it gets over HTTP (`Error::server_error::<AuthError>()`), with
+its text as the error's message. An internal failure (store, hashing) fails
+the request with just the message `internal error`, the analogue of HTTP 500.
+Until 0.3 every response was `Result<T, AuthError>`, from before musli-web
+had typed errors; the wire format changed with it, so client and server move
+together.
 
 **Ids.** watchword owns the band 32000–32255 and pins every id in it
 explicitly. An app keeps its own implicit ids, which start at 1 and never
@@ -904,12 +917,16 @@ meaning; a new endpoint takes the next free id in the band, and a removed one
 leaves its id unused. The module exports the band as `FIRST_ID` and
 `LAST_ID`, and `is_watchword_id(id)` tests an id against it. Pinning keeps
 watchword's ids stable whatever order its definitions are in, and the band
-makes a clash a matter of an app defining over 31 999 types.
+makes a clash a matter of an app defining over 31 999 types; a list cannot
+see the lists that include it, so the band is how watchword stays out of an
+app's way.
 
-The app's `api` crate does not list watchword's types in its own `define!`
-(musli-web has no syntax for that): they are a second list on the same
-connection. The app takes `watchword` with `musliweb05` in its `api` crate
-and may re-export the module.
+The app's `api` crate includes watchword's list in its own `define!`, as
+`include watchword_core::musliweb05 as Auth;` (or `watchword::musliweb05`),
+taking `watchword-core` (or `watchword`) with `musliweb05`. Its `Request`
+then has an `Auth(musliweb05::Request)` variant and its `Event` an
+`Auth(musliweb05::Event)` one, and a clash with the app's own ids fails the
+build.
 
 #### Server: `watchword::musliweb05::Connection` (`musliweb05` + `axum08`)
 
@@ -921,8 +938,12 @@ musli-web's server side (`ws::Handler`, `Incoming`, `Outgoing`) needs its
 // At upgrade, from the `SignedIn` the app's /ws route already extracts:
 let conn = watchword::musliweb05::Connection::new(auth.clone(), &signed_in);
 
-// In the app's Handler::handle, in the arm for ids its own API does not know:
-api::Request::Unknown(id) => conn.handle(id, incoming, outgoing).await,   // -> Result<bool, RequestError>
+// In the app's Handler::handle, in the arm of the included list:
+api::Request::Auth(request) => conn.handle(request, incoming, outgoing).await,   // -> Result<bool, RequestError>
+
+// Or, for an app whose list does not include watchword's, `Connection` is the
+// ws::Handler of watchword's list, combined with the app's:
+let server = musli_web::axum08::server(socket, AppHandler { .. }.or(conn.clone()));
 
 // Before negotiating the socket, the loop's auth arm: the session's guard and
 // the event receiver, filtered through `update` and `lagged` below.
@@ -964,8 +985,7 @@ event = events.recv() => {
   `guard()` and `connection()` give the parts. Every app's loop carried the
   same arm before; a loop that needs more (the guard's `changed`, say) keeps
   it by hand with `update` and `lagged`.
-- `handle` returns `Ok(false)` for an id outside watchword's band, which the
-  app treats as it treats its own unknown ids. For watchword's ids it decodes
+- `handle` takes a request of watchword's list. It decodes
   the body, re-reads the session and its user through `Auth::session` (as
   `SignedIn` does on every HTTP request), answers `Unauthorized` when the
   session has ended, and calls the same `Auth` operation the HTTP route calls,
@@ -1001,24 +1021,20 @@ Both async accessors re-read the session through `Auth::session`, as
 is `Error::Auth(AuthError)`, and anything else is the store failing, which
 an app must not answer as "not an admin". `handle` uses them itself.
 
-An app that hand-writes a combined `api::Id` instead of delegating its
-`Unknown` arm can do so; `Connection::handles(id)` (or `is_watchword_id`, from
-the types) says whether an id is watchword's.
-
-As built: `handle` returns `Ok(false)` for any id that is not one of
-watchword's endpoints, inside the band too (such as `AuthBroadcast`'s, or one
-a newer client knows), and `handles` is true for exactly the ids `handle`
-answers. The admin endpoints refuse a user who is not an admin with
+As built: `handle` returns `Ok(false)` for watchword's list's `Unknown`, which
+`ws::Handler::or` never routes to it. The admin endpoints refuse a user who is not an admin with
 `Forbidden` before calling the operation, as the HTTP `Admin` extractor does,
 so `UpdateUser` on oneself is refused for a regular user over both
 transports; `UpdateAccount` refuses a role change with `RoleNotChangeable` as
 its route does. A body that does not decode also gives `Ok(false)`, and
-musli-web answers the request with the decode error. An internal failure is
-logged by `handle`, at error level with its cause, and returned as the `Err`:
-a `musliweb05::RequestError`, the app handler's error type, whose message
-musli-web sends as the request error. It shows a refusal as its `AuthError`
-and an internal failure as just `internal error`, so a cause never reaches
-the client. The app's own requests convert into it with `?` (from
+musli-web answers the request with the decode error. A refusal or an
+internal failure is returned as the `Err`: a `musliweb05::RequestError`, the
+app handler's error type, which implements `ws::ResponseError` rather than
+`Display`, so it decides what the client sees. A refusal is sent as its
+typed `AuthError`, with the `AuthError`'s text as the message, and an
+internal failure as just the message `internal error`, so a cause never
+reaches the client. `handle` logs an internal failure, at error level with
+its cause, and not a refusal. The app's own requests convert into it with `?` (from
 `core::Error`, `AuthError` or `StoreError`); the app logs their internal
 failures itself, and does not log again what `handle` returns, which is
 already logged.
@@ -1045,7 +1061,8 @@ list (2.6), which `<AdminUsers>` shows, applies
 no longer needed (it stays for HTTP-only apps). On `Resync` the provider
 replaces the user as for `Me` and the list is fetched again. Every update is
 then passed to the app's `on_update` listeners. `http::Error`
-gains a variant for a socket request error.
+gains a variant for a socket request error; a refusal over the socket is
+`http::Error::Auth`, as over HTTP.
 
 As built: watchword-yew023 has a `musliweb05` feature, which watchword's
 `musliweb05` turns on with `yew023`. `set_socket` with the handle already set
@@ -1078,12 +1095,13 @@ changes nothing a broadcast shows, so that link's expiry stays shown until the
 list is next fetched.
 
 As built, the requests: the components take a crate-private client from the
-context, which sends each operation of the band over the socket and falls
-back to HTTP only when musli-web refuses the request before sending it (the
-socket is not open), so nothing reaches the server twice. A request the
-socket fails after sending it, such as when the socket closes before the
-answer or the server answers with a request error, fails with
-`http::Error::Socket`. The public `http` functions stay HTTP-only. Admin
+context, which sends each operation of the band over the socket with
+musli-web's `Handle::call` and falls back to HTTP only when the error says
+the request was never sent (`is_not_connected`: the socket is not open), so
+nothing reaches the server twice. A refusal is decoded from the typed error
+into `http::Error::Auth`. A request the socket fails otherwise after sending
+it, such as when the socket closes before the answer or the server fails it
+with an internal error, fails with `http::Error::Socket`. The public `http` functions stay HTTP-only. Admin
 `RevokeAccess` answers with the user over the socket and with nothing over
 HTTP; the client drops the user, as the component did not use it.
 
@@ -1106,10 +1124,10 @@ this from `<AdminUsers>`'s `on_impersonate` and `<UserMenu>`'s
 socket stale.
 
 The example's wiring, as a reference: a shared `api` crate with the app's
-own `define!` list (implicit ids), next to which watchword's list rides on
-the same socket. The server's `/ws` route extracts `SignedIn`, makes the
+own `define!` list (implicit ids), which includes watchword's list as
+`Auth`. The server's `/ws` route extracts `SignedIn`, makes the
 `Connection` from it, and its `ws::Handler` answers the app's ids and
-delegates `Unknown(id)` to `conn.handle`. It takes `conn.updates()` first,
+passes `Auth(request)` to `conn.handle`. It takes `conn.updates()` first,
 negotiates through `updates.unless_ended`, and its connection loop selects
 over `server.run()` and `updates.next()`, broadcasting each update and
 dropping the server, which closes the socket, once `next` gives `None`. The frontend builds the web03
@@ -1292,17 +1310,20 @@ once the release is on crates.io.
     replaces those with one thing the components consume themselves, and is
     most of the gain. Moving the requests too gives one connection, one place
     where liveness and admin rights are checked, and one error path, for a
-    modest cost: the request types, one delegating match arm in the app, and
+    modest cost: the request types, one match arm in the app, and
     a second transport in the components. Removing the HTTP routes would break
     every app without musli-web, and the sign-in operations cannot move at all
     (2.7), so it is not proposed.
-17. **Ids: a pinned band, not a merged list.** musli-web numbers each
-    `define!` list from 1 and cannot merge lists, so watchword pins all of its
-    ids explicitly in 32000–32255 and the app delegates the ids its own
-    `Request` does not know (`Unknown(id)`) to `Connection::handle`. Making
-    apps pin their own ids instead would renumber their existing protocols;
-    a hand-written combined `Id` type works too but asks every app for more
-    code than one match arm. The band is part of the wire format: a released
+17. **Ids: a pinned band, in an included list.** musli-web numbers each
+    `define!` list from 1, so watchword pins all of its ids explicitly in
+    32000–32255, and an app includes watchword's list in its own (musli-web
+    0.5's `include`), passing the `Auth` variant's requests to
+    `Connection::handle`, or combines its handler with `Connection` through
+    `ws::Handler::or`. Either way musli-web checks at compile time that no id
+    is used twice. Until 0.3 the app forwarded the ids its own `Request` did
+    not know (`Unknown(id)`), from before musli-web could compose lists; that
+    checked nothing. Making apps pin their own ids instead would renumber
+    their existing protocols. The band is part of the wire format: a released
     id never changes meaning.
 18. **Admin checks stay in `Auth`, and the session is re-read per request.**
     A socket lives for hours while roles and sessions change. `Connection`
@@ -1311,16 +1332,14 @@ once the release is on crates.io.
     other rules themselves, so the socket path cannot drift from the HTTP
     path and an app cannot skip a check by routing a request differently. The
     cost is one store read per request, the same as over HTTP.
-19. **musli-web is a versioned dependency, aliased for its macro.** musli-web
-    0.4 is not 1.0 and appears in the API (`Handle`, `Incoming`, the
-    generated types), so the feature, dependency key and module are
-    `musliweb05`/`musli-web05`/`musliweb05` (1.2). `define!` expands to
-    `::musli_web::` paths, which `extern crate musli_web05 as musli_web;` in
-    watchword-core satisfies without giving up the versioned key. That alias
-    is crate-wide, so a later `musliweb05` cannot sit beside it in the same
-    crate; when that comes, one of the two moves into a crate of its own
-    (`watchword-musliweb05`), as yew did in 1.1, without changing the
-    `watchword::musliweb0N` paths apps use.
+19. **musli-web is a versioned dependency.** musli-web 0.5 is not 1.0 and
+    appears in the API (`Handle`, `Incoming`, the generated types), so the
+    feature, dependency key and module are `musliweb05`/`musli-web05`/
+    `musliweb05` (1.2). `define!` is given the versioned path with
+    `#![musli(crate = musli_web05)]`; until 0.3 an `extern crate musli_web05
+    as musli_web;` alias stood in for it, which was crate-wide and would have
+    kept a later `musliweb06` out of the same crate. Now one can sit beside
+    it.
 20. **A lagged event stream resyncs the page with one update.** `Auth::events`
     is a bounded broadcast channel, so a slow socket loop can miss events and
     nothing replays them. Rather than replay or a per-socket queue,

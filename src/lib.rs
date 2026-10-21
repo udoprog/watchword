@@ -54,7 +54,7 @@
 //! ## Using it
 //!
 //! Add it from crates.io with the features each crate needs. An app whose
-//! frontend talks to its server over a [musli-web] 0.4 WebSocket, as the
+//! frontend talks to its server over a [musli-web] 0.5 WebSocket, as the
 //! [example app](#example-app) does, takes `musliweb05` on both sides: the
 //! server answers the components' requests and sends them live updates on
 //! that socket, and the frontend hands the socket to the components. An app
@@ -172,11 +172,6 @@ extern crate alloc;
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "server", macro_use)]
 extern crate std;
-
-// The socket tests define an app API of their own, and `define!` expands to
-// `::musli_web` paths.
-#[cfg(all(test, feature = "musliweb05", feature = "axum08"))]
-extern crate musli_web05 as musli_web;
 
 #[doc(inline)]
 pub use watchword_core as types;
