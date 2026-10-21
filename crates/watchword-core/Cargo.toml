@@ -47,6 +47,6 @@ sqll015 = { package = "sqll", version = "0.15.0", default-features = false, feat
 phrasebook02 = { package = "phrasebook", version = "0.2.0", optional = true }
 
 [dev-dependencies]
-musli = { version = "0.2.0", features = ["storage", "wire", "descriptive"] }
+musli = { version = "0.2.0", features = ["storage", "wire", "descriptive", "json"] }
 serde_json = "1.0.151"
 sqll015 = { package = "sqll", version = "0.15.0", features = ["bundled"] }

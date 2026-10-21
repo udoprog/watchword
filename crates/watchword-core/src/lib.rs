@@ -311,7 +311,7 @@ pub struct UserInfo {
     /// Whether a password is set.
     pub has_password: bool,
     /// When the user was created.
-    #[cfg_attr(feature = "musli02", musli(with = self::musli_timestamp))]
+    #[cfg_attr(feature = "musli02", musli(with = musli_core02::display))]
     pub created_at: Timestamp,
     /// The admin acting as this user, when this is the signed-in user of a
     /// session an admin created by impersonating them. Only the answers about
@@ -362,7 +362,7 @@ pub struct UserEntry {
     pub user: UserInfo,
     /// When the user's live registration or reset link expires, if there is
     /// one.
-    #[cfg_attr(feature = "musli02", musli(with = self::musli_timestamp::option))]
+    #[cfg_attr(feature = "musli02", musli(with = musli_core02::display::option))]
     pub link_expires_at: Option<Timestamp>,
 }
 
@@ -447,7 +447,7 @@ pub struct Link {
     /// The token, for the frontend route `/register/{token}`.
     pub token: String,
     /// When the link stops working.
-    #[cfg_attr(feature = "musli02", musli(with = self::musli_timestamp))]
+    #[cfg_attr(feature = "musli02", musli(with = musli_core02::display))]
     pub expires_at: Timestamp,
 }
 
@@ -740,53 +740,5 @@ mod double_option {
         D: Deserializer<'de>,
     {
         Option::<T>::deserialize(deserializer).map(Some)
-    }
-}
-
-/// musli for [`Timestamp`], as its RFC 3339 string, the same form as its serde
-/// encoding.
-#[cfg(all(feature = "musli02", feature = "alloc"))]
-mod musli_timestamp {
-    use jiff::Timestamp;
-    use musli_core02::{Context, Decoder, Encoder};
-
-    pub fn encode<E>(value: &Timestamp, encoder: E) -> Result<(), E::Error>
-    where
-        E: Encoder,
-    {
-        encoder.collect_string(value)
-    }
-
-    pub fn decode<'de, D>(decoder: D) -> Result<Timestamp, D::Error>
-    where
-        D: Decoder<'de>,
-    {
-        let cx = decoder.cx();
-        decoder.decode_unsized(|s: &str| s.parse::<Timestamp>().map_err(|error| cx.message(error)))
-    }
-
-    pub mod option {
-        use jiff::Timestamp;
-        use musli_core02::{Decoder, Encoder};
-
-        pub fn encode<E>(value: &Option<Timestamp>, encoder: E) -> Result<(), E::Error>
-        where
-            E: Encoder,
-        {
-            match value {
-                Some(value) => super::encode(value, encoder.encode_some()?),
-                None => encoder.encode_none(),
-            }
-        }
-
-        pub fn decode<'de, D>(decoder: D) -> Result<Option<Timestamp>, D::Error>
-        where
-            D: Decoder<'de>,
-        {
-            match decoder.decode_option()? {
-                Some(decoder) => super::decode(decoder).map(Some),
-                None => Ok(None),
-            }
-        }
     }
 }

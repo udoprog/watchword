@@ -599,3 +599,39 @@ fn same_origin_paths() {
         assert!(!is_same_origin_path(bad), "{bad:?}");
     }
 }
+
+/// Timestamps stay RFC 3339 strings on the wire (the form of their serde
+/// encoding), including the `Option` form, which is `null` when absent.
+#[cfg(feature = "musli02")]
+#[test]
+fn musli_timestamp_is_rfc3339_string() {
+    let expires = at("2026-10-08T00:00:00.5Z");
+    for link_expires_at in [None, Some(expires)] {
+        let entry = UserEntry {
+            user: user(),
+            link_expires_at,
+        };
+        let json = musli::json::to_string(&entry).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value["user"]["created_at"],
+            user().created_at.to_string().as_str()
+        );
+        match link_expires_at {
+            Some(_) => assert_eq!(value["link_expires_at"], "2026-10-08T00:00:00.5Z"),
+            None => assert!(value["link_expires_at"].is_null()),
+        }
+        assert_eq!(musli::json::from_str::<UserEntry>(&json).unwrap(), entry);
+    }
+
+    let link = Link {
+        token: "abc".into(),
+        expires_at: at("2026-10-08T00:00:00Z"),
+    };
+    let json = musli::json::to_string(&link).unwrap();
+    assert!(
+        json.contains(r#""expires_at":"2026-10-08T00:00:00Z""#),
+        "{json}"
+    );
+    assert!(musli::json::from_str::<Link>(&json.replace("2026", "bad")).is_err());
+}
