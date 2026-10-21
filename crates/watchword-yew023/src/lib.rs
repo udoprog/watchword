@@ -151,7 +151,7 @@
 //!
 //! ## Translating
 //!
-//! The components look their text up through [phrasebook] 0.1: in the
+//! The components look their text up through [phrasebook] 0.2: in the
 //! `Phrases` the app provides with `ContextProvider<Phrases>`, falling back to
 //! watchword's own English messages, [`L10N`], for any message the app's
 //! phrasebook lacks. Without a provider they render that English, so an app
