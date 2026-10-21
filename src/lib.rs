@@ -25,9 +25,10 @@
 //! A dependency that is not yet 1.0 and appears in the API is named after its
 //! version: its feature (and module, if it has one) is `axum08` for axum
 //! 0.8, `sqll015` for sqll 0.15, `musli02` for musli 0.2, `musliweb05` for
-//! musli-web 0.5, `phrasebook02` for phrasebook 0.2 and `yew023` for yew
-//! 0.23. A later version is added beside it, so a watchword upgrade never
-//! forces an app onto a new axum, sqll, musli, musli-web, phrasebook or yew,
+//! musli-web 0.5, `phrasebookcatalog01` for phrasebook-catalog 0.1 and
+//! `yew023` for yew 0.23. A later version is added beside it, so a watchword
+//! upgrade never forces an app onto a new axum, sqll, musli, musli-web,
+//! phrasebook-catalog or yew,
 //! and an app moves when it chooses.
 //!
 //! | Feature | Module | What it provides |
@@ -43,8 +44,8 @@
 //! | `axum08` | [`axum08`] | for axum 0.8: the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors and `routes()` for the `/api/auth` JSON routes, plus the Cloudflare and Google routes when those features are on (implies `server`) |
 //! | `sqll015` | | sqll 0.15 `BindValue`, `Bind` and `FromColumn` on `UserId` (an integer with the same bits), `Role`, `Access` and `Method` (their names), from the [watchword-core] crate, for an app's own `Store` over SQLite such as [`examples/sqll-store`]; no storage of its own |
 //! | `test-util` | [`store_suite!`], [`google::fake`] | for an app's tests: `Auth::test_user` and `Auth::test_session`, an active user and a session without signing in; `store_suite!`, watchword's store conformance suite, to run over the app's own `Store`; with `google`, `AuthBuilder::google_endpoints`, and with `google` and `axum08` also `FakeGoogle`, a local fake Google to sign in through offline (implies `server`) |
-//! | `phrasebook02` | [`phrasebook02`] | `L10N`, watchword's messages (the text of the `yew023` components) as a [phrasebook] 0.2 catalog, for a native tool such as an app's localization checker that needs them without building yew, from the [watchword-core] crate (implies `std`) |
-//! | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `AdminCloudflare`, `CloudflareSettings`, the `http` client and `L10N`, the components' messages as a [phrasebook] catalog, from the [watchword-yew023] crate (implies `std` and `phrasebook02`) |
+//! | `phrasebookcatalog01` | [`phrasebookcatalog01`] | `L10N`, watchword's messages (the text of the `yew023` components) as a [phrasebook-catalog] 0.1 catalog, which [phrasebook] 0.2 takes, for a native tool such as an app's localization checker that needs them without building yew, from the [watchword-core] crate (needs neither `std` nor `alloc`) |
+//! | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `AdminCloudflare`, `CloudflareSettings`, the `http` client and `L10N`, the components' messages as a [phrasebook] catalog, from the [watchword-yew023] crate (implies `std` and `phrasebookcatalog01`) |
 //!
 //! The most-used names that do not depend on a versioned feature are
 //! re-exported at the crate root.
@@ -149,13 +150,14 @@
 //! [`google::fake`]: https://docs.rs/watchword/latest/watchword/google/fake/index.html
 //! [`google`]: https://docs.rs/watchword/latest/watchword/google/index.html
 //! [`musliweb05`]: https://docs.rs/watchword/latest/watchword/musliweb05/index.html
-//! [`phrasebook02`]: https://docs.rs/watchword/latest/watchword/phrasebook02/index.html
+//! [`phrasebookcatalog01`]: https://docs.rs/watchword/latest/watchword/phrasebookcatalog01/index.html
 //! [`store_suite!`]: https://docs.rs/watchword/latest/watchword/macro.store_suite.html
 //! [`store`]: https://docs.rs/watchword/latest/watchword/store/index.html
 //! [`Store`]: https://docs.rs/watchword/latest/watchword/store/trait.Store.html
 //! [`types`]: https://docs.rs/watchword/latest/watchword/types/index.html
 //! [`yew023`]: https://docs.rs/watchword/latest/watchword/yew023/index.html
 //! [musli-web]: https://docs.rs/musli-web
+//! [phrasebook-catalog]: https://docs.rs/phrasebook-catalog
 //! [phrasebook]: https://docs.rs/phrasebook
 //! [trunk]: https://trunkrs.dev
 //! [watchword-core]: https://docs.rs/watchword-core
@@ -200,10 +202,10 @@ pub mod google;
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "axum08")))]
 pub mod axum08;
 
-#[cfg(feature = "phrasebook02")]
-#[cfg_attr(watchword_docsrs, doc(cfg(feature = "phrasebook02")))]
+#[cfg(feature = "phrasebookcatalog01")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "phrasebookcatalog01")))]
 #[doc(inline)]
-pub use watchword_core::phrasebook02;
+pub use watchword_core::phrasebookcatalog01;
 
 #[cfg(feature = "yew023")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "yew023")))]

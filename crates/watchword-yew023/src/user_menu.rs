@@ -11,7 +11,7 @@ use super::Error;
 use super::context::use_auth;
 use super::l10n;
 use super::service::use_auth_service;
-use watchword_core::phrasebook02::L10N;
+use watchword_core::phrasebookcatalog01::L10N;
 use watchword_core::{AuthError, UserInfo};
 
 /// The properties of [`UserMenu`].

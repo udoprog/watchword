@@ -1,12 +1,15 @@
-//! watchword's messages as a [phrasebook] 0.1 catalog, [`L10N`].
+//! watchword's messages as a [phrasebook-catalog] 0.1 catalog, [`L10N`].
 //!
 //! This is the text of watchword's Yew components, kept here so a tool that
 //! only needs the messages, such as an app's localization checker, takes them
-//! without building a frontend. watchword-yew023 re-exports [`L10N`].
+//! without building a frontend. It needs neither `std` nor `alloc`.
+//! watchword-yew023 re-exports [`L10N`], and [phrasebook] 0.2 takes it as one
+//! of its catalogs.
 //!
+//! [phrasebook-catalog]: https://docs.rs/phrasebook-catalog
 //! [phrasebook]: https://docs.rs/phrasebook
 
-use phrasebook02::{Catalog, Lang, Source};
+use phrasebookcatalog01::{Catalog, Lang, Source};
 
 /// watchword's messages, in English, with every id under the `watchword-`
 /// prefix.
@@ -32,7 +35,7 @@ use phrasebook02::{Catalog, Lang, Source};
 ///     .language(Lang::EN_US, "English")
 ///     .language(SV_SE, "Svenska")
 ///     .catalog(&APP)
-///     .catalog(&watchword::phrasebook02::L10N)
+///     .catalog(&watchword::phrasebookcatalog01::L10N)
 ///     .build();
 /// ```
 ///
@@ -52,7 +55,7 @@ pub static L10N: Catalog = Catalog::new(
 
 #[cfg(test)]
 mod tests {
-    use phrasebook02::check;
+    use phrasebook::check;
 
     use super::L10N;
 

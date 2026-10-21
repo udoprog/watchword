@@ -20,7 +20,7 @@ use super::l10n::{self, error_message, role_name};
 use super::listener::Listener;
 use super::service::AuthService;
 use super::users::{Users, UsersStore, retain_links};
-use watchword_core::phrasebook02::L10N;
+use watchword_core::phrasebookcatalog01::L10N;
 use watchword_core::{
     Access, CreatedUser, Link, Method, NewUser, Role, UserChange, UserEntry, UserId, UserInfo,
 };

@@ -451,7 +451,7 @@ pub use self::listener::Listener;
 #[cfg(feature = "std")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 #[doc(inline)]
-pub use watchword_core::phrasebook02::L10N;
+pub use watchword_core::phrasebookcatalog01::L10N;
 
 #[cfg(feature = "std")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]

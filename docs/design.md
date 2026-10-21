@@ -85,26 +85,33 @@ Two things follow from the rule:
 jiff 0.2 is in the API through the types' `Timestamp` fields and is not
 versioned: that would mean restructuring the types.
 
-phrasebook 0.2 is in the API through `L10N`, a `phrasebook::Catalog`, and the
-`Phrases` context the components read, so its dependency key, feature and
-module are `phrasebook02`. The catalog (`L10N` and `locales/en-US.ftl`) lives
-in watchword-core as `watchword_core::phrasebook02::L10N`, behind its
-`phrasebook02` feature, so a native tool that needs only the messages (army's
+phrasebook 0.2 is in watchword-yew023's API through the `Phrases` context the
+components read, so its dependency key there is `phrasebook02`. `L10N` is a
+`Catalog`, which phrasebook re-exports from phrasebook-catalog 0.1, the const,
+`no_std`, no-`alloc` crate a library that only ships a catalog depends on, so
+watchword-core takes phrasebook-catalog alone and its dependency key, feature
+and module are `phrasebookcatalog01` (phrasebook is only its dev-dependency,
+for `check::catalog` in its tests). The catalog (`L10N` and
+`locales/en-US.ftl`) lives in watchword-core as
+`watchword_core::phrasebookcatalog01::L10N`, behind its `phrasebookcatalog01`
+feature, so a native tool that needs only the messages (army's
 `check-l10n`, which checks an app's `.ftl` against the ids of the catalogs it
 takes) gets them without building yew, gloo-net, web-sys and
 wasm-bindgen-futures. A feature on watchword-core rather than a
 `watchword-l10n` crate: the catalog is a static and a `.ftl` file with no
-dependency but phrasebook, core is already released in lockstep and taken by
+dependency but phrasebook-catalog, core is already released in lockstep and taken by
 every frontend, and a fourth crate would add a lockstep release and a docs.rs
-page for one item. The feature implies `std`, since phrasebook 0.2 has no
-`no_std` support (no `std`/`alloc` features of its own). watchword's
-`phrasebook02` feature re-exports the module as `watchword::phrasebook02`;
-`yew023` implies it. In watchword-yew023 phrasebook is not optional (every
-component's text goes through it), so it turns on `watchword-core/phrasebook02`
-with its `std` feature and re-exports `L10N` at its root, where it has always
-been: a later phrasebook would come with a yew of its own, hence with a new
-`watchword-yew0NN` crate anyway, while watchword-core would add a
-`phrasebook0N` module beside this one.
+page for one item. The feature needs neither `std` nor `alloc`, and since
+phrasebook 0.2 and any later phrasebook built on phrasebook-catalog 0.1 take
+the same `Catalog`, a new phrasebook does not change watchword-core.
+watchword's `phrasebookcatalog01` feature re-exports the module as
+`watchword::phrasebookcatalog01`; `yew023` implies it. In watchword-yew023
+phrasebook is not optional (every component's text goes through it), so it
+turns on `watchword-core/phrasebookcatalog01` with its `std` feature and
+re-exports `L10N` at its root, where it has always been: a later phrasebook
+would come with a yew of its own, hence with a new `watchword-yew0NN` crate
+anyway, while watchword-core would add a `phrasebookcatalog0N` module beside
+this one only for a new phrasebook-catalog.
 
 ### 1.3 Features
 
@@ -128,13 +135,13 @@ without its default features, so the time zone databases it does not need for
 | `google` | `server` + the Google OAuth provider (`GoogleConfig`) | reqwest, serde_json, url, lru |
 | `axum08` | `server` + extractors and `routes()` for axum 0.8 | axum 0.8 |
 | `sqll015` | watchword-core's `sqll015`: the sqll column traits on `UserId` (an integer with the same bits), `Role`, `Access` and `Method` (their names), for an app's own `Store` over SQLite (2.3); no storage of its own | sqll 0.15 through watchword-core (`threadsafe`; the app picks `bundled`) |
-| `phrasebook02` | `std` + `watchword::phrasebook02` (watchword-core's): `L10N`, the components' messages as a phrasebook catalog, without yew, for native tools such as an l10n checker | phrasebook 0.2 (no features) |
-| `yew023` | `std` + `phrasebook02` + watchword-yew023: components, context, hook, HTTP client, and `L10N` re-exported | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.2 (`yew023`) |
+| `phrasebookcatalog01` | `watchword::phrasebookcatalog01` (watchword-core's): `L10N`, the components' messages as a phrasebook-catalog catalog, without yew or `std`, for native tools such as an l10n checker | phrasebook-catalog 0.1 (no features) |
+| `yew023` | `std` + `phrasebookcatalog01` + watchword-yew023: components, context, hook, HTTP client, and `L10N` re-exported | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.2 (`yew023`) |
 | `test-util` | `server` + for apps' tests: `Auth::test_user` and `Auth::test_session` (2.2), the store conformance suite as `store_suite!` (2.3); with `google` also `AuthBuilder::google_endpoints`, and with `google` and `axum08` `google::fake::FakeGoogle` (2.4) | nothing more |
 | `musliweb05` *(2.7)* | `alloc` + `musli02` + `watchword::musliweb05`: the auth endpoints and broadcast as musli-web 0.5 API types; with `axum08` also `musliweb05::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.5 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
 
 The modules are `watchword::{types, core, store, cloudflare, google, axum08,
-musliweb05, phrasebook02, yew023}`, and the most-used names that need no versioned feature are
+musliweb05, phrasebookcatalog01, yew023}`, and the most-used names that need no versioned feature are
 re-exported at the root.
 
 ## 2. API
@@ -732,8 +739,8 @@ take a `class` prop. Each app styles them with its own CSS.
 Their text goes through phrasebook (decision 21). Every string, including the
 messages for errors and `Invalid` reasons (phrased from their codes, not from
 `Display`), is a message in `crates/watchword-core/locales/en-US.ftl` under
-the `watchword-` prefix, shipped as `pub static L10N: phrasebook::Catalog` in
-watchword-core's `phrasebook02` module (see 1.2) and re-exported here.
+the `watchword-` prefix, shipped as `pub static L10N: phrasebook::Catalog` (phrasebook-catalog's) in
+watchword-core's `phrasebookcatalog01` module (see 1.2) and re-exported here.
 Each function component reads `or_catalog(use_context::<Phrases>(), &L10N)`;
 the struct components (`AuthProvider`, `AdminUsers`) subscribe to the same
 context and keep the handle. So without a provider, or with an app phrasebook

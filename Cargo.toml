@@ -38,8 +38,8 @@ google = ["server", "dep:reqwest", "dep:serde_json", "dep:url", "dep:lru", "axum
 axum08 = ["server", "dep:axum08", "watchword-core/axum08", "musli-web05?/ws"]
 sqll015 = ["watchword-core/sqll015"]
 test-util = ["server", "axum08?/http1"]
-phrasebook02 = ["std", "watchword-core/phrasebook02"]
-yew023 = ["std", "phrasebook02", "dep:watchword-yew023"]
+phrasebookcatalog01 = ["watchword-core/phrasebookcatalog01"]
+yew023 = ["std", "phrasebookcatalog01", "dep:watchword-yew023"]
 
 [dependencies]
 # types
@@ -100,7 +100,3 @@ name = "sqll-store"
 path = "examples/sqll-store/main.rs"
 required-features = ["test-util", "sqll015"]
 test = true
-
-# Unreleased versions of these crates, until they are published.
-[patch.crates-io]
-phrasebook = { path = "../phrasebook" }

@@ -23,7 +23,7 @@ use super::transport::{DefaultTransport, Transport};
 use super::users::UsersStore;
 #[cfg(feature = "musliweb05")]
 use watchword_core::musliweb05::AuthUpdate;
-use watchword_core::phrasebook02::L10N;
+use watchword_core::phrasebookcatalog01::L10N;
 use watchword_core::{AuthConfig, UserInfo};
 
 /// The properties of [`AuthProvider`].

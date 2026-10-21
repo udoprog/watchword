@@ -1542,6 +1542,8 @@ dependencies = [
 [[package]]
 name = "phrasebook"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1061540c1622a87d325efd1728449c74b127cc79ee949d60300870b78bed8dd8"
 dependencies = [
  "fluent-bundle",
  "fluent-syntax",
@@ -1555,6 +1557,8 @@ dependencies = [
 [[package]]
 name = "phrasebook-catalog"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85ee5156927aefd2f34f59e77e822d89f29d7971d8182290a7512e41abdf80bf"
 dependencies = [
  "yew",
 ]
@@ -2867,7 +2871,7 @@ dependencies = [
  "jiff",
  "musli-core",
  "musli-web",
- "phrasebook",
+ "phrasebook-catalog",
  "serde",
  "thiserror 2.0.21",
 ]

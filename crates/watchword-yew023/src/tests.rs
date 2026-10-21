@@ -19,7 +19,7 @@ use super::l10n::{self, error_message};
 use super::provider::replace_user;
 use super::sign_in::query_error_message;
 use super::user_menu::{impersonation_banner, stop_error_message};
-use watchword_core::phrasebook02::L10N;
+use watchword_core::phrasebookcatalog01::L10N;
 use watchword_core::{
     Access, AuthError, CloudflareConfig, Conflict, Impersonator, Invalid, Link, Method, Role,
     UserChange, UserEntry, UserId, UserInfo,

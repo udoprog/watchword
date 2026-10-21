@@ -42,7 +42,7 @@ jobs:
     - run: cargo clippy --all-targets --no-default-features --features axum08 -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features musliweb05,axum08 -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features sqll015 -- -D warnings
-    - run: cargo clippy --all-targets --no-default-features --features phrasebook02 -- -D warnings
+    - run: cargo clippy --all-targets --no-default-features --features phrasebookcatalog01 -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features yew023 -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features test-util -- -D warnings
     - run: cargo clippy --all-targets --no-default-features --features test-util,google -- -D warnings
@@ -52,10 +52,11 @@ jobs:
     - run: cargo clippy -p watchword-core --all-targets --no-default-features --features musliweb05 -- -D warnings
     - run: cargo clippy -p watchword-core --all-targets --no-default-features --features axum08 -- -D warnings
     - run: cargo clippy -p watchword-core --all-targets --no-default-features --features sqll015 -- -D warnings
-    - run: cargo clippy -p watchword-core --all-targets --no-default-features --features phrasebook02 -- -D warnings
+    - run: cargo clippy -p watchword-core --all-targets --no-default-features --features phrasebookcatalog01 -- -D warnings
     - run: cargo check -p watchword-core --no-default-features
     - run: cargo check -p watchword-core --no-default-features --features alloc
     - run: cargo check -p watchword-core --no-default-features --features sqll015
+    - run: cargo check -p watchword-core --no-default-features --features phrasebookcatalog01
     - run: cargo check --no-default-features --features alloc
     - run: cargo clippy -p watchword-yew023 --all-targets -- -D warnings
     - run: cargo clippy -p watchword-yew023 --all-targets --features musliweb05 -- -D warnings
@@ -75,7 +76,8 @@ jobs:
     - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features alloc
     - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features musli02
     - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features musliweb05
-    - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features phrasebook02
+    - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features phrasebookcatalog01
+    - run: cargo check --target wasm32-unknown-unknown --no-default-features --features phrasebookcatalog01
     - run: cargo clippy -p watchword-yew023 --target wasm32-unknown-unknown -- -D warnings
     - run: cargo clippy -p watchword-yew023 --target wasm32-unknown-unknown --features musliweb05 -- -D warnings
 

@@ -1,7 +1,3 @@
 [workspace]
 resolver = "3"
 members = ["api", "server", "frontend"]
-
-# Unreleased versions of these crates, until they are published.
-[patch.crates-io]
-phrasebook = { path = "../../../phrasebook" }

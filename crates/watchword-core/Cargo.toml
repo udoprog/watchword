@@ -28,8 +28,7 @@ musli02 = ["dep:musli-core02"]
 musliweb05 = ["alloc", "musli02", "dep:musli-web05"]
 axum08 = ["std", "dep:axum08"]
 sqll015 = ["std", "dep:sqll015"]
-# phrasebook 0.2 has no `no_std` support.
-phrasebook02 = ["std", "dep:phrasebook02"]
+phrasebookcatalog01 = ["dep:phrasebookcatalog01"]
 
 # jiff without its time zone databases: only `Timestamp` is used.
 [dependencies]
@@ -43,10 +42,12 @@ axum08 = { package = "axum", version = "0.8.9", default-features = false, featur
 # Only its traits. `threadsafe` because sqll-sys builds with nothing but
 # `bundled` without it; the app picks the linking and anything else it needs.
 sqll015 = { package = "sqll", version = "0.15.0", default-features = false, features = ["threadsafe"], optional = true }
-# Only `Catalog`; watchword-yew023 adds its `yew023` feature.
-phrasebook02 = { package = "phrasebook", version = "0.2.0", optional = true }
+# `Catalog`, `Lang` and `Source`: const, `no_std` and without `alloc`.
+phrasebookcatalog01 = { package = "phrasebook-catalog", version = "0.1.0", optional = true }
 
 [dev-dependencies]
+# `check::catalog` on `L10N`.
+phrasebook = "0.2.0"
 musli = { version = "0.2.0", features = ["storage", "wire", "descriptive", "json"] }
 serde_json = "1.0.151"
 sqll015 = { package = "sqll", version = "0.15.0", features = ["bundled"] }
