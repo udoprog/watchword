@@ -3,8 +3,12 @@
 //! over a fresh store made by `expr` (evaluated inside the async test, so it
 //! may `.await`).
 
+use std::borrow::ToOwned;
+use std::boxed::Box;
 use std::error::Error as StdError;
 use std::net::IpAddr;
+use std::string::String;
+use std::vec::Vec;
 
 use jiff::{SignedDuration, Timestamp};
 

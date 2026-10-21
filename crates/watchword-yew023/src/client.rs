@@ -7,6 +7,8 @@
 //! cannot use the socket (signing in and out, registering, impersonating,
 //! the config, and checking the session) are always made with [`http`].
 
+use std::vec::Vec;
+
 #[cfg(feature = "musliweb04")]
 use watchword_core::musliweb04::{
     DeleteUserRequest, IssueLinkRequest, MeRequest, RevokeAccessRequest, RevokeLinkRequest,

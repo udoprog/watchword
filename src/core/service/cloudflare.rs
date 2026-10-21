@@ -5,6 +5,11 @@
 //! when signing in. A pending user who signs in becomes active, and a revoked
 //! user is refused.
 
+#[cfg(test)]
+use std::string::String;
+#[cfg(test)]
+use std::vec::Vec;
+
 use http::HeaderMap;
 
 use super::{Auth, AuthBuilder, AuthEvent, Result};

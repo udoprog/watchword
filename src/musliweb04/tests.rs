@@ -3,6 +3,10 @@
 
 mod socket;
 
+use std::borrow::ToOwned;
+use std::string::String;
+use std::vec::Vec;
+
 use super::{AuthUpdate, Connection};
 use crate::axum08::SignedIn;
 use crate::types::{Impersonator, NewUser, RegisterRequest, Role, UserInfo};

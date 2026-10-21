@@ -1,3 +1,5 @@
+use std::boxed::Box;
+
 use http::{HeaderMap, HeaderValue, header};
 
 use super::*;

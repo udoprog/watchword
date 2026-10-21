@@ -1,7 +1,10 @@
 //! Route-level tests over `MemoryStore`, driving the router with
 //! `tower::ServiceExt::oneshot`.
 
+use std::borrow::ToOwned;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::string::String;
+use std::string::ToString;
 use std::time::Duration;
 
 use axum08::Router;

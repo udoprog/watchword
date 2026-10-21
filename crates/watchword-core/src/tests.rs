@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
+
 use serde_json::{Value, json};
 
 use super::*;
@@ -386,7 +391,7 @@ fn created_user_json() {
 fn musli_round_trip() {
     fn round_trip<T>(value: T)
     where
-        T: std::fmt::Debug
+        T: core::fmt::Debug
             + PartialEq
             + Encode<musli::mode::Binary>
             + for<'de> Decode<'de, musli::mode::Binary, musli::alloc::Global>,
@@ -474,7 +479,7 @@ mod musliweb04 {
     fn bodies_round_trip() {
         fn round_trip<T>(value: T)
         where
-            T: std::fmt::Debug
+            T: core::fmt::Debug
                 + PartialEq
                 + Encode<musli::mode::Binary>
                 + for<'de> Decode<'de, musli::mode::Binary, musli::alloc::Global>,

@@ -1,3 +1,5 @@
+use std::string::String;
+
 use musli_web04::api::{EncodeBody, Id, MessageId};
 use musli_web04::ws::{Incoming, Outgoing};
 

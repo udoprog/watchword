@@ -1,4 +1,6 @@
+use std::borrow::ToOwned;
 use std::collections::HashMap;
+use std::string::String;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -117,6 +119,8 @@ impl Auth {
 
 #[cfg(test)]
 mod tests {
+    use std::string::ToString;
+
     use super::*;
     use crate::types::{Method, Role, UserInfo};
 

@@ -10,9 +10,12 @@
 //! deterministic. Emails are passed in already normalized (see
 //! [`normalize_email`](crate::normalize_email)) and compared exactly.
 
+use std::boxed::Box;
 use std::error::Error as StdError;
 use std::future::Future;
 use std::pin::Pin;
+use std::string::String;
+use std::vec::Vec;
 
 use jiff::Timestamp;
 

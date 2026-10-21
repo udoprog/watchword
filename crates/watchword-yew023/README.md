@@ -25,6 +25,20 @@ lockstep with watchword.
 
 <br>
 
+## Features
+
+yew needs the standard library, so everything here is behind `std`, which
+is on by default. The crate is `no_std` only so its features line up with
+watchword's.
+
+| Feature | What it provides |
+|---|---|
+| `std` *(default)* | everything here |
+| `alloc` | nothing yet beyond watchword-core's `alloc` |
+| `musliweb04` | `std` + [`AuthContext::set_socket`]: the components follow a [musli-web] 0.4 socket's broadcasts and send their requests over it |
+
+<br>
+
 ## Usage
 
 Wrap the app in [`AuthProvider`]. It signs the user in (or registers them
@@ -194,6 +208,7 @@ order:
 [`AccountPanel`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AccountPanel.html
 [`AdminUsers`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AdminUsers.html
 [`AuthContext`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html
+[`AuthContext::set_socket`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html#method.set_socket
 [`AuthProvider`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthProvider.html
 [`CloudflareSettings`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.CloudflareSettings.html
 [`http`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/http/index.html

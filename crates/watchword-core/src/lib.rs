@@ -14,23 +14,38 @@
 //!
 //! ## Features
 //!
-//! With no features the crate is safe to build for `wasm32-unknown-unknown`.
+//! The crate is `no_std`, and safe to build for `wasm32-unknown-unknown` with
+//! any feature but `axum08`. Only `std` is on by default.
 //!
 //! | Feature | What it provides |
 //! |---|---|
-//! | `musli01` | musli 0.1 `Encode`/`Decode` on the wire types, so an app can embed them in its own WebSocket messages |
-//! | `musliweb04` | `musli01` + [`musliweb04`]: the account and user-management endpoints and `AuthBroadcast` as musli-web 0.4 API types, with their ids pinned in 32000–32255 |
-//! | `axum08` | axum 0.8 `IntoResponse` for [`AuthError`], answering with its JSON body and status; watchword's `axum08` feature turns it on (not for wasm) |
+//! | *(none)* | `UserId`, `Role`, `Access`, `Method`, `Conflict`, `AuthConfig` and `MIN_PASSWORD_LEN` |
+//! | `alloc` | the wire types that hold strings (`UserInfo`, `LoginRequest`, `CreatedUser`, ...), [`AuthError`] and its `Invalid` reasons, `validate_password` and `normalize_email` |
+//! | `std` *(default)* | `alloc`, and the standard library for the dependencies that have it |
+//! | `musli01` | musli 0.1 `Encode`/`Decode` on the types, so an app can embed them in its own WebSocket messages |
+//! | `musliweb04` | `alloc` + `musli01` + [`musliweb04`]: the account and user-management endpoints and `AuthBroadcast` as musli-web 0.4 API types, with their ids pinned in 32000–32255 |
+//! | `axum08` | `std` + axum 0.8 `IntoResponse` for [`AuthError`], answering with its JSON body and status; watchword's `axum08` feature turns it on (not for wasm) |
 //!
 //! [`AuthError`]: https://docs.rs/watchword-core/latest/watchword_core/enum.AuthError.html
 //! [`musliweb04`]: https://docs.rs/watchword-core/latest/watchword_core/musliweb04/index.html
 //! [watchword]: https://docs.rs/watchword
 
+#![no_std]
 #![cfg_attr(watchword_docsrs, feature(doc_cfg))]
 
-use std::fmt;
-use std::str::FromStr;
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
+#[cfg(feature = "std")]
+extern crate std;
+
+use core::fmt;
+use core::str::FromStr;
+
+#[cfg(feature = "alloc")]
+use alloc::string::String;
+
+#[cfg(feature = "alloc")]
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -48,12 +63,14 @@ mod axum08;
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb04")))]
 pub mod musliweb04;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 mod tests;
 
 /// The shortest password [`validate_password`] accepts, in bytes.
 pub const MIN_PASSWORD_LEN: usize = 8;
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// Returns why the password is not acceptable, if it is not.
 pub fn validate_password(password: &str) -> Option<Invalid> {
     if password.len() < MIN_PASSWORD_LEN {
@@ -65,6 +82,8 @@ pub fn validate_password(password: &str) -> Option<Invalid> {
     None
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// Trims and lowercases an email so lookups and comparisons are
 /// case-insensitive.
 pub fn normalize_email(email: &str) -> String {
@@ -113,7 +132,7 @@ macro_rules! names {
             }
         }
 
-        impl std::error::Error for $error {}
+        impl core::error::Error for $error {}
 
         impl FromStr for $ty {
             type Err = $error;
@@ -174,6 +193,8 @@ pub enum Method {
 
 names!(Method, UnknownMethod, "sign-in method", Password => "password", Google => "google");
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// What the frontend and the admin pages see of a user.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]
@@ -204,6 +225,8 @@ pub struct UserInfo {
     pub impersonated_by: Option<Impersonator>,
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// The admin behind an impersonated session; see
 /// [`UserInfo::impersonated_by`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,6 +239,7 @@ pub struct Impersonator {
     pub name: String,
 }
 
+#[cfg(feature = "alloc")]
 impl UserInfo {
     /// The name to show: the login if there is one, otherwise the email.
     pub fn name(&self) -> &str {
@@ -231,6 +255,8 @@ impl UserInfo {
     }
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// A user in the admin list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]
@@ -244,6 +270,8 @@ pub struct UserEntry {
     pub link_expires_at: Option<Timestamp>,
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// The answer to `POST /api/auth/users`: the new user and their
 /// registration link, whose token is shown only this once.
 ///
@@ -273,6 +301,8 @@ pub struct AuthConfig {
     pub logins: bool,
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// The body of `POST /api/auth/login`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]
@@ -284,6 +314,8 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// What a registration or reset link is for, from
 /// `GET /api/auth/register/{token}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -298,6 +330,8 @@ pub struct RegisterInfo {
     pub google: bool,
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// The body of `POST /api/auth/register/{token}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]
@@ -307,6 +341,8 @@ pub struct RegisterRequest {
     pub password: String,
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// A registration or reset link's token, shown once when issued.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]
@@ -319,6 +355,7 @@ pub struct Link {
     pub expires_at: Timestamp,
 }
 
+#[cfg(feature = "alloc")]
 impl Link {
     /// The link's path on the app, `/register/{token}`, the route the
     /// frontend registers or resets from.
@@ -337,6 +374,8 @@ impl Link {
     }
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// A user to create. At least one of `login` and `email` is required.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]
@@ -350,6 +389,8 @@ pub struct NewUser {
     pub role: Role,
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// A change to a user. `None` leaves a field as it is; `Some(None)` clears an
 /// optional one.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -375,6 +416,8 @@ pub struct UserChange {
     pub role: Option<Role>,
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// The body of `POST /api/auth/account/password`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "musli01", derive(Encode, Decode))]
@@ -386,6 +429,8 @@ pub struct PasswordChange {
     pub new_password: String,
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// The Cloudflare Access settings an app stores and edits.
 ///
 /// The [`Default`] is the safe starting point for a settings form: sign-in
@@ -422,6 +467,7 @@ pub struct CloudflareConfig {
     pub verify_jwt: bool,
 }
 
+#[cfg(feature = "alloc")]
 impl Default for CloudflareConfig {
     /// Disabled, with the email header untrusted and JWT verification on.
     fn default() -> Self {
@@ -435,6 +481,8 @@ impl Default for CloudflareConfig {
     }
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// The error of an `/api/auth` route, sent as the JSON body of its 4xx
 /// response, such as `{"error":"conflict","detail":"email"}` or
 /// `{"error":"invalid","detail":{"reason":"password_too_short","min":8}}`.
@@ -466,6 +514,7 @@ pub enum AuthError {
     Invalid(Invalid),
 }
 
+#[cfg(feature = "alloc")]
 impl AuthError {
     /// The HTTP status code the error is sent with.
     pub fn status(&self) -> u16 {
@@ -481,6 +530,8 @@ impl AuthError {
     }
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// Why a request is invalid, the detail of [`AuthError::Invalid`].
 ///
 /// On the wire a reason is a stable code with its parameters, such as
@@ -565,6 +616,7 @@ impl fmt::Display for Conflict {
     }
 }
 
+#[cfg(feature = "alloc")]
 /// Serde for `Option<Option<T>>`, so that an absent field is `None` and an
 /// explicit `null` is `Some(None)`.
 mod double_option {
@@ -592,7 +644,7 @@ mod double_option {
 
 /// musli for [`Timestamp`], as its RFC 3339 string, the same form as its serde
 /// encoding.
-#[cfg(feature = "musli01")]
+#[cfg(all(feature = "musli01", feature = "alloc"))]
 mod musli_timestamp {
     use jiff::Timestamp;
     use musli_core01::{Context, Decoder, Encoder};
@@ -609,7 +661,7 @@ mod musli_timestamp {
         D: Decoder<'de>,
     {
         let cx = decoder.cx();
-        decoder.decode_unsized(|s: &str| s.parse::<Timestamp>().map_err(cx.map()))
+        decoder.decode_unsized(|s: &str| s.parse::<Timestamp>().map_err(|error| cx.message(error)))
     }
 
     pub mod option {

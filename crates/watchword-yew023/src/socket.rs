@@ -5,6 +5,8 @@ use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
+use std::string::String;
+use std::string::ToString;
 use std::task::{Context, Poll, Waker};
 
 use musli_web04::api;
@@ -254,6 +256,7 @@ fn listen(handle: &ws::Handle, on_update: Callback<AuthUpdate>) -> ws::Listener 
 
 #[cfg(test)]
 mod tests {
+    use std::boxed::Box;
     use std::future::Future;
     use std::pin::pin;
     use std::rc::Rc;

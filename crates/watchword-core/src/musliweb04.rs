@@ -30,6 +30,8 @@
 //!
 //! [musli-web]: https://docs.rs/musli-web
 
+use alloc::vec::Vec;
+
 use musli_core01::{Decode, Encode};
 
 use crate::{

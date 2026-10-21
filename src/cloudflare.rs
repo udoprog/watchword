@@ -13,10 +13,14 @@
 //! email to an existing user, and signs them in with
 //! [`Auth::sign_in_cloudflare`](crate::Auth::sign_in_cloudflare).
 
+use std::borrow::ToOwned;
+use std::boxed::Box;
 use std::collections::HashMap;
 use std::error::Error as StdError;
+use std::string::String;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use std::vec::Vec;
 
 use aws_lc_rs::rsa::PublicKeyComponents;
 use aws_lc_rs::signature::RSA_PKCS1_2048_8192_SHA256;

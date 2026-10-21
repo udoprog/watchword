@@ -1,3 +1,8 @@
+use std::borrow::ToOwned;
+use std::string::String;
+use std::string::ToString;
+use std::vec::Vec;
+
 use jiff::Timestamp;
 use phrasebook01::{Catalog, Lang, Phrasebook, Phrases, Source, check};
 

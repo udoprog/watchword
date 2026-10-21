@@ -1,7 +1,9 @@
 //! Route-level tests of the Google OAuth flow, against the fake Google of
 //! [`crate::google::fake`].
 
+use std::borrow::ToOwned;
 use std::collections::HashMap;
+use std::string::String;
 
 use super::*;
 use crate::google::fake::{FakeAccount, FakeGoogle};

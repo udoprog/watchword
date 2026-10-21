@@ -65,8 +65,11 @@
 //! `docs/sqll/impersonator.sql` (a single `ALTER TABLE`) in the app's
 //! migrations. Running [`SCHEMA`] again does not add it.
 
+use std::borrow::ToOwned;
 use std::panic::{self, AssertUnwindSafe};
+use std::string::String;
 use std::sync::Arc;
+use std::vec::Vec;
 
 use jiff::Timestamp;
 use sqll014::{IsReadOnly, Pool, Row, Statements, TypedStatement};

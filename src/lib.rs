@@ -14,8 +14,13 @@
 //!
 //! Each layer sits behind a cargo feature, so an app takes only what it uses.
 //! Server-only and browser-only dependencies never share a feature, so a wasm
-//! frontend can take `yew023` without pulling in server code. No feature is on
+//! frontend can take `yew023` without pulling in server code. Only `std` is on
 //! by default. On docs.rs, items that need a feature are marked with it.
+//!
+//! The crate is `no_std`. With `default-features = false` and neither `std`
+//! nor `alloc`, it has only the plain types (`UserId`, `Role`, `Access`,
+//! `Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN`); `alloc` adds the
+//! rest of [`types`]. The server layers and `yew023` imply `std`.
 //!
 //! A dependency that is not yet 1.0 and appears in the API is named after its
 //! version: its feature and module are `axum08` for axum 0.8, `sqll014` for
@@ -26,16 +31,18 @@
 //!
 //! | Feature | Module | What it provides |
 //! |---|---|---|
-//! | *(none)* | [`types`] | `UserId`, `Role`, `Access`, `Method`, the wire types (`UserInfo`, `AuthConfig`, `LoginRequest`, `CreatedUser`, ...), `AuthError` and its `Invalid` reasons, `validate_password`, `normalize_email`, from the [watchword-core] crate |
-//! | `musli01` | | musli 0.1 `Encode`/`Decode` on the wire types |
-//! | `musliweb04` | [`musliweb04`] | for musli-web 0.4: the account and user-management endpoints and the `AuthBroadcast` of live auth changes, as API types an app carries on its own musli-web WebSocket, with their ids pinned in 32000–32255; with `axum08`, `Connection`, which answers those endpoints on one socket and turns `AuthEvent`s into the updates it may see; with `yew023`, `AuthContext::set_socket`, through which the components follow those broadcasts (implies `musli01`) |
-//! | `server` | [`core`], [`store`] | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin) and `Auth::guard` for WebSocket sessions; the `Store` trait and `MemoryStore` |
+//! | *(none)* | [`types`] | `UserId`, `Role`, `Access`, `Method`, `Conflict`, `AuthConfig` and `MIN_PASSWORD_LEN`, from the [watchword-core] crate |
+//! | `alloc` | [`types`] | the wire types (`UserInfo`, `LoginRequest`, `CreatedUser`, ...), `AuthError` and its `Invalid` reasons, `validate_password`, `normalize_email` |
+//! | `std` *(default)* | | `alloc`, and the standard library for the dependencies that have it |
+//! | `musli01` | | musli 0.1 `Encode`/`Decode` on the types |
+//! | `musliweb04` | [`musliweb04`] | for musli-web 0.4: the account and user-management endpoints and the `AuthBroadcast` of live auth changes, as API types an app carries on its own musli-web WebSocket, with their ids pinned in 32000–32255; with `axum08`, `Connection`, which answers those endpoints on one socket and turns `AuthEvent`s into the updates it may see; with `yew023`, `AuthContext::set_socket`, through which the components follow those broadcasts (implies `alloc` and `musli01`) |
+//! | `server` | [`core`], [`store`] | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s, bootstrap admin) and `Auth::guard` for WebSocket sessions; the `Store` trait and `MemoryStore` (implies `std`) |
 //! | `cloudflare` | [`cloudflare`] | Cloudflare Access JWT verification with a pluggable `KeyFetcher` (implies `server`) |
 //! | `google` | [`google`] | Google OAuth: `GoogleConfig` for `AuthBuilder::google`; with `axum08`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
 //! | `axum08` | [`axum08`] | for axum 0.8: the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors and `routes()` for the `/api/auth` JSON routes, plus the Cloudflare and Google routes when those features are on (implies `server`) |
 //! | `sqll014` | [`sqll014`] | `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool (its own, or nested in the app's), its `SCHEMA`, and `docs/sqll/impersonator.sql`, the one-time upgrade for a database created with an older schema (implies `server`). It takes sqll with `derive`, `pool`, `typed` and `threadsafe` only; the app names `bundled` or links its own SQLite |
 //! | `test-util` | [`google::fake`] | for an app's tests: `AuthBuilder::google_endpoints`, and with `axum08` `FakeGoogle`, a local fake Google to sign in through offline (implies `google`) |
-//! | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings`, the `http` client and `L10N`, the components' messages as a [phrasebook] catalog, from the [watchword-yew023] crate |
+//! | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `CloudflareSettings`, the `http` client and `L10N`, the components' messages as a [phrasebook] catalog, from the [watchword-yew023] crate (implies `std`) |
 //!
 //! The most-used names that do not depend on a versioned feature are
 //! re-exported at the crate root.
@@ -104,7 +111,17 @@
 //! [watchword-core]: https://docs.rs/watchword-core
 //! [watchword-yew023]: https://docs.rs/watchword-yew023
 
+#![no_std]
 #![cfg_attr(watchword_docsrs, feature(doc_cfg))]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+// The server layers run on tokio and axum, so they all imply `std`, and use
+// its macros.
+#[cfg(feature = "std")]
+#[cfg_attr(feature = "server", macro_use)]
+extern crate std;
 
 // The socket tests define an app API of their own, and `define!` expands to
 // `::musli_web` paths.
@@ -147,11 +164,14 @@ pub mod sqll014;
 #[doc(inline)]
 pub use watchword_yew023 as yew023;
 
+pub use self::types::{Access, AuthConfig, Conflict, MIN_PASSWORD_LEN, Method, Role, UserId};
+
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 pub use self::types::{
-    Access, AuthConfig, AuthError, CloudflareConfig, Conflict, CreatedUser, Impersonator, Invalid,
-    Link, LoginRequest, MIN_PASSWORD_LEN, Method, NewUser, PasswordChange, RegisterInfo,
-    RegisterRequest, Role, UserChange, UserEntry, UserId, UserInfo, normalize_email,
-    validate_password,
+    AuthError, CloudflareConfig, CreatedUser, Impersonator, Invalid, Link, LoginRequest, NewUser,
+    PasswordChange, RegisterInfo, RegisterRequest, UserChange, UserEntry, UserInfo,
+    normalize_email, validate_password,
 };
 
 #[cfg(feature = "server")]

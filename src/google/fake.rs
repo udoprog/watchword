@@ -39,7 +39,10 @@
 //! unknown or already used code, and to an unknown access token. A code and
 //! its access token are good once each.
 
+use std::borrow::ToOwned;
 use std::collections::HashMap;
+use std::string::String;
+use std::string::ToString;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use axum08::Router;

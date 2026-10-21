@@ -1,3 +1,4 @@
+use std::string::String;
 use std::sync::LazyLock;
 
 /// Hashing a password failed.

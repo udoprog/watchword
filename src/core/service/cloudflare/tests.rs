@@ -1,3 +1,5 @@
+use std::borrow::ToOwned;
+use std::boxed::Box;
 use std::error::Error as StdError;
 
 use http::header::COOKIE;

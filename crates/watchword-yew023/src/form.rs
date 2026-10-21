@@ -1,6 +1,9 @@
 //! Form helpers shared by the account and admin components: the login and
 //! email change an edit makes.
 
+use std::borrow::ToOwned;
+use std::string::String;
+
 use watchword_core::{Invalid, UserChange};
 
 /// Trims an input, mapping an empty one to `None`.

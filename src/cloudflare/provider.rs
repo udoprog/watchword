@@ -2,10 +2,15 @@
 //! the app may change at runtime, and the warnings it logs at most once a
 //! minute about credentials that did not sign anyone in.
 
+use std::borrow::ToOwned;
 use std::collections::HashMap;
 use std::error::Error as StdError;
+use std::string::String;
+use std::string::ToString;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::vec::Vec;
 
 use http::HeaderMap;
 

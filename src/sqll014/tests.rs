@@ -1,4 +1,6 @@
+use std::string::String;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::vec::Vec;
 
 use sqll014::{Connection, OpenOptions, PoolBuilder};
 

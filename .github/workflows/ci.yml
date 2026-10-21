@@ -18,7 +18,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
-    # No feature is on by default, so this covers only the types.
+    # Without `std` or `alloc` only the plain types build, and the tests need
+    # `alloc`, so this only checks that the crates build for tests.
     - run: cargo test --workspace --no-default-features
     - run: cargo test --workspace --all-features --all-targets
     - run: cargo test --workspace --all-features --doc
@@ -48,6 +49,9 @@ jobs:
     - run: cargo clippy -p watchword-core --all-targets --no-default-features --features musli01 -- -D warnings
     - run: cargo clippy -p watchword-core --all-targets --no-default-features --features musliweb04 -- -D warnings
     - run: cargo clippy -p watchword-core --all-targets --no-default-features --features axum08 -- -D warnings
+    - run: cargo check -p watchword-core --no-default-features
+    - run: cargo check -p watchword-core --no-default-features --features alloc
+    - run: cargo check --no-default-features --features alloc
     - run: cargo clippy -p watchword-yew023 --all-targets -- -D warnings
     - run: cargo clippy -p watchword-yew023 --all-targets --features musliweb04 -- -D warnings
 
@@ -63,6 +67,7 @@ jobs:
     - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew023,musli01
     - run: cargo check --target wasm32-unknown-unknown --no-default-features --features yew023,musliweb04
     - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features
+    - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features alloc
     - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features musli01
     - run: cargo check -p watchword-core --target wasm32-unknown-unknown --no-default-features --features musliweb04
     - run: cargo clippy -p watchword-yew023 --target wasm32-unknown-unknown -- -D warnings

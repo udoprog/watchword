@@ -1,6 +1,10 @@
+use std::borrow::ToOwned;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
+use std::string::String;
+use std::string::ToString;
+use std::vec::Vec;
 
 use jiff::Timestamp;
 use phrasebook01::{Phrases, args};

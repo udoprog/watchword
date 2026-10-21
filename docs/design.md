@@ -28,7 +28,10 @@ musli-web-macros):
 
 - **watchword-core**: the types of section 2.1 (`UserId`, `Role`, `Access`,
   `Method`, the wire types, `AuthError`, `validate_password`,
-  `normalize_email`). Safe for wasm32. Its `musli01` feature adds musli's
+  `normalize_email`). Safe for wasm32, and `no_std`: with neither `std` (on
+  by default) nor `alloc` it has only the plain types (`UserId`, `Role`,
+  `Access`, `Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN`), and
+  `alloc` adds those holding strings. Its `musli01` feature adds musli's
   derives, its `musliweb04` feature the musli-web API types of 2.7, and its
   `axum08` feature `IntoResponse` for `AuthError` (Rust's orphan rule keeps
   that impl in the crate defining `AuthError`).
@@ -36,7 +39,8 @@ musli-web-macros):
   `use_auth`, the HTTP client and browser helpers). It depends on yew under the
   key `yew`, because yew's macros (`html!`, `#[function_component]`,
   `#[derive(Properties)]`, `#[hook]`) expand to `::yew::` paths, and on
-  watchword-core rather than watchword.
+  watchword-core rather than watchword. yew needs the standard library, so
+  everything in it is behind its `std` feature (on by default).
 - **watchword**: everything else, behind features. It re-exports watchword-core
   as `watchword::types` and at its root, and watchword-yew023 as
   `watchword::yew023` behind the `yew023` feature, so a frontend needs only
@@ -87,20 +91,29 @@ yew of its own, hence with a new `watchword-yew0NN` crate anyway.
 
 ### 1.3 Features
 
-No feature is on by default.
+Only `std` is on by default. All three crates are `no_std` with the usual
+`std` and `alloc` features, so a crate that takes watchword with
+`default-features = false` names `std` or `alloc`; adding them later would
+have broken every such crate. `std` implies `alloc`, and each forwards to the
+dependencies that have the same feature. The server layers run on tokio and
+axum and imply `std`; there is no `no_std` story for them. jiff is taken
+without its default features, so the time zone databases it does not need for
+`Timestamp` stay out of every frontend.
 
 | Feature | Enables | Pulls in |
 |---|---|---|
-| *(none)* | `types` (watchword-core): `UserId`, `Role`, `Access`, `Method`, the wire types, `AuthError`, `validate_password`, `normalize_email`, `MIN_PASSWORD_LEN` | serde, jiff, thiserror |
-| `musli01` | `Encode`/`Decode` on the wire types, so an app can embed them in its own WebSocket messages | musli-core 0.1 |
-| `server` | `core` (hashing, ids, cookies, the `Auth` service, throttle, events, bootstrap, `SessionGuard`) and `store` (`Store`, `MemoryStore`) | base64, bcrypt, cookie, hmac, http, rand, sha2, tokio (rt, sync, time), tracing |
+| *(none)* | `types` (watchword-core): `UserId`, `Role`, `Access`, `Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN` | serde, jiff (no time zones), thiserror, all without default features |
+| `alloc` | the rest of `types`: the wire types, `AuthError`, `validate_password`, `normalize_email` | their `alloc` |
+| `std` *(default)* | `alloc`, and std for the dependencies (and watchword-yew023) | their `std` |
+| `musli01` | `Encode`/`Decode` on the types, so an app can embed them in its own WebSocket messages | musli-core 0.1 |
+| `server` | `std` + `core` (hashing, ids, cookies, the `Auth` service, throttle, events, bootstrap, `SessionGuard`) and `store` (`Store`, `MemoryStore`) | base64, bcrypt, cookie, hmac, http, rand, sha2, tokio (rt, sync, time), tracing |
 | `cloudflare` | `server` + the Cloudflare Access provider | aws-lc-rs, reqwest, serde_json |
 | `google` | `server` + the Google OAuth provider (`GoogleConfig`) | reqwest, serde_json, url, lru |
 | `axum08` | `server` + extractors and `routes()` for axum 0.8 | axum 0.8 |
 | `sqll014` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.14 pool, and its `SCHEMA` | sqll 0.14 (`derive`, `pool`, `typed`, `threadsafe`; no default features, the app picks `bundled`) |
-| `yew023` | watchword-yew023: components, context, hook, HTTP client, and the messages as a phrasebook catalog (`L10N`) | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.1 (`yew023`) |
+| `yew023` | `std` + watchword-yew023: components, context, hook, HTTP client, and the messages as a phrasebook catalog (`L10N`) | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.1 (`yew023`) |
 | `test-util` | `google` + `AuthBuilder::google_endpoints`, for apps' tests; with `axum08` also `google::fake::FakeGoogle` (see 2.4) | nothing more |
-| `musliweb04` *(2.7)* | `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
+| `musliweb04` *(2.7)* | `alloc` + `musli01` + `watchword::musliweb04`: the auth endpoints and broadcast as musli-web 0.4 API types; with `axum08` also `musliweb04::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.4 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
 
 The modules are `watchword::{types, core, store, cloudflare, google, axum08,
 sqll014, musliweb04, yew023}`, and the most-used names that need no versioned feature are

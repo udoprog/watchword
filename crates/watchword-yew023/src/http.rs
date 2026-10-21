@@ -13,6 +13,9 @@
 //! open.
 
 use std::fmt;
+use std::string::String;
+use std::string::ToString;
+use std::vec::Vec;
 
 use gloo_net::http::{Request, RequestBuilder, Response};
 use serde::de::DeserializeOwned;

@@ -18,17 +18,21 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(watchword_docsrs)'] }
 all-features = true
 rustdoc-args = ["--cfg", "watchword_docsrs"]
 
+# yew, `Rc` and `HashMap` need std, so everything the crate provides is behind
+# `std`; `alloc` alone provides nothing yet.
 [features]
-default = []
-musliweb04 = ["dep:musli-web04", "watchword-core/musliweb04"]
+default = ["std"]
+std = ["alloc", "watchword-core/std", "serde/std", "jiff/std", "musli-web04?/std"]
+alloc = ["watchword-core/alloc", "serde/alloc", "jiff/alloc"]
+musliweb04 = ["std", "dep:musli-web04", "watchword-core/musliweb04"]
 
 # yew's macros expand to `::yew::` paths, so the dependency key must stay `yew`.
 [dependencies]
-watchword-core = { path = "../watchword-core", version = "=0.2.1" }
+watchword-core = { path = "../watchword-core", version = "=0.2.1", default-features = false }
 yew = "0.23.0"
 gloo-net = { version = "0.7.0", default-features = false, features = ["http", "json"] }
-jiff = { version = "0.2.37", features = ["js"] }
-serde = "1.0.229"
+jiff = { version = "0.2.37", default-features = false, features = ["js"] }
+serde = { version = "1.0.229", default-features = false }
 wasm-bindgen-futures = "0.4.56"
 phrasebook01 = { package = "phrasebook", version = "0.1.0", features = ["yew023"] }
 musli-web04 = { package = "musli-web", version = "0.4.11", default-features = false, features = ["web03"], optional = true }

@@ -1,7 +1,10 @@
 //! watchword's messages: its catalog, the handle the components look them up
 //! in, and the messages for failed requests.
 
+use std::borrow::ToOwned;
 use std::rc::Rc;
+use std::string::String;
+use std::string::ToString;
 
 use phrasebook01::yew023::or_catalog;
 use phrasebook01::{Args, Catalog, Lang, Phrases, Source, args};

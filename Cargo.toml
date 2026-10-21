@@ -28,23 +28,25 @@ all-features = true
 rustdoc-args = ["--cfg", "watchword_docsrs"]
 
 [features]
-default = []
+default = ["std"]
+std = ["alloc", "watchword-core/std", "watchword-yew023?/std", "serde/std", "jiff/std", "thiserror/std", "musli-web04?/std"]
+alloc = ["watchword-core/alloc", "serde/alloc", "jiff/alloc", "musli-web04?/alloc"]
 musli01 = ["watchword-core/musli01"]
-musliweb04 = ["musli01", "watchword-core/musliweb04", "dep:musli-web04", "watchword-yew023?/musliweb04"]
-server = ["dep:base64", "dep:bcrypt", "dep:cookie", "dep:hmac", "dep:http", "dep:rand", "dep:sha2", "dep:tokio", "tokio/macros", "dep:tracing"]
+musliweb04 = ["alloc", "musli01", "watchword-core/musliweb04", "dep:musli-web04", "watchword-yew023?/musliweb04"]
+server = ["std", "dep:base64", "dep:bcrypt", "dep:cookie", "dep:hmac", "dep:http", "dep:rand", "dep:sha2", "dep:tokio", "tokio/macros", "dep:tracing"]
 cloudflare = ["server", "dep:aws-lc-rs", "dep:reqwest", "dep:serde_json"]
 google = ["server", "dep:reqwest", "dep:serde_json", "dep:url", "dep:lru"]
 axum08 = ["server", "dep:axum08", "watchword-core/axum08", "musli-web04?/ws"]
 sqll014 = ["server", "dep:sqll014"]
 test-util = ["google"]
-yew023 = ["dep:watchword-yew023"]
+yew023 = ["std", "dep:watchword-yew023"]
 
 [dependencies]
 # types
-watchword-core = { path = "crates/watchword-core", version = "=0.2.1" }
-jiff = { version = "0.2.37", features = ["serde"] }
-serde = { version = "1.0.229", features = ["derive"] }
-thiserror = "2.0.18"
+watchword-core = { path = "crates/watchword-core", version = "=0.2.1", default-features = false }
+jiff = { version = "0.2.37", default-features = false, features = ["serde"] }
+serde = { version = "1.0.229", default-features = false, features = ["derive"] }
+thiserror = { version = "2.0.18", default-features = false }
 
 # server
 base64 = { version = "0.22.1", optional = true }
@@ -76,7 +78,7 @@ musli-web04 = { package = "musli-web", version = "0.4.11", default-features = fa
 sqll014 = { package = "sqll", version = "0.14.7", default-features = false, features = ["derive", "pool", "typed", "threadsafe"], optional = true }
 
 # yew023
-watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.2.1", optional = true }
+watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.2.1", default-features = false, optional = true }
 
 [dev-dependencies]
 # The musliweb04 socket tests: a real axum server and tungstenite client.

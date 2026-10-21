@@ -2,8 +2,10 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::string::String;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+use std::vec::Vec;
 
 use http::HeaderMap;
 

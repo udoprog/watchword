@@ -22,6 +22,20 @@
 //!
 //! <br>
 //!
+//! ## Features
+//!
+//! yew needs the standard library, so everything here is behind `std`, which
+//! is on by default. The crate is `no_std` only so its features line up with
+//! watchword's.
+//!
+//! | Feature | What it provides |
+//! |---|---|
+//! | `std` *(default)* | everything here |
+//! | `alloc` | nothing yet beyond watchword-core's `alloc` |
+//! | `musliweb04` | `std` + [`AuthContext::set_socket`]: the components follow a [musli-web] 0.4 socket's broadcasts and send their requests over it |
+//!
+//! <br>
+//!
 //! ## Usage
 //!
 //! Wrap the app in [`AuthProvider`]. It signs the user in (or registers them
@@ -191,6 +205,7 @@
 //! [`AccountPanel`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AccountPanel.html
 //! [`AdminUsers`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AdminUsers.html
 //! [`AuthContext`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html
+//! [`AuthContext::set_socket`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html#method.set_socket
 //! [`AuthProvider`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthProvider.html
 //! [`CloudflareSettings`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.CloudflareSettings.html
 //! [`http`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/http/index.html
@@ -203,34 +218,83 @@
 //! [watchword]: https://docs.rs/watchword
 //! [Yew]: https://yew.rs
 
+#![no_std]
 #![cfg_attr(watchword_docsrs, feature(doc_cfg))]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+// yew, `Rc` and `HashMap` need std, so everything here is behind `std`.
+#[cfg(feature = "std")]
+#[macro_use]
+extern crate std;
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 pub mod http;
 
+#[cfg(feature = "std")]
 mod account;
+#[cfg(feature = "std")]
 mod admin_users;
+#[cfg(feature = "std")]
 mod browser;
+#[cfg(feature = "std")]
 mod client;
+#[cfg(feature = "std")]
 mod cloudflare_settings;
+#[cfg(feature = "std")]
 mod context;
+#[cfg(feature = "std")]
 mod form;
+#[cfg(feature = "std")]
 mod l10n;
+#[cfg(feature = "std")]
 mod provider;
+#[cfg(feature = "std")]
 mod register;
+#[cfg(feature = "std")]
 mod sign_in;
 #[cfg(feature = "musliweb04")]
 mod socket;
+#[cfg(feature = "std")]
 mod user_menu;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests;
 
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 pub use self::account::{AccountPanel, AccountPanelProps};
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 pub use self::admin_users::{AdminUsers, AdminUsersProps, PAGE_SIZE, UsersQuery};
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 pub use self::cloudflare_settings::{CloudflareSettings, CloudflareSettingsProps};
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 pub use self::context::{AuthContext, use_auth};
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 pub use self::l10n::L10N;
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 pub use self::provider::{AuthProvider, AuthProviderProps};
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 pub use self::register::{Register, RegisterProps};
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 pub use self::sign_in::{SignIn, SignInProps};
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 pub use self::user_menu::{UserMenu, UserMenuProps};

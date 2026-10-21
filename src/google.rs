@@ -25,6 +25,7 @@
 
 use std::fmt;
 use std::num::NonZeroUsize;
+use std::string::String;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -341,6 +342,9 @@ impl Provider {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::ToOwned;
+    use std::vec::Vec;
+
     use super::*;
 
     fn states(capacity: usize) -> PendingStates {

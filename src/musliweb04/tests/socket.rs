@@ -2,9 +2,12 @@
 //! delegates the ids its own API does not know, as an app's does, and a
 //! tungstenite client.
 
+use std::borrow::ToOwned;
 use std::future::Future;
 use std::net::SocketAddr;
+use std::string::String;
 use std::time::Duration;
+use std::vec::Vec;
 
 use axum08::Router;
 use axum08::extract::ws::{WebSocket, WebSocketUpgrade};

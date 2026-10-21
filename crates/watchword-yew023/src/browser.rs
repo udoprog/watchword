@@ -1,6 +1,10 @@
 //! The bits of the browser the components touch: the location, history and
 //! input values.
 
+use std::borrow::ToOwned;
+use std::string::String;
+use std::vec::Vec;
+
 use web_sys::wasm_bindgen::JsValue;
 use yew::{InputEvent, TargetCast};
 
