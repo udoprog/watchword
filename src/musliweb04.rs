@@ -33,9 +33,11 @@
 //! here too: a `Connection` (`musliweb04` and `axum08`) answers the
 //! endpoints' requests on one socket, running the same operations as the HTTP
 //! routes, and turns each [`AuthEvent`](crate::AuthEvent) into the
-//! [`AuthUpdate`] that socket may see. Its `signed_in` and `require_admin`
-//! gate the app's own requests on that socket with the same checks and
-//! [`AuthError`]s as watchword's. A request that fails answers the client
+//! [`AuthUpdate`] that socket may see. Its `updates` are the socket loop's
+//! whole auth arm: an `Updates` holds the session's guard and the event
+//! receiver and yields the updates to broadcast until the session ends. Its
+//! `signed_in` and `require_admin` gate the app's own requests on that socket
+//! with the same checks and [`AuthError`]s as watchword's. A request that fails answers the client
 //! with a `RequestError`, which shows a refusal and hides an internal
 //! failure's cause.
 //!
@@ -61,12 +63,19 @@ mod connection;
 mod error;
 
 #[cfg(feature = "axum08")]
+mod updates;
+
+#[cfg(feature = "axum08")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "axum08")))]
 pub use self::connection::Connection;
 
 #[cfg(feature = "axum08")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "axum08")))]
 pub use self::error::RequestError;
+
+#[cfg(feature = "axum08")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "axum08")))]
+pub use self::updates::Updates;
 
 #[cfg(all(test, feature = "axum08"))]
 mod tests;

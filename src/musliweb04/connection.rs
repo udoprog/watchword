@@ -1,11 +1,11 @@
-use std::string::String;
+use std::sync::Arc;
 
 use musli_web04::api::{EncodeBody, Id, MessageId};
 use musli_web04::ws::{Incoming, Outgoing};
 
 use super::{
     AuthUpdate, DeleteUserRequest, IssueLinkRequest, MeRequest, Request, RequestError,
-    RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, UserUpdate, UsersRequest,
+    RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, Updates, UserUpdate, UsersRequest,
 };
 use crate::Auth;
 use crate::axum08::SignedIn;
@@ -18,44 +18,39 @@ use crate::types::{
 /// watchword's side of one musli-web WebSocket, signed in with one session.
 ///
 /// Create it at upgrade from the [`SignedIn`] the app's `/ws` route already
-/// extracts, and feed it the [`AuthEvent`]s of [`Auth::events`] in the
-/// connection's loop, broadcasting what [`update`](Connection::update)
-/// returns:
+/// extracts, and take its [`updates`](Connection::updates) for the
+/// connection's loop, broadcasting each until the session ends:
 ///
 /// ```no_run
-/// # async fn ws(auth: watchword::Auth, signed_in: watchword::axum08::SignedIn) -> watchword::core::Result<()> {
-/// use tokio::sync::broadcast::error::RecvError;
+/// # async fn ws(auth: watchword::Auth, signed_in: watchword::axum08::SignedIn) {
 /// use watchword::musliweb04::{AuthUpdate, Connection};
 ///
 /// let conn = Connection::new(auth.clone(), &signed_in);
-/// let guard = auth.guard(&signed_in.user, &signed_in.session);
-/// let mut events = auth.events();
+/// let mut updates = conn.updates();
 ///
 /// loop {
 ///     tokio::select! {
-///         _ = guard.ended() => break,
-///         event = events.recv() => {
-///             let update = match event {
-///                 Ok(event) => conn.update(&event).await?,
-///                 // Events were missed: the page fetches again what it
-///                 // shows, and the guard re-checks the session itself.
-///                 Err(RecvError::Lagged(..)) => conn.lagged().await?,
-///                 Err(RecvError::Closed) => break,
+///         update = updates.next() => {
+///             // The session ended: close the socket.
+///             let Some(update) = update else {
+///                 break;
 ///             };
 ///
-///             if let Some(update) = update {
-///                 // server.broadcast(update)?;
-///                 # let _: AuthUpdate = update;
-///             }
+///             // server.broadcast(update)?;
+///             # let _: AuthUpdate = update;
 ///         }
 ///         // ... the socket's own messages
 ///     }
 /// }
-/// # Ok(()) }
+/// # }
 /// ```
 ///
+/// An app with a loop of its own feeds [`update`](Connection::update) the
+/// [`AuthEvent`]s of [`Auth::events`], and [`lagged`](Connection::lagged)
+/// stands in for those it missed, which is what [`Updates`] does.
+///
 /// Ending the socket when its session ends stays the job of
-/// [`Auth::guard`]: no update is sent for it. Cloning a `Connection` is cheap,
+/// [`Auth::guard`], which [`Updates`] holds: no update is sent for it. Cloning a `Connection` is cheap,
 /// so it can sit inside the app's own `ws::Handler`, which hands it the
 /// requests its own API does not know with [`handle`](Connection::handle):
 ///
@@ -127,8 +122,7 @@ use crate::types::{
 #[derive(Clone)]
 pub struct Connection {
     auth: Auth,
-    session: String,
-    user: UserId,
+    signed_in: Arc<SignedIn>,
 }
 
 impl Connection {
@@ -137,9 +131,29 @@ impl Connection {
     pub fn new(auth: Auth, signed_in: &SignedIn) -> Self {
         Self {
             auth,
-            session: signed_in.session.id.clone(),
-            user: signed_in.user.id,
+            signed_in: Arc::new(signed_in.clone()),
         }
+    }
+
+    /// The live [`AuthUpdate`]s for this connection, to broadcast on its
+    /// socket until its session ends, which replace the app's own
+    /// [`Auth::guard`] and [`Auth::events`] in the socket loop.
+    ///
+    /// The guard follows the session the upgrade signed in with, and the
+    /// events are subscribed to now, so call it before negotiating the
+    /// socket: nothing sent meanwhile is missed. See [`Updates`].
+    pub fn updates(&self) -> Updates {
+        Updates::new(self.clone())
+    }
+
+    /// The [`Auth`] this connection answers with.
+    pub(super) fn auth(&self) -> &Auth {
+        &self.auth
+    }
+
+    /// The session and user the upgrade signed in with.
+    pub(super) fn upgrade(&self) -> &SignedIn {
+        &self.signed_in
     }
 
     /// The [`AuthUpdate`] this connection may see of `event`, if any:
@@ -159,8 +173,8 @@ impl Connection {
     pub async fn update(&self, event: &AuthEvent) -> Result<Option<AuthUpdate>> {
         let update = match event {
             AuthEvent::SessionEnded(_) | AuthEvent::UserSessionsEnded { .. } => return Ok(None),
-            AuthEvent::UserChanged(info) if info.id == self.user => {
-                let Some((user, session)) = self.auth.session(&self.session).await? else {
+            AuthEvent::UserChanged(info) if info.id == self.user_id() => {
+                let Some((user, session)) = self.auth.session(self.session_id()).await? else {
                     return Ok(None);
                 };
 
@@ -172,7 +186,7 @@ impl Connection {
             AuthEvent::UserDeleted(id) => AuthUpdate::UserDeleted(*id),
         };
 
-        let Some((user, _)) = self.auth.session(&self.session).await? else {
+        let Some((user, _)) = self.auth.session(self.session_id()).await? else {
             return Ok(None);
         };
 
@@ -196,7 +210,7 @@ impl Connection {
     /// [`Auth::session_info`] gives it, since a missed event may have
     /// changed it. Errors only when the store fails.
     pub async fn lagged(&self) -> Result<Option<AuthUpdate>> {
-        let Some((user, session)) = self.auth.session(&self.session).await? else {
+        let Some((user, session)) = self.auth.session(self.session_id()).await? else {
             return Ok(None);
         };
 
@@ -411,12 +425,12 @@ impl Connection {
     /// The id of the user this connection signed in as, as its upgrade
     /// carried it. For an impersonated session it is the impersonated user.
     pub fn user_id(&self) -> UserId {
-        self.user
+        self.signed_in.user.id
     }
 
     /// The id of the session this connection signed in with.
     pub fn session_id(&self) -> &str {
-        &self.session
+        &self.signed_in.session.id
     }
 
     /// The connection's session and its user as stored now, or
@@ -430,7 +444,7 @@ impl Connection {
     /// Errors with [`Error::Auth`] for the refusal and another [`Error`] when
     /// the store fails, which the app should not report as a refusal.
     pub async fn signed_in(&self) -> Result<(User, Session)> {
-        match self.auth.session(&self.session).await? {
+        match self.auth.session(self.session_id()).await? {
             Some(signed_in) => Ok(signed_in),
             None => Err(AuthError::Unauthorized.into()),
         }

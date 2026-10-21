@@ -30,7 +30,6 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
 use musli_web::ws;
-use tokio::sync::broadcast::error::RecvError;
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
@@ -317,60 +316,52 @@ async fn put_cloudflare(
 /// - watchword's account and admin requests: [`Handler`] hands every id the
 ///   app's API does not know to [`Connection::handle`], which answers those
 ///   in watchword's band (32000–32255);
-/// - watchword's `AuthBroadcast`: each `AuthEvent` goes through
-///   [`Connection::update`], which passes on what this socket's user may see.
+/// - watchword's `AuthBroadcast`: [`Connection::updates`] yields the
+///   `AuthUpdate`s this socket's user may see, until the session ends.
 ///
-/// It closes when the session ends ([`Auth::guard`]), after which the
-/// frontend's `AuthProvider` checks the session and shows the sign-in page.
+/// It closes when the session ends (when [`Updates::next`] gives `None`),
+/// after which the frontend's `AuthProvider` checks the session and shows the
+/// sign-in page.
+///
+/// [`Updates::next`]: auth::musliweb04::Updates::next
 async fn ws(State(state): State<AppState>, user: SignedIn, upgrade: WebSocketUpgrade) -> Response {
     let conn = Connection::new(state.auth.clone(), &user);
-    upgrade.on_upgrade(move |socket| session_socket(state, user, conn, socket))
+    upgrade.on_upgrade(move |socket| session_socket(state, conn, socket))
 }
 
-async fn session_socket(state: AppState, user: SignedIn, conn: Connection, socket: WebSocket) {
-    let guard = state.auth.guard(&user.user, &user.session);
-    let mut events = state.auth.events();
+async fn session_socket(state: AppState, conn: Connection, socket: WebSocket) {
+    // Taken before negotiating, so nothing broadcast meanwhile is missed.
+    let mut updates = conn.updates();
 
     let handler = Handler {
         state: state.clone(),
-        conn: conn.clone(),
+        conn,
     };
 
-    // Nothing can be sent before the client has negotiated a format.
-    let mut server = match musli_web::axum08::server(socket, handler).connect().await {
-        Ok(server) => server,
-        Err(error) => {
+    // Nothing can be sent before the client has negotiated a format, and a
+    // client stalling that does not outlive its session.
+    let connect = musli_web::axum08::server(socket, handler).connect();
+
+    let mut server = match updates.unless_ended(connect).await {
+        Some(Ok(server)) => server,
+        Some(Err(error)) => {
             tracing::debug!("Socket negotiation failed: {error}");
             return;
         }
+        None => return,
     };
 
     state.sockets.fetch_add(1, Ordering::Relaxed);
 
     loop {
         tokio::select! {
-            // Dropping the server closes the socket.
-            _ = guard.ended() => break,
-            event = events.recv() => {
-                let update = match event {
-                    Ok(event) => conn.update(&event).await,
-                    // Events were missed: the page fetches again what it
-                    // shows, and the guard re-checks the session itself.
-                    Err(RecvError::Lagged(..)) => conn.lagged().await,
-                    Err(RecvError::Closed) => break,
+            update = updates.next() => {
+                // The session ended: dropping the server closes the socket.
+                let Some(update) = update else {
+                    break;
                 };
 
-                let update = match update {
-                    Ok(update) => update,
-                    Err(error) => {
-                        tracing::warn!("Filtering an auth event failed: {error}");
-                        continue;
-                    }
-                };
-
-                if let Some(update) = update
-                    && let Err(error) = server.broadcast(update)
-                {
+                if let Err(error) = server.broadcast(update) {
                     tracing::warn!("Broadcasting an auth update failed: {error}");
                     break;
                 }
@@ -416,7 +407,7 @@ impl ws::Handler for Handler {
                 // session is read again, so one that has ended since the
                 // upgrade is refused (`conn.require_admin()` for an admin-only
                 // request). A refusal is `Error::Auth`, which musli-web sends
-                // as the request's error; the guard closes the socket next.
+                // as the request's error; the loop closes the socket next.
                 // Any other failure is the app's to log: the client is only
                 // told `internal error`.
                 if let Err(error) = self.conn.signed_in().await {

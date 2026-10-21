@@ -409,3 +409,133 @@ async fn the_checks_follow_the_stored_user() {
         Some(AuthError::Unauthorized)
     );
 }
+
+/// Long enough for a spawned guard to notice a change.
+const WAIT: core::time::Duration = core::time::Duration::from_secs(5);
+
+/// Short enough to show that nothing is ready.
+const BRIEFLY: core::time::Duration = core::time::Duration::from_millis(50);
+
+/// `Updates` yields what the connection may see, skipping the rest, and
+/// ends with the session.
+#[tokio::test]
+async fn updates_follow_the_session() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let erin = user(&auth, &root, "erin", Role::Regular).await;
+
+    let mut admin = Connection::new(auth.clone(), &root).updates();
+    let mut regular = Connection::new(auth.clone(), &erin).updates();
+    assert_eq!(admin.connection().user_id(), root.user.id);
+    assert_eq!(admin.guard().user(), root.user.info());
+
+    // Nothing yet, and a cancelled call loses nothing.
+    assert!(tokio::time::timeout(BRIEFLY, admin.next()).await.is_err());
+
+    let (pat, _) = pending(&auth, &root, "pat", Role::Regular).await;
+    let next = tokio::time::timeout(WAIT, admin.next()).await.unwrap();
+    assert_eq!(next, Some(AuthUpdate::UserCreated(pat.clone())));
+
+    // The regular user skips the user list and sees its own change.
+    assert!(tokio::time::timeout(BRIEFLY, regular.next()).await.is_err());
+
+    let erin_changed = auth
+        .set_role(&root.user, erin.user.id, Role::Admin)
+        .await
+        .unwrap();
+    let next = tokio::time::timeout(WAIT, regular.next()).await.unwrap();
+    assert_eq!(next, Some(AuthUpdate::Me(erin_changed.info())));
+
+    let next = tokio::time::timeout(WAIT, admin.next()).await.unwrap();
+    assert_eq!(next, Some(AuthUpdate::UserChanged(erin_changed.info())));
+
+    // Signing out ends the updates, for good.
+    auth.sign_out(&root.session.id).await.unwrap();
+    assert_eq!(
+        tokio::time::timeout(WAIT, admin.next()).await.unwrap(),
+        None
+    );
+    assert_eq!(
+        tokio::time::timeout(WAIT, admin.next()).await.unwrap(),
+        None
+    );
+}
+
+/// Missed events become one `Resync` for an admin, after which the updates
+/// carry on.
+#[tokio::test]
+async fn updates_resync_after_a_lag() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let ada = user(&auth, &root, "ada", Role::Regular).await;
+    let mut updates = Connection::new(auth.clone(), &root).updates();
+
+    // More changes than the event channel holds.
+    let mut last = None;
+
+    for n in 0..300 {
+        let role = if n % 2 == 0 {
+            Role::Admin
+        } else {
+            Role::Regular
+        };
+        last = Some(auth.set_role(&root.user, ada.user.id, role).await.unwrap());
+    }
+
+    let next = tokio::time::timeout(WAIT, updates.next()).await.unwrap();
+    assert_eq!(next, Some(AuthUpdate::Resync(root.user.info())));
+
+    // What the channel kept follows, ending with the last change.
+    let last = AuthUpdate::UserChanged(last.unwrap().info());
+
+    loop {
+        let next = tokio::time::timeout(WAIT, updates.next()).await.unwrap();
+        assert!(
+            matches!(next, Some(AuthUpdate::UserChanged(..))),
+            "{next:?}"
+        );
+
+        if next.as_ref() == Some(&last) {
+            break;
+        }
+    }
+}
+
+/// `unless_ended` runs a step only while the session lasts.
+#[tokio::test]
+async fn unless_ended_stops_with_the_session() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let updates = Connection::new(auth.clone(), &root).updates();
+
+    assert_eq!(updates.unless_ended(async { 1 }).await, Some(1));
+
+    // A step that never finishes is given up once the session ends.
+    let stalled = updates.unless_ended(core::future::pending::<()>());
+    let sign_out = async {
+        tokio::time::sleep(BRIEFLY).await;
+        auth.sign_out(&root.session.id).await.unwrap();
+    };
+    let (stalled, ()) = tokio::time::timeout(WAIT, async { tokio::join!(stalled, sign_out) })
+        .await
+        .unwrap();
+    assert_eq!(stalled, None);
+
+    // And not started after.
+    assert_eq!(updates.unless_ended(async { 1 }).await, None);
+}
+
+/// A session that ended before its updates were taken gets none.
+#[tokio::test]
+async fn updates_of_an_ended_session_end_at_once() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let conn = Connection::new(auth.clone(), &root);
+    auth.sign_out(&root.session.id).await.unwrap();
+
+    let mut updates = conn.updates();
+    assert_eq!(
+        tokio::time::timeout(WAIT, updates.next()).await.unwrap(),
+        None
+    );
+}

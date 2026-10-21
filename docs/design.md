@@ -695,8 +695,9 @@ cookies, so the library does not depend on the app's gloo version.
 ### 2.7 musli-web integration (`musliweb04`)
 
 *Status: built are the types (`watchword::musliweb04`), the server's
-`Connection` (`new`, `update`, `lagged`, `handle`, `handles`, and the
-accessors `signed_in`, `require_admin`, `user_id` and `session_id`), and the components
+`Connection` (`new`, `update`, `lagged`, `handle`, `handles`, the
+accessors `signed_in`, `require_admin`, `user_id` and `session_id`, and
+`updates`, the socket loop's auth arm as an `Updates`), and the components
 following the broadcasts and sending their requests over the socket
 (`AuthContext::set_socket`). `examples/app` is wired this way and is the
 reference for an app. Decisions 13, 16–20 and 23 record why it is shaped this
@@ -802,7 +803,18 @@ let conn = watchword::musliweb04::Connection::new(auth.clone(), &signed_in);
 // In the app's Handler::handle, in the arm for ids its own API does not know:
 api::Request::Unknown(id) => conn.handle(id, incoming, outgoing).await,   // -> Result<bool, RequestError>
 
-// In the app's connection loop, next to guard.ended():
+// Before negotiating the socket, the loop's auth arm: the session's guard and
+// the event receiver, filtered through `update` and `lagged` below.
+let mut updates = conn.updates();
+let Some(Ok(mut server)) = updates.unless_ended(connect).await else { return };   // stops a stalled negotiation once the session ends
+
+// In the app's connection loop, next to server.run():
+update = updates.next() => {
+    let Some(update) = update else { break };   // None once the session ended
+    server.broadcast(update)?;
+}
+
+// Or, by hand, with the app's own guard and receiver:
 event = events.recv() => {
     let update = match event {
         Ok(event) => conn.update(&event).await?,
@@ -816,8 +828,21 @@ event = events.recv() => {
 }
 ```
 
-- `Connection` holds the `Auth` and the connection's session and user ids. It is
-  `Clone` and cheap, so it sits inside the app's own handler.
+- `Connection` holds the `Auth` and the `SignedIn` of the upgrade (behind an
+  `Arc`, for the guard `updates` starts). It is `Clone` and cheap, so it sits
+  inside the app's own handler.
+- `updates()` returns an `Updates`, which owns the `Auth::guard` of the
+  upgrade's session and an `Auth::events` receiver, subscribed when it is
+  made, so it is taken before negotiating. `next()` yields the next update to
+  broadcast: each event through `update`, a lag through `lagged`, skipping
+  what the connection may not see, and `None` once the guard says the session
+  ended (and from then on); a store failure is logged at error level and the
+  event skipped. It is cancel safe as a `select!` branch: an event received
+  by a cancelled call is kept for the next. `unless_ended(future)` runs a
+  step, such as the musli-web negotiation, only while the session lasts.
+  `guard()` and `connection()` give the parts. Every app's loop carried the
+  same arm before; a loop that needs more (the guard's `changed`, say) keeps
+  it by hand with `update` and `lagged`.
 - `handle` returns `Ok(false)` for an id outside watchword's band, which the
   app treats as it treats its own unknown ids. For watchword's ids it decodes
   the body, re-reads the session and its user through `Auth::session` (as
@@ -960,11 +985,10 @@ The example's wiring, as a reference: a shared `api` crate with the app's
 own `define!` list (implicit ids), next to which watchword's list rides on
 the same socket. The server's `/ws` route extracts `SignedIn`, makes the
 `Connection` from it, and its `ws::Handler` answers the app's ids and
-delegates `Unknown(id)` to `conn.handle`. Its connection loop selects over
-`server.run()`, `guard.ended()` (which drops the server, closing the
-socket) and `auth.events()`, broadcasting what `conn.update` returns, and
-what `conn.lagged` returns on a lag (the guard re-checks the session
-itself). The frontend builds the web03
+delegates `Unknown(id)` to `conn.handle`. It takes `conn.updates()` first,
+negotiates through `updates.unless_ended`, and its connection loop selects
+over `server.run()` and `updates.next()`, broadcasting each update and
+dropping the server, which closes the socket, once `next` gives `None`. The frontend builds the web03
 `Service` once inside `<AuthProvider>`, hands its handle over with
 `set_socket`, which then checks the session whenever the socket closes;
 musli-web reconnects by itself while the session lives.
