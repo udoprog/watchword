@@ -51,8 +51,10 @@ fn App() -> Html {
     // - `set_socket` gives watchword the handle once. From then on the
     //   account panel, the admin page and `refresh()` send their requests
     //   over it while it is open, and over HTTP while it reconnects.
-    //   `AuthProvider` follows the server's `AuthBroadcast` for the user, and
-    //   `AdminUsers` for its list, so the list needs no `refresh` prop.
+    //   `AuthProvider` follows the server's `AuthBroadcast` for the user and
+    //   for the users list it shares with `AdminUsers` (and `use_users`), so
+    //   the list needs no `refresh` prop. `AdminUsers` takes the admin from
+    //   the context too.
     // - When the socket closes, or stays closed, `AuthProvider` checks the
     //   session over HTTP: a 401 shows the sign-in page with "Your session
     //   has ended", which unmounts the app and so drops the socket.
@@ -131,7 +133,6 @@ fn App() -> Html {
             html! {
                 <section class="panel wide">
                     <AdminUsers
-                        me={auth.user.clone()}
                         query={(*query).clone()}
                         {on_query_change}
                         {on_impersonate}

@@ -584,9 +584,7 @@ fn replacing_the_user_keeps_the_impersonation() {
 #[cfg(feature = "musliweb04")]
 #[test]
 fn broadcasts_apply_to_the_users_list() {
-    use std::collections::HashMap;
-
-    use super::admin_users::apply_update;
+    use super::users::apply_update;
     use watchword_core::musliweb04::AuthUpdate;
 
     let expires = Timestamp::UNIX_EPOCH;
@@ -595,11 +593,6 @@ fn broadcasts_apply_to_the_users_list() {
         id: UserId(id),
         access,
         ..user(Some(login), None, Method::Password)
-    };
-
-    let link = |token: &str| Link {
-        token: token.into(),
-        expires_at: expires,
     };
 
     let mut users = vec![
@@ -613,58 +606,109 @@ fn broadcasts_apply_to_the_users_list() {
         },
     ];
 
-    let mut links = HashMap::from([(UserId(2), link("t"))]);
-
     // The own user is the provider's.
     let me = AuthUpdate::Me(with_id(1, "renamed", Access::Active));
-    assert!(!apply_update(&mut users, &mut links, me));
+    assert!(!apply_update(&mut users, me));
     assert_eq!(users[0].user.login.as_deref(), Some("root"));
 
     // A change that leaves the links alone applies in place.
     let mut admin = with_id(2, "patty", Access::Pending);
     admin.role = Role::Admin;
     let changed = AuthUpdate::UserChanged(admin);
-    assert!(!apply_update(&mut users, &mut links, changed));
+    assert!(!apply_update(&mut users, changed));
     assert_eq!(users[1].user.role, Role::Admin);
     assert_eq!(users[1].link_expires_at, Some(expires));
-    assert!(links.contains_key(&UserId(2)));
 
     // Registering uses up the link, so the list is fetched again.
     let registered = AuthUpdate::UserChanged(with_id(2, "patty", Access::Active));
-    assert!(apply_update(&mut users, &mut links, registered));
+    assert!(apply_update(&mut users, registered));
     assert_eq!(users[1].user.access, Access::Active);
     assert_eq!(users[1].link_expires_at, None);
-    assert!(!links.contains_key(&UserId(2)));
 
     // A change to a user not shown fetches the list again.
     let unknown = AuthUpdate::UserChanged(with_id(7, "ghost", Access::Active));
-    assert!(apply_update(&mut users, &mut links, unknown));
+    assert!(apply_update(&mut users, unknown));
     assert_eq!(users.len(), 2);
 
     // A user created elsewhere shows at once; their link needs the list.
     let created = AuthUpdate::UserCreated(with_id(3, "new", Access::Pending));
-    assert!(apply_update(&mut users, &mut links, created.clone()));
+    assert!(apply_update(&mut users, created.clone()));
     assert_eq!(users[2].user.id, UserId(3));
     assert_eq!(users[2].link_expires_at, None);
 
     // One already added here keeps the link its answer carried.
     users[2].link_expires_at = Some(expires);
-    assert!(!apply_update(&mut users, &mut links, created));
+    assert!(!apply_update(&mut users, created));
     assert_eq!(users.len(), 3);
     assert_eq!(users[2].link_expires_at, Some(expires));
 
-    // A deleted user goes, with their link.
-    links.insert(UserId(3), link("u"));
+    // A deleted user goes.
     let deleted = AuthUpdate::UserDeleted(UserId(3));
-    assert!(!apply_update(&mut users, &mut links, deleted));
+    assert!(!apply_update(&mut users, deleted));
     assert_eq!(users.len(), 2);
-    assert!(links.is_empty());
 
     // Missed updates fetch the list again, leaving it as it is meanwhile.
-    links.insert(UserId(2), link("v"));
     let resync = AuthUpdate::Resync(with_id(1, "renamed", Access::Active));
-    assert!(apply_update(&mut users, &mut links, resync));
+    assert!(apply_update(&mut users, resync));
     assert_eq!(users.len(), 2);
     assert_eq!(users[0].user.login.as_deref(), Some("root"));
-    assert!(links.contains_key(&UserId(2)));
+}
+
+#[test]
+fn links_follow_the_users_list() {
+    use std::collections::HashMap;
+
+    use super::users::retain_links;
+
+    let expires = Timestamp::UNIX_EPOCH;
+
+    let entry = |id, link_expires_at| UserEntry {
+        user: UserInfo {
+            id: UserId(id),
+            ..user(Some("u"), None, Method::Password)
+        },
+        link_expires_at,
+    };
+
+    let link = |token: &str| Link {
+        token: token.into(),
+        expires_at: expires,
+    };
+
+    let mut links = HashMap::from([
+        (UserId(1), link("live")),
+        (UserId(2), link("used")),
+        (UserId(3), link("deleted")),
+    ]);
+
+    // A link stays while its user is listed with a live link; one used up
+    // or revoked, or whose user is gone, goes.
+    retain_links(&mut links, &[entry(1, Some(expires)), entry(2, None)]);
+    assert_eq!(links.len(), 1);
+    assert!(links.contains_key(&UserId(1)));
+}
+
+#[test]
+fn same_rights_follows_user_role_and_impersonation() {
+    use super::provider::same_rights;
+
+    let current = user(Some("root"), None, Method::Password);
+    assert!(same_rights(&current, &current.clone()));
+
+    let mut renamed = current.clone();
+    renamed.login = Some("renamed".into());
+    assert!(same_rights(&current, &renamed));
+
+    let mut demoted = current.clone();
+    demoted.role = match current.role {
+        Role::Admin => Role::Regular,
+        _ => Role::Admin,
+    };
+    assert!(!same_rights(&current, &demoted));
+
+    let mut other = current.clone();
+    other.id = UserId(9);
+    assert!(!same_rights(&current, &other));
+
+    assert!(!same_rights(&current, &impersonated("admin")));
 }

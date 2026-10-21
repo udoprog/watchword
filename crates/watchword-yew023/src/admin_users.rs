@@ -17,10 +17,8 @@ use super::context::AuthContext;
 use super::form::{identity_change, optional};
 use super::http::{self, CreatedUser, Error};
 use super::l10n::{self, error_message, placed, role_name};
-#[cfg(feature = "musliweb04")]
-use super::socket::Socket;
-#[cfg(feature = "musliweb04")]
-use watchword_core::musliweb04::AuthUpdate;
+use super::listener::Listener;
+use super::users::{Users, UsersStore, retain_links};
 use watchword_core::{
     Access, Link, Method, NewUser, Role, UserChange, UserEntry, UserId, UserInfo,
 };
@@ -42,18 +40,22 @@ pub struct UsersQuery {
 #[derive(Properties, PartialEq)]
 pub struct AdminUsersProps {
     /// The signed-in admin, whose own row offers no role change, sign out,
-    /// revoke, impersonate or delete.
-    pub me: Rc<UserInfo>,
+    /// revoke, impersonate or delete. Defaults to the user of the
+    /// [`AuthContext`]; only needed outside an
+    /// [`AuthProvider`](super::AuthProvider).
+    #[prop_or_default]
+    pub me: Option<Rc<UserInfo>>,
     /// Offers Impersonate when set, which the server must enable. It is
     /// called with the user once this browser is signed in as them; the app
     /// then reloads the user, such as with [`AuthContext::refresh`], and
     /// leaves the admin page.
     #[prop_or_default]
     pub on_impersonate: Option<Callback<UserInfo>>,
-    /// Bump it to fetch the users again, such as when the app forwards an
-    /// `AuthEvent` from the server. Not needed once the app hands its
-    /// musli-web socket to [`AuthContext::set_socket`] (feature
-    /// `musliweb04`): the list then follows the server's broadcasts itself.
+    /// Bump it to fetch the users again, such as when the app learns of a
+    /// change made elsewhere; the same as [`Users::reload`]. Not needed once
+    /// the app hands its musli-web socket to [`AuthContext::set_socket`]
+    /// (feature `musliweb04`): the list then follows the server's broadcasts
+    /// itself.
     #[prop_or_default]
     pub refresh: u64,
     /// Renders app content under a user, such as their groups.
@@ -90,31 +92,42 @@ pub struct AdminUsersProps {
 ///   and Delete, except on the admin's own row. Revoke access and Delete ask
 ///   for confirmation.
 ///
-/// Use it inside [`AuthProvider`](super::AuthProvider): the context says
-/// whether the app uses logins, keeps the admin's own user current when they
-/// edit themselves, and signs out when a request finds the session ended.
+/// Use it inside [`AuthProvider`](super::AuthProvider): the context gives the
+/// admin (unless `me` is set), says whether the app uses logins, keeps the
+/// admin's own user current when they edit themselves, and signs out when a
+/// request finds the session ended.
+///
+/// It shows the provider's shared [`Users`], so an app component that shows
+/// the users too, through [`use_users`](super::use_users), does not fetch
+/// them again, and sees the changes made here. Outside a provider it keeps a
+/// list of its own.
 ///
 /// With the `musliweb04` feature and a socket handed to
-/// [`AuthContext::set_socket`], it follows the server's `AuthBroadcast`:
-/// users created, changed or deleted elsewhere, such as by another admin,
-/// change in the list in place. A broadcast does not carry link state, so
-/// the list is fetched again when it cannot be known: for a user created
-/// elsewhere, and when a user's account state or sign-in method changes,
-/// which uses up their links. Its requests, except Impersonate, go over the
-/// socket while it is open.
+/// [`AuthContext::set_socket`], the list follows the server's
+/// `AuthBroadcast`: users created, changed or deleted elsewhere, such as by
+/// another admin, change in the list in place. A broadcast does not carry
+/// link state, so the list is fetched again when it cannot be known: for a
+/// user created elsewhere, and when a user's account state or sign-in method
+/// changes, which uses up their links. Its requests, except Impersonate, go
+/// over the socket while it is open.
 ///
 /// Its text comes from the [`Phrases`](phrasebook01::Phrases) the app
 /// provides, falling back to watchword's English (see [`L10N`](super::L10N)).
 pub struct AdminUsers {
+    /// The list as last told.
     users: Users,
+    /// Where the list comes from: the provider's, or this one's own.
+    store: UsersStore,
+    _users: Listener,
+    /// The failed loads already shown.
+    failures: u64,
+    /// The context, when inside a provider.
+    auth: Option<AuthContext>,
+    /// Keeps this subscribed to the context.
+    _context: Option<ContextHandle<AuthContext>>,
     phrases: Phrases,
     /// Keeps this subscribed to the app's phrases.
     _phrases: Option<ContextHandle<Phrases>>,
-    /// Bumped on each load, so an older answer is dropped.
-    generation: u64,
-    /// The generation of the last load answered; a load is in flight while
-    /// it differs from `generation`.
-    loaded: u64,
     /// The query when the app does not keep it.
     query: UsersQuery,
     adding: Option<UserForm>,
@@ -124,17 +137,6 @@ pub struct AdminUsers {
     links: HashMap<UserId, Link>,
     busy: bool,
     message: Option<Message>,
-    /// Keeps this subscribed to the context, for its socket.
-    #[cfg(feature = "musliweb04")]
-    _context: Option<ContextHandle<AuthContext>>,
-    #[cfg(feature = "musliweb04")]
-    socket: Socket,
-}
-
-enum Users {
-    Loading,
-    Loaded(Vec<UserEntry>),
-    Failed(AttrValue),
 }
 
 /// The fields of the add and edit forms.
@@ -171,7 +173,7 @@ pub enum Field {
 /// The messages of [`AdminUsers`].
 pub enum Msg {
     Load,
-    Loaded(u64, Result<Vec<UserEntry>, Error>),
+    Users(Users),
     Filter(String),
     Page(usize),
     StartAdd,
@@ -195,10 +197,7 @@ pub enum Msg {
     Done(UserId, Action, Result<(), Error>),
     Copy(String),
     Copied(bool),
-    #[cfg(feature = "musliweb04")]
     Context(AuthContext),
-    #[cfg(feature = "musliweb04")]
-    Update(AuthUpdate),
     Phrases(Phrases),
 }
 
@@ -207,34 +206,30 @@ impl Component for AdminUsers {
     type Properties = AdminUsersProps;
 
     fn create(ctx: &Context<Self>) -> Self {
-        ctx.link().send_message(Msg::Load);
+        let link = ctx.link();
 
-        let phrases_context = ctx
-            .link()
-            .context::<Phrases>(ctx.link().callback(Msg::Phrases));
+        let phrases_context = link.context::<Phrases>(link.callback(Msg::Phrases));
         let phrases = l10n::phrases(phrases_context.as_ref().map(|(p, _)| p.clone()));
 
-        #[cfg(feature = "musliweb04")]
-        let (_context, socket) = {
-            let link = ctx.link();
-            let mut socket = Socket::default();
+        let context = link.context::<AuthContext>(link.callback(Msg::Context));
+        let (auth, _context) = context.unzip();
 
-            let context = link
-                .context::<AuthContext>(link.callback(Msg::Context))
-                .map(|(auth, handle)| {
-                    socket.set(auth.socket.as_ref(), link.callback(Msg::Update));
-                    handle
-                });
-
-            (context, socket)
+        let store = match &auth {
+            Some(auth) => auth.users.clone(),
+            None => UsersStore::new(Client::default(), Callback::noop()),
         };
 
+        let (users, _users) = store.subscribe(link.callback(Msg::Users));
+
         Self {
-            users: Users::Loading,
+            failures: users.failures(),
+            users,
+            store,
+            _users,
+            auth,
+            _context,
             phrases,
             _phrases: phrases_context.map(|(_, handle)| handle),
-            generation: 0,
-            loaded: 0,
             query: ctx.props().query.clone(),
             adding: None,
             editing: None,
@@ -242,16 +237,12 @@ impl Component for AdminUsers {
             links: HashMap::new(),
             busy: false,
             message: None,
-            #[cfg(feature = "musliweb04")]
-            _context,
-            #[cfg(feature = "musliweb04")]
-            socket,
         }
     }
 
     fn changed(&mut self, ctx: &Context<Self>, old: &Self::Properties) -> bool {
         if ctx.props().refresh != old.refresh {
-            ctx.link().send_message(Msg::Load);
+            self.store.load();
         }
 
         true
@@ -260,48 +251,29 @@ impl Component for AdminUsers {
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Msg::Load => {
-                self.generation += 1;
-                let generation = self.generation;
-
-                if !matches!(self.users, Users::Loaded(..)) {
-                    self.users = Users::Loading;
-                }
-
-                let client = self.client();
-                ctx.link()
-                    .send_future(async move { Msg::Loaded(generation, client.users().await) });
+                self.store.load();
+                return false;
             }
-            Msg::Loaded(generation, result) => {
-                if generation != self.generation {
-                    return false;
+            Msg::Users(users) => {
+                // Links that are no longer live are no use to show.
+                if let Some(entries) = users.entries() {
+                    retain_links(&mut self.links, entries);
                 }
 
-                self.loaded = generation;
+                // A list already shown stays; say why it is stale.
+                if users.failures() != self.failures {
+                    self.failures = users.failures();
 
-                match result {
-                    Ok(users) => {
-                        // Links that are no longer live are no use to show.
-                        self.links.retain(|id, _| {
-                            users
-                                .iter()
-                                .any(|e| e.user.id == *id && e.link_expires_at.is_some())
-                        });
-                        self.users = Users::Loaded(users);
-                    }
-                    Err(error) => {
-                        let message =
-                            error_message(&self.phrases, &error, "watchword-failed-loading-users");
-
-                        // Keep a list already shown, and say why it is stale.
-                        if matches!(self.users, Users::Loaded(..)) {
-                            self.message = Some(Message::Error(message));
-                        } else {
-                            self.users = Users::Failed(message);
-                        }
-
-                        check_unauthorized(ctx, &error);
+                    if let (Some(..), Some(error)) = (users.entries(), users.error()) {
+                        self.message = Some(Message::Error(error_message(
+                            &self.phrases,
+                            error,
+                            "watchword-failed-loading-users",
+                        )));
                     }
                 }
+
+                self.users = users;
             }
             Msg::Filter(filter) => {
                 self.set_query(ctx, UsersQuery { filter, page: 0 });
@@ -340,7 +312,7 @@ impl Component for AdminUsers {
                     return false;
                 }
 
-                let logins = logins(ctx);
+                let logins = self.logins(ctx);
                 let login = logins.then(|| optional(&form.login)).flatten();
                 let email = optional(&form.email);
 
@@ -375,12 +347,12 @@ impl Component for AdminUsers {
                         let filter = entry.user.name().to_owned();
 
                         // The broadcast of the new user may have come first.
-                        if let Users::Loaded(users) = &mut self.users {
+                        self.store.modify(|users| {
                             match users.iter_mut().find(|e| e.user.id == id) {
                                 Some(existing) => *existing = entry,
                                 None => users.push(entry),
                             }
-                        }
+                        });
 
                         self.links.insert(id, link);
                         self.adding = None;
@@ -397,7 +369,7 @@ impl Component for AdminUsers {
                             &error,
                             "watchword-failed-adding-user",
                         )));
-                        check_unauthorized(ctx, &error);
+                        self.check_unauthorized(&error);
                     }
                 }
             }
@@ -440,7 +412,7 @@ impl Component for AdminUsers {
                     return false;
                 }
 
-                let logins = logins(ctx);
+                let logins = self.logins(ctx);
                 let user = &entry.user;
                 let login = if logins {
                     optional(&form.login)
@@ -488,9 +460,8 @@ impl Component for AdminUsers {
 
                 match result {
                     Ok(user) => {
-                        if user.id == ctx.props().me.id
-                            && let Some((auth, _)) =
-                                ctx.link().context::<AuthContext>(Callback::noop())
+                        if self.me_id(ctx) == Some(user.id)
+                            && let Some(auth) = &self.auth
                         {
                             auth.set_user(user.clone());
                         }
@@ -499,9 +470,11 @@ impl Component for AdminUsers {
                             self.editing = None;
                         }
 
-                        if let Some(entry) = self.entry_mut(user.id) {
-                            entry.user = user;
-                        }
+                        self.store.modify(|users| {
+                            if let Some(entry) = users.iter_mut().find(|e| e.user.id == user.id) {
+                                entry.user = user;
+                            }
+                        });
 
                         self.message = Some(Message::Notice(l10n::text(&self.phrases, notice)));
                     }
@@ -511,7 +484,7 @@ impl Component for AdminUsers {
                             &error,
                             "watchword-failed-saving",
                         )));
-                        check_unauthorized(ctx, &error);
+                        self.check_unauthorized(&error);
                     }
                 }
             }
@@ -531,19 +504,23 @@ impl Component for AdminUsers {
 
                 match result {
                     Ok(link) => {
-                        if let Some(entry) = self.entry_mut(id) {
-                            entry.link_expires_at = Some(link.expires_at);
+                        let expires_at = link.expires_at;
 
-                            // A new link restores a revoked user.
-                            if entry.user.access == Access::Revoked {
-                                entry.user.access = Access::Pending;
+                        self.store.modify(|users| {
+                            if let Some(entry) = users.iter_mut().find(|e| e.user.id == id) {
+                                entry.link_expires_at = Some(expires_at);
+
+                                // A new link restores a revoked user.
+                                if entry.user.access == Access::Revoked {
+                                    entry.user.access = Access::Pending;
+                                }
                             }
-                        }
+                        });
 
                         self.links.insert(id, link);
                         self.message = None;
                         // The account state may have changed with it.
-                        ctx.link().send_message(Msg::Load);
+                        self.store.load();
                     }
                     Err(error) => {
                         self.message = Some(Message::Error(error_message(
@@ -551,7 +528,7 @@ impl Component for AdminUsers {
                             &error,
                             "watchword-failed-issuing-link",
                         )));
-                        check_unauthorized(ctx, &error);
+                        self.check_unauthorized(&error);
                     }
                 }
             }
@@ -602,7 +579,7 @@ impl Component for AdminUsers {
                         &error,
                         action.failed(),
                     )));
-                    check_unauthorized(ctx, &error);
+                    self.check_unauthorized(&error);
                     return true;
                 }
 
@@ -612,14 +589,16 @@ impl Component for AdminUsers {
                     Action::RevokeLink => {
                         self.links.remove(&id);
 
-                        if let Some(entry) = self.entry_mut(id) {
-                            entry.link_expires_at = None;
-                        }
+                        self.store.modify(|users| {
+                            if let Some(entry) = users.iter_mut().find(|e| e.user.id == id) {
+                                entry.link_expires_at = None;
+                            }
+                        });
                     }
                     Action::SignOut => {}
                     Action::RevokeAccess => {
                         self.links.remove(&id);
-                        ctx.link().send_message(Msg::Load);
+                        self.store.load();
                     }
                     Action::Impersonate => {
                         let user = self.entry(id).map(|e| e.user.clone());
@@ -632,10 +611,7 @@ impl Component for AdminUsers {
                     }
                     Action::Delete => {
                         self.links.remove(&id);
-
-                        if let Users::Loaded(users) = &mut self.users {
-                            users.retain(|e| e.user.id != id);
-                        }
+                        self.store.modify(|users| users.retain(|e| e.user.id != id));
                     }
                 }
             }
@@ -651,28 +627,18 @@ impl Component for AdminUsers {
                     Message::Error(l10n::text(&self.phrases, "watchword-copy-refused"))
                 });
             }
-            #[cfg(feature = "musliweb04")]
             Msg::Context(auth) => {
-                self.socket
-                    .set(auth.socket.as_ref(), ctx.link().callback(Msg::Update));
-            }
-            #[cfg(feature = "musliweb04")]
-            Msg::Update(update) => {
-                // A list still loading comes with the change; a failed one
-                // is fetched again by Retry.
-                let Users::Loaded(users) = &mut self.users else {
-                    return false;
-                };
-
-                let mut reload = apply_update(users, &mut self.links, update);
-
-                // A load in flight may answer with the list from before the
-                // change, so it is asked again.
-                reload |= self.loaded != self.generation;
-
-                if reload {
-                    ctx.link().send_message(Msg::Load);
+                // A provider keeps its list, so this only changes with the
+                // provider.
+                if auth.users != self.store {
+                    self.store = auth.users.clone();
+                    let (users, listener) = self.store.subscribe(ctx.link().callback(Msg::Users));
+                    self.failures = users.failures();
+                    self.users = users;
+                    self._users = listener;
                 }
+
+                self.auth = Some(auth);
             }
             Msg::Phrases(phrases) => {
                 self.phrases = l10n::phrases(Some(phrases));
@@ -698,17 +664,17 @@ impl Component for AdminUsers {
             </div>
         };
 
-        let body = match &self.users {
-            Users::Loading => html! {
-                <p class="auth-status" role="status">{phrases.text("watchword-users-loading")}</p>
-            },
-            Users::Failed(error) => html! {
+        let body = match (self.users.entries(), self.users.error()) {
+            (Some(users), _) => self.view_users(ctx, users, query),
+            (None, Some(error)) if !self.users.is_loading() => html! {
                 <div class="auth-message" role="alert">
-                    <p class="auth-error">{error.clone()}</p>
+                    <p class="auth-error">{error_message(phrases, error, "watchword-failed-loading-users")}</p>
                     <button type="button" class="auth-retry" onclick={link.callback(|_| Msg::Load)}>{phrases.text("watchword-retry")}</button>
                 </div>
             },
-            Users::Loaded(users) => self.view_users(ctx, users, query),
+            (None, _) => html! {
+                <p class="auth-status" role="status">{phrases.text("watchword-users-loading")}</p>
+            },
         };
 
         html! {
@@ -753,9 +719,39 @@ impl AdminUsers {
     /// The transport for the requests: the context's socket, when one is
     /// handed over, and HTTP.
     fn client(&self) -> Client {
-        Client {
-            #[cfg(feature = "musliweb04")]
-            socket: self.socket.handle().cloned(),
+        self.auth
+            .as_ref()
+            .map(AuthContext::client)
+            .unwrap_or_default()
+    }
+
+    /// The signed-in admin: `me`, or the context's user.
+    fn me<'a>(&'a self, ctx: &'a Context<Self>) -> Option<&'a UserInfo> {
+        match &ctx.props().me {
+            Some(me) => Some(me),
+            None => self.auth.as_ref().map(|auth| &*auth.user),
+        }
+    }
+
+    fn me_id(&self, ctx: &Context<Self>) -> Option<UserId> {
+        self.me(ctx).map(|me| me.id)
+    }
+
+    /// Whether the app uses logins.
+    fn logins(&self, ctx: &Context<Self>) -> bool {
+        match &self.auth {
+            Some(auth) => auth.config.logins,
+            // Outside a provider, show logins when the admin has one.
+            None => self.me(ctx).is_some_and(|me| me.login.is_some()),
+        }
+    }
+
+    /// A 401 means the session may have ended, which the provider checks.
+    fn check_unauthorized(&self, error: &Error) {
+        if error.is_unauthorized()
+            && let Some(auth) = &self.auth
+        {
+            auth.check_session();
         }
     }
 
@@ -777,17 +773,7 @@ impl AdminUsers {
     }
 
     fn entry(&self, id: UserId) -> Option<&UserEntry> {
-        match &self.users {
-            Users::Loaded(users) => users.iter().find(|e| e.user.id == id),
-            _ => None,
-        }
-    }
-
-    fn entry_mut(&mut self, id: UserId) -> Option<&mut UserEntry> {
-        match &mut self.users {
-            Users::Loaded(users) => users.iter_mut().find(|e| e.user.id == id),
-            _ => None,
-        }
+        self.users.get(id)
     }
 
     fn update_user(
@@ -812,7 +798,7 @@ impl AdminUsers {
         };
 
         let link = ctx.link();
-        let logins = logins(ctx);
+        let logins = self.logins(ctx);
         let phrases = &self.phrases;
 
         let onsubmit = link.callback(|e: SubmitEvent| {
@@ -874,7 +860,7 @@ impl AdminUsers {
 
     fn view_users(&self, ctx: &Context<Self>, users: &[UserEntry], query: &UsersQuery) -> Html {
         let link = ctx.link();
-        let logins = logins(ctx);
+        let logins = self.logins(ctx);
         let phrases = &self.phrases;
 
         let mut shown = users
@@ -959,10 +945,10 @@ impl AdminUsers {
     ) -> Html {
         let props = ctx.props();
         let link = ctx.link();
-        let logins = logins(ctx);
+        let logins = self.logins(ctx);
         let user = &entry.user;
         let id = user.id;
-        let me = user.id == props.me.id;
+        let me = self.me_id(ctx) == Some(user.id);
         let name = user.name().to_owned();
         let busy = self.busy;
         let phrases = &self.phrases;
@@ -1219,77 +1205,6 @@ impl Action {
             Action::Impersonate => "watchword-signed-in-as-user",
             Action::Delete => "watchword-user-deleted",
         }
-    }
-}
-
-/// Applies a live change to the list of `users` and the `links` shown,
-/// returning whether the list must be fetched again for what the broadcast
-/// does not carry: the link state of a user created elsewhere, of a user
-/// whose account state or sign-in method changed (registering and revoking
-/// access use up the links), any change to a user not in the list, and
-/// updates the server missed (`Resync`).
-#[cfg(feature = "musliweb04")]
-pub(super) fn apply_update(
-    users: &mut Vec<UserEntry>,
-    links: &mut HashMap<UserId, Link>,
-    update: AuthUpdate,
-) -> bool {
-    match update {
-        // The provider's.
-        AuthUpdate::Me(..) => false,
-        AuthUpdate::UserCreated(user) => match users.iter_mut().find(|e| e.user.id == user.id) {
-            // Added here, with the link the answer carried.
-            Some(entry) => {
-                entry.user = user;
-                false
-            }
-            None => {
-                users.push(UserEntry {
-                    user,
-                    link_expires_at: None,
-                });
-                true
-            }
-        },
-        AuthUpdate::UserChanged(user) => {
-            let Some(entry) = users.iter_mut().find(|e| e.user.id == user.id) else {
-                return true;
-            };
-
-            let uses_links = entry.user.access != user.access || entry.user.method != user.method;
-
-            if uses_links {
-                entry.link_expires_at = None;
-                links.remove(&user.id);
-            }
-
-            entry.user = user;
-            uses_links
-        }
-        AuthUpdate::UserDeleted(id) => {
-            users.retain(|e| e.user.id != id);
-            links.remove(&id);
-            false
-        }
-        // Updates were missed, so the whole list is fetched again; the
-        // links it no longer shows go when it answers.
-        AuthUpdate::Resync(..) => true,
-    }
-}
-
-fn logins(ctx: &Context<AdminUsers>) -> bool {
-    match ctx.link().context::<AuthContext>(Callback::noop()) {
-        Some((auth, _)) => auth.config.logins,
-        // Outside a provider, show logins when the admin has one.
-        None => ctx.props().me.login.is_some(),
-    }
-}
-
-fn check_unauthorized(ctx: &Context<AdminUsers>, error: &Error) {
-    if error.is_unauthorized()
-        && let Some((auth, _)) = ctx.link().context::<AuthContext>(Callback::noop())
-    {
-        auth.check_session();
     }
 }
 

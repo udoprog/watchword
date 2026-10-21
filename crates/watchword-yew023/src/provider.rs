@@ -13,10 +13,13 @@ use super::client::Client;
 use super::context::AuthContext;
 use super::http::{self, Error};
 use super::l10n;
+#[cfg(feature = "musliweb04")]
+use super::listener::Subscribers;
 use super::register::Register;
 use super::sign_in::SignIn;
 #[cfg(feature = "musliweb04")]
 use super::socket::{Socket, SocketHandle};
+use super::users::UsersStore;
 #[cfg(feature = "musliweb04")]
 use watchword_core::musliweb04::AuthUpdate;
 use watchword_core::{AuthConfig, UserInfo};
@@ -69,7 +72,9 @@ pub struct AuthProviderProps {
 /// [`AuthUpdate::Me`](watchword_core::musliweb04::AuthUpdate::Me) (and the
 /// user [`Resync`](watchword_core::musliweb04::AuthUpdate::Resync) carries),
 /// so a change to the user made elsewhere, such as an admin changing their
-/// role, shows at once.
+/// role, shows at once. It passes each update on to the app's
+/// [`AuthContext::on_update`] listeners, and the user-list updates to the
+/// shared [`Users`](super::Users).
 ///
 /// Its text, and that of the pages it shows, comes from the
 /// [`Phrases`](phrasebook01::Phrases) the app provides around it, falling
@@ -100,6 +105,11 @@ pub struct AuthProvider {
     /// before the latest one is ignored.
     #[cfg(feature = "musliweb04")]
     socket_watch: u64,
+    /// The users list the children share.
+    users: UsersStore,
+    /// The app's listeners for the socket's updates.
+    #[cfg(feature = "musliweb04")]
+    updates: Subscribers<AuthUpdate>,
 }
 
 /// How often the session is checked while the app's socket stays closed.
@@ -160,6 +170,7 @@ impl Component for AuthProvider {
     fn create(ctx: &Context<Self>) -> Self {
         let link = ctx.link();
         link.send_message(Msg::Load);
+        let check_session = link.callback(|()| Msg::CheckSession);
 
         let context = link.context::<Phrases>(link.callback(Msg::Phrases));
         let phrases = l10n::phrases(context.as_ref().map(|(phrases, _)| phrases.clone()));
@@ -175,7 +186,7 @@ impl Component for AuthProvider {
             sign_out: link.callback(|()| Msg::SignOut),
             refresh: link.callback(|()| Msg::Refresh),
             set_user: link.callback(Msg::SetUser),
-            check_session: link.callback(|()| Msg::CheckSession),
+            check_session: check_session.clone(),
             retry: link.callback(|_| Msg::Load),
             #[cfg(feature = "musliweb04")]
             socket: Socket::default(),
@@ -187,6 +198,9 @@ impl Component for AuthProvider {
             on_socket_state: link.callback(Msg::SocketState),
             #[cfg(feature = "musliweb04")]
             socket_watch: 0,
+            users: UsersStore::new(Client::default(), check_session),
+            #[cfg(feature = "musliweb04")]
+            updates: Subscribers::default(),
         }
     }
 
@@ -241,7 +255,7 @@ impl Component for AuthProvider {
                     browser::return_after_sign_in(ctx.props().sign_in_path.as_deref(), false);
                 }
 
-                self.state = State::SignedIn(Rc::new(user));
+                self.signed_in_as(user);
             }
             Msg::SignOut => {
                 ctx.link().send_future(async {
@@ -281,7 +295,8 @@ impl Component for AuthProvider {
                     return false;
                 };
 
-                self.state = State::SignedIn(Rc::new(replace_user(current, user)));
+                let user = replace_user(current, user);
+                self.signed_in_as(user);
             }
             Msg::CheckSession => {
                 self.check_session(ctx);
@@ -304,6 +319,7 @@ impl Component for AuthProvider {
                 let handle =
                     handle.map(|handle| SocketHandle::new(handle, self.on_socket_state.clone()));
                 let changed = self.socket.set(handle.as_ref(), self.on_update.clone());
+                self.users.set_client(self.client());
 
                 // A socket handed over closed may be refused already. The
                 // session was just checked to show the app, so the first
@@ -352,24 +368,37 @@ impl Component for AuthProvider {
             }
             #[cfg(feature = "musliweb04")]
             Msg::Update(update) => {
-                // The user-list updates are for `AdminUsers`, which listens
-                // itself. `Resync`, after the server missed updates, carries
-                // the user as `Me` does.
-                let (AuthUpdate::Me(user) | AuthUpdate::Resync(user), State::SignedIn(..)) =
-                    (update, &self.state)
-                else {
-                    return false;
-                };
-
-                // A stale socket's user is the session's before impersonating
-                // or stopping it, not this browser's.
-                if self.socket.handle().is_some_and(SocketHandle::is_stale) {
+                if !matches!(self.state, State::SignedIn(..)) {
                     return false;
                 }
 
-                // `Me` is set as the server answers `Me`, impersonation
-                // marker included, so it replaces the user as it is.
-                self.state = State::SignedIn(Rc::new(user));
+                // A stale socket's user is the session's before impersonating
+                // or stopping it, not this browser's.
+                let stale = self.socket.handle().is_some_and(SocketHandle::is_stale);
+
+                // `Resync`, after the server missed updates, carries the user
+                // as `Me` does. `Me` is set as the server answers `Me`,
+                // impersonation marker included, so it replaces the user as
+                // it is.
+                let user = match &update {
+                    AuthUpdate::Me(user) | AuthUpdate::Resync(user) => {
+                        if stale {
+                            return false;
+                        }
+
+                        Some(user.clone())
+                    }
+                    _ => None,
+                };
+
+                self.users.apply(update.clone());
+                self.updates.emit(update);
+
+                let Some(user) = user else {
+                    return false;
+                };
+
+                self.signed_in_as(user);
             }
             Msg::Phrases(phrases) => {
                 self.phrases = l10n::phrases(Some(phrases));
@@ -380,13 +409,21 @@ impl Component for AuthProvider {
     }
 
     /// Every change of state renders, so this sees each one.
-    #[cfg(feature = "musliweb04")]
     fn rendered(&mut self, _: &Context<Self>, _: bool) {
+        if matches!(self.state, State::SignedIn(..)) {
+            return;
+        }
+
         // The socket belongs to the session: the app's own, inside the
         // children, closes with it, and a new sign-in opens another.
-        if !matches!(self.state, State::SignedIn(..)) {
+        #[cfg(feature = "musliweb04")]
+        if self.socket.handle().is_some() {
             self.socket = Socket::default();
+            self.users.set_client(self.client());
         }
+
+        // So is the users list.
+        self.users.clear();
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
@@ -454,6 +491,9 @@ impl Component for AuthProvider {
                     socket: self.socket.handle().cloned(),
                     #[cfg(feature = "musliweb04")]
                     set_socket: self.set_socket.clone(),
+                    users: self.users.clone(),
+                    #[cfg(feature = "musliweb04")]
+                    updates: self.updates.clone(),
                 };
 
                 html! {
@@ -507,6 +547,19 @@ impl AuthProvider {
         }
     }
 
+    /// Shows `user` as the signed-in user. When it is someone else, their
+    /// role changed, or the impersonation did, the users list was for the
+    /// session as it was, so it is fetched again.
+    fn signed_in_as(&mut self, user: UserInfo) {
+        if let State::SignedIn(current) = &self.state
+            && !same_rights(current, &user)
+        {
+            self.users.invalidate();
+        }
+
+        self.state = State::SignedIn(Rc::new(user));
+    }
+
     /// Applies what the server said about the session to a signed-in user:
     /// a new user replaces it, and a 401 ends the session. Other failures,
     /// and answers arriving after signing out, change nothing.
@@ -517,7 +570,7 @@ impl AuthProvider {
 
         match me {
             Ok(user) => {
-                self.state = State::SignedIn(Rc::new(user));
+                self.signed_in_as(user);
             }
             Err(error) if error.is_unauthorized() => {
                 self.state = State::SignedOut { ended: true };
@@ -537,6 +590,12 @@ pub(super) fn replace_user(current: &UserInfo, mut new: UserInfo) -> UserInfo {
     }
 
     new
+}
+
+/// Whether `a` and `b` are the same user with the same role, under the same
+/// impersonation, so that what they may list is the same.
+pub(super) fn same_rights(a: &UserInfo, b: &UserInfo) -> bool {
+    a.id == b.id && a.role == b.role && a.impersonated_by == b.impersonated_by
 }
 
 fn unreachable(phrases: &Phrases, error: &Error) -> AttrValue {

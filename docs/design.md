@@ -726,6 +726,33 @@ cookies, so the library does not depend on the app's gloo version.
     With a socket from `set_socket` the provider calls it itself when the
     socket closes (see 2.7); an app without one calls it when it suspects the
     session ended.
+- App components follow the context rather than watchword's events
+  (decision 27). The provider gives a new `AuthContext` whenever the user,
+  their role or the config changes, so:
+  - `use_auth()` and `use_is_admin() -> bool` (false outside a provider)
+    render a function component again on each change;
+  - `AuthSubscription::new(ctx, Msg::Auth)` does the same for a struct
+    component: it subscribes to the context with the component's message,
+    derefs to the `AuthContext`, and `set(context) -> bool` takes the new
+    one in `update`;
+  - `use_users() -> Users` and `AuthContext::subscribe_users(callback) ->
+    (Users, Listener)` give the users list shared with `<AdminUsers>`
+    (below);
+  - with `musliweb04`, `AuthContext::on_update(callback) -> Listener` and
+    `use_auth_update(f)` pass on each `AuthUpdate` the socket brings, after
+    the provider and the shared list applied it, except the stale socket's
+    `Me`/`Resync` the provider ignores.
+  `Listener` unsubscribes on drop.
+- The users list is one per provider (`Users`, behind an `Rc` in the
+  context). It is fetched when the first component subscribes, kept current
+  by what `<AdminUsers>` changes and by the socket's user-list updates
+  (fetching again when an update cannot say enough, as 2.7 describes), and
+  dropped when the last subscriber goes, so the next fetches it fresh. It is
+  fetched again, or dropped, when the signed-in user's id, role or
+  impersonation changes, and dropped on sign-out. `Users` is a snapshot:
+  `entries()`, `get(id)`, `is_loading()`, `error()` (until a fetch
+  succeeds; a list already shown is kept) and `reload()`; each change is a
+  new one, equal only to itself. A 401 on the fetch checks the session.
 - `<SignIn config on_sign_in notice title>` offers the enabled methods: a
   login/email + password form, "Sign in with Cloudflare" when
   `config.cloudflare` is set, and "Sign in with Google" when `config.google`
@@ -750,9 +777,13 @@ cookies, so the library does not depend on the app's gloo version.
     with Copy), sign out everywhere, revoke access, impersonate (when
     `on_impersonate` is set) and delete.
 
-  Its other props are `me`, `refresh: u64` (bump it to refetch when the app
-  forwards an `AuthEvent`), and `extra: Callback<UserInfo, Html>` for the app's
-  own columns, such as group membership.
+  It shows the provider's shared `Users`, and keeps one of its own outside a
+  provider. Its other props are `me: Option<Rc<UserInfo>>` (the admin whose
+  row offers no self-actions; defaults to the context's user, so it is only
+  needed outside a provider), `refresh: u64` (bump it to refetch, the same as
+  `Users::reload`, for an app without a socket), and
+  `extra: Callback<UserInfo, Html>` for the app's own columns, such as group
+  membership.
 - `<AdminCloudflare app_name on_saved>` is the Cloudflare Access settings page
   for admins. It loads the settings watchword keeps (`GET
   /api/auth/cloudflare`, or `Cloudflare` over the socket), shows
@@ -1002,11 +1033,12 @@ while the socket reconnects still works. `refresh()` uses `Me`.
 `<AccountPanel>` and `<AdminUsers>` take their client from the context, so an
 app passes no new props whether it hands its own components the handle as a
 prop or through a `ContextProvider`. With a socket, `<AuthProvider>` listens
-for `AuthBroadcast`: `Me` replaces the context's user, and `<AdminUsers>`
-applies `UserCreated`/`UserChanged`/`UserDeleted` to its list in place, so its
-`refresh` prop is no longer needed (it stays for HTTP-only apps). On
-`Resync` the provider replaces the user as for `Me` and `<AdminUsers>`
-fetches its list again. `http::Error`
+for `AuthBroadcast`: `Me` replaces the context's user, and the shared users
+list (2.6), which `<AdminUsers>` shows, applies
+`UserCreated`/`UserChanged`/`UserDeleted` in place, so its `refresh` prop is
+no longer needed (it stays for HTTP-only apps). On `Resync` the provider
+replaces the user as for `Me` and the list is fetched again. Every update is
+then passed to the app's `on_update` listeners. `http::Error`
 gains a variant for a socket request error.
 
 As built: watchword-yew023 has a `musliweb04` feature, which watchword's
@@ -1026,14 +1058,16 @@ count of failures; musli-web itself retries with backoff up to 4 seconds. A
 check while one is in flight is dropped. Apps used to do this themselves and
 disagreed on when (on every close, only after being open, or polling); they
 can drop their own listener, though calling `check_session()` as well only
-checks twice. `<AdminUsers>` reads
-the socket from the context and listens itself. A broadcast carries no link
-state (issuing and revoking a link emit no `AuthEvent`), so `<AdminUsers>`
+checks twice. The provider is the only listener on the socket, and hands
+the user-list updates to the shared list. A broadcast carries no link
+state (issuing and revoking a link emit no `AuthEvent`), so the list
 applies each update in place and fetches the list again only when it cannot
 know the links: for a user created elsewhere (shown at once, without a link
 until the list answers), when a user's account state or sign-in method
 changes (registering and revoking access use up the links), for a user not in
-its list, and when a load was in flight. A password reset through a link
+the list, and when a load was in flight. `<AdminUsers>` keeps the links it
+issued (shown once) itself, and drops each once the list no longer shows that
+user with a live link. A password reset through a link
 changes nothing a broadcast shows, so that link's expiry stays shown until the
 list is next fetched.
 
@@ -1369,3 +1403,26 @@ once the release is on crates.io.
     not overwrite what an admin saved. Saving takes the admin as `actor`, per
     decision 18; reading does not, so an app can read and log them at
     startup.
+27. **App components follow the context and share the users list.** Apps
+    had no supported way to follow auth changes, so they mirrored
+    watchword's events into broadcasts of their own: territory turned
+    `AuthEvent::User*` into its own event kind (the only reason its API
+    crate needed watchword's wire types), set the user from it although the
+    provider already follows `Me`, and its groups page fetched the users a
+    second time beside `<AdminUsers>`; track's struct components read the
+    context once with `Callback::noop()` and never saw a role change; and
+    `<AdminUsers>` required `me`, which it could read from the context.
+    The provider already re-renders its children with a new context on each
+    change, so the fix is to make reading it right easy: `use_is_admin`, and
+    `AuthSubscription` for struct components, which must subscribe with a
+    message of their own to render again (yew has no message-less way). The
+    users list moves out of `<AdminUsers>` into the provider, fetched on
+    first use and dropped with the last user of it, so two components on
+    one page fetch it once and both follow the broadcasts; keeping it only
+    while subscribed keeps a non-admin's page from fetching it, and an
+    HTTP-only app's admin page fresh on each visit. `on_update` is for the
+    rest: code that acts on an update itself. On the server the counterpart
+    is decision 23: the app's authorization reads the session guard or
+    `Connection::require_admin`, not a mirrored event. `AdminUsers.me`
+    becomes `Option` (breaking for struct-literal props; `html!` users are
+    unaffected through yew's `T -> Option<T>` prop conversion).

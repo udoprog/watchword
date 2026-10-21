@@ -32,7 +32,7 @@
 //! |---|---|
 //! | `std` *(default)* | everything here |
 //! | `alloc` | nothing yet beyond watchword-core's `alloc` |
-//! | `musliweb04` | `std` + [`AuthContext::set_socket`]: the components follow a [musli-web] 0.4 socket's broadcasts and send their requests over it |
+//! | `musliweb04` | `std` + [`AuthContext::set_socket`]: the components follow a [musli-web] 0.4 socket's broadcasts and send their requests over it; [`AuthContext::on_update`] and `use_auth_update` pass the broadcasts on to the app |
 //!
 //! <br>
 //!
@@ -73,6 +73,54 @@
 //!
 //! <br>
 //!
+//! ## Following auth changes
+//!
+//! The provider gives a new [`AuthContext`] whenever the user, their role or
+//! the config changes, so app components follow it by reading the context,
+//! without forwarding watchword's events through broadcasts of their own:
+//!
+//! - Function components use [`use_auth`], or [`use_is_admin`] for just the
+//!   role; they render again on each change.
+//! - Struct components keep an [`AuthSubscription`], which subscribes with a
+//!   message of theirs, so they render again too. Reading the context once,
+//!   with `ctx.link().context::<AuthContext>(Callback::noop())`, does not.
+//! - The users list is shared: [`use_users`] (or
+//!   [`AuthContext::subscribe_users`]) gives the same [`Users`] that
+//!   [`AdminUsers`] shows, fetched once for both and kept current, so an app
+//!   page beside the admin page, such as one managing groups, does not fetch
+//!   it again or reload it on each change.
+//!
+//! ```ignore
+//! use watchword::yew023::{use_is_admin, use_users};
+//!
+//! #[function_component]
+//! fn Groups() -> Html {
+//!     let users = use_users();
+//!     let count = users.entries().map_or(0, |entries| entries.len());
+//!     html! { <p>{format!("{count} users")}</p> }
+//! }
+//!
+//! #[function_component]
+//! fn Nav() -> Html {
+//!     html! {
+//!         if use_is_admin() {
+//!             <a href="/admin">{"Admin"}</a>
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! With a musli-web socket (below), changes made elsewhere reach all of
+//! these as they happen. An app that acts on an update itself, such as
+//! reloading its own data when the user's role changes, listens with
+//! [`AuthContext::on_update`] or `use_auth_update`. On the server, the
+//! app's own authorization of a socket's requests follows the session's
+//! guard too: watchword's `musliweb04::Connection::require_admin` reads the
+//! role as stored now, and the `SessionGuard` (`user`, `watch_user`) the role
+//! as last seen, so the server needs no event mirroring of its own either.
+//!
+//! <br>
+//!
 //! ## With a musli-web socket
 //!
 //! With the `musliweb04` feature (watchword's `musliweb04` and `yew023`
@@ -86,9 +134,10 @@
 //! ```
 //!
 //! The components then follow the server's `AuthBroadcast`: the context's
-//! user is replaced when it changes elsewhere, and [`AdminUsers`] applies
-//! users created, changed and deleted by others in place, so the app no
-//! longer bumps its `refresh` prop. The account and admin requests go over
+//! user is replaced when it changes elsewhere, and the shared [`Users`]
+//! (which [`AdminUsers`] shows) applies users created, changed and deleted
+//! by others in place, so the app no longer bumps its `refresh` prop. Each
+//! update is also passed to the app's [`AuthContext::on_update`] listeners. The account and admin requests go over
 //! the socket too while it is open, and over HTTP while it reconnects;
 //! signing in and out, registration and impersonation always use HTTP. When
 //! the socket closes, and every 10 seconds while it stays closed, the
@@ -212,14 +261,20 @@
 //! [`AdminCloudflare`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AdminCloudflare.html
 //! [`AdminUsers`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AdminUsers.html
 //! [`AuthContext`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html
+//! [`AuthContext::on_update`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html#method.on_update
 //! [`AuthContext::set_socket`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html#method.set_socket
+//! [`AuthContext::subscribe_users`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html#method.subscribe_users
+//! [`AuthSubscription`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthSubscription.html
 //! [`AuthProvider`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthProvider.html
 //! [`CloudflareSettings`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.CloudflareSettings.html
 //! [`http`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/http/index.html
 //! [`L10N`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/static.L10N.html
 //! [`use_auth`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth.html
+//! [`use_is_admin`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_is_admin.html
+//! [`use_users`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_users.html
 //! [`UserMenu`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.UserMenu.html
 //! [ftl]: https://github.com/udoprog/watchword/blob/main/crates/watchword-core/locales/en-US.ftl
+//! [`Users`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.Users.html
 //! [musli-web]: https://docs.rs/musli-web
 //! [phrasebook]: https://docs.rs/phrasebook
 //! [watchword]: https://docs.rs/watchword
@@ -257,6 +312,8 @@ mod form;
 #[cfg(feature = "std")]
 mod l10n;
 #[cfg(feature = "std")]
+mod listener;
+#[cfg(feature = "std")]
 mod provider;
 #[cfg(feature = "std")]
 mod register;
@@ -266,6 +323,8 @@ mod sign_in;
 mod socket;
 #[cfg(feature = "std")]
 mod user_menu;
+#[cfg(feature = "std")]
+mod users;
 
 #[cfg(all(test, feature = "std"))]
 mod tests;
@@ -286,7 +345,15 @@ pub use self::cloudflare_settings::{
 
 #[cfg(feature = "std")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
-pub use self::context::{AuthContext, use_auth};
+pub use self::context::{AuthContext, AuthSubscription, use_auth, use_is_admin};
+
+#[cfg(feature = "musliweb04")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb04")))]
+pub use self::context::use_auth_update;
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
+pub use self::listener::Listener;
 
 #[cfg(feature = "std")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
@@ -308,3 +375,7 @@ pub use self::sign_in::{SignIn, SignInProps};
 #[cfg(feature = "std")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 pub use self::user_menu::{UserMenu, UserMenuProps};
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
+pub use self::users::{Users, use_users};

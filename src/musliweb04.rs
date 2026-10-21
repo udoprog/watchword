@@ -43,6 +43,17 @@
 //! with a `RequestError`, which shows a refusal and hides an internal
 //! failure's cause.
 //!
+//! An app need not mirror watchword's events into broadcasts of its own. On
+//! the page, [`AuthBroadcast`] already reaches watchword-yew023's
+//! `AuthContext`, which app components follow (`use_auth`, `use_is_admin`,
+//! `AuthSubscription`, the shared `use_users` list, and `on_update` for the
+//! updates themselves). On the server, the session's guard is where a
+//! socket's role changes come from: `Connection::require_admin` reads the
+//! role as stored for a request that must not pass on a stale one, and the
+//! [`SessionGuard`](crate::core::SessionGuard) that `Updates::guard` holds
+//! keeps the user as last seen (`user`, and `watch_user` for the app's
+//! request handler) for a check that may.
+//!
 //! The design is in `docs/design.md`, section 2.7.
 //!
 //! [`AuthError`]: crate::AuthError
