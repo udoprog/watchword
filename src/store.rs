@@ -1,19 +1,46 @@
 //! Storage of users, sessions, link tokens and settings: the [`Store`] trait,
 //! the records it stores, and [`MemoryStore`].
 //!
-//! Needs the `server` feature. An app implements [`Store`] over its own
-//! database, or uses `SqllStore` (feature `sqll015`). [`Auth`](crate::core::Auth)
-//! enforces every rule; a store only keeps the records and makes the
-//! documented multi-record changes atomic.
+//! Needs the `server` feature. watchword ships no database storage: each app
+//! implements [`Store`] over its own database, with its own tables and
+//! migrations, and maps its rows into the records here ([`User`],
+//! [`Session`], [`Token`]). [`Auth`](crate::core::Auth) enforces every rule;
+//! a store only keeps the records and makes the documented multi-record
+//! changes atomic.
+//!
+//! # Writing a store
+//!
+//! Start from [`examples/sqll-store`], a complete store over SQLite with sqll
+//! 0.15 (a pool, `sqll::Migrations` and the app's own tables), and change the
+//! tables to the app's. [`MemoryStore`] is the reference for what each method
+//! does. Then check the store with the conformance suite,
+//! [`store_suite!`](crate::store_suite) (feature `test-util`), in the app's
+//! tests: it defines one `#[test]` per rule of `Auth` that depends on what a
+//! store keeps, each over a fresh store, so a store that passes it is one
+//! `Auth` works with.
+//!
+//! ```ignore
+//! #[cfg(test)]
+//! mod store_tests {
+//!     // A fresh, empty store per test, such as one over a new in-memory
+//!     // database.
+//!     watchword::store_suite!(crate::AppStore::open_scratch().await?);
+//! }
+//! ```
 //!
 //! Every method takes the current time from the caller, which keeps tests
 //! deterministic. Emails are passed in already normalized (see
-//! [`normalize_email`](crate::normalize_email)) and compared exactly.
+//! [`normalize_email`](crate::normalize_email)) and compared exactly. A store
+//! keeps times with at least millisecond precision.
+//!
+//! [`examples/sqll-store`]: https://github.com/udoprog/watchword/tree/main/examples/sqll-store
 
 use std::boxed::Box;
 use std::error::Error as StdError;
+use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::string::String;
 use std::vec::Vec;
 
@@ -47,7 +74,8 @@ impl StoreError {
     }
 }
 
-/// A stored user.
+/// A stored user, as the store maps it from its own record. A store may keep
+/// more about a user (the app's own columns); `Auth` needs only these.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct User {
     /// The user's id, assigned by the store.
@@ -60,7 +88,9 @@ pub struct User {
     pub role: Role,
     /// The user's account state.
     pub access: Access,
-    /// The user's stored credential.
+    /// The user's stored credential: which of
+    /// [`password_hash`](User::password_hash) and
+    /// [`google_sub`](User::google_sub) signs them in.
     pub method: Method,
     /// The bcrypt hash of the password, when the method is
     /// [`Method::Password`] and one is set.
@@ -68,7 +98,7 @@ pub struct User {
     /// The bound Google account's subject, when the method is
     /// [`Method::Google`] and one is bound.
     pub google_sub: Option<String>,
-    /// When the user was created.
+    /// When the user was created, as the admin pages show it.
     pub created_at: Timestamp,
 }
 
@@ -111,9 +141,11 @@ pub struct Session {
     /// The admin acting as [`user`](Session::user), when the session was
     /// created by impersonation.
     pub impersonator: Option<UserId>,
-    /// When the session was created.
+    /// When the session was created. [`Store::create_session`] may prune
+    /// the sessions that expired by then.
     pub created_at: Timestamp,
-    /// When the session expires.
+    /// When the session expires. `Auth` refuses an expired session itself, so
+    /// a store need not filter them out.
     pub expires_at: Timestamp,
 }
 
@@ -160,11 +192,37 @@ pub enum TokenKind {
 }
 
 impl TokenKind {
-    /// The kind's name, as stored.
+    /// The kind's name, `registration` or `reset`, to store it as. It parses
+    /// back with [`str::parse`].
     pub fn as_str(self) -> &'static str {
         match self {
             TokenKind::Registration => "registration",
             TokenKind::Reset => "reset",
+        }
+    }
+}
+
+impl fmt::Display for TokenKind {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The error parsing an unknown [`TokenKind`] name.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unknown link kind")]
+pub struct UnknownTokenKind;
+
+impl FromStr for TokenKind {
+    type Err = UnknownTokenKind;
+
+    /// Parses a name from [`TokenKind::as_str`].
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "registration" => Ok(TokenKind::Registration),
+            "reset" => Ok(TokenKind::Reset),
+            _ => Err(UnknownTokenKind),
         }
     }
 }
@@ -184,16 +242,25 @@ pub enum Credential {
     },
 }
 
-/// Storage for users, sessions, link tokens and settings.
+/// Storage for users, sessions, link tokens and settings, implemented by each
+/// app over its own database. See [writing a store](self#writing-a-store).
 ///
 /// The methods are `async fn`s whose futures are `Send`; implement them with
-/// `async fn`. Several of them change users, sessions and tokens together and
-/// must do so atomically, as documented on each.
+/// `async fn`. Every method that writes must be atomic: its reads and writes
+/// happen in one transaction (or under one lock), so another call cannot land
+/// in between and none of its changes are seen without the others. Each
+/// method's documentation says which checks must happen inside it; a store
+/// that checks first and writes in a separate step lets a concurrent
+/// revocation, or a second use of a link, slip through.
 ///
 /// Uniqueness of logins, emails and Google subjects is the store's to keep:
 /// [`create_user`](Store::create_user) and
 /// [`update_user`](Store::update_user) report a taken login or email as a
 /// [`Conflict`], and any other violation is an error.
+///
+/// Deleting a user deletes everything that refers to them, as
+/// [`delete_user`](Store::delete_user) says; the store does that itself or
+/// through its database's cascades.
 pub trait Store: Send + Sync + 'static {
     /// The user with `id`.
     fn user(&self, id: UserId) -> impl Future<Output = Result<Option<User>>> + Send;
@@ -217,8 +284,12 @@ pub trait Store: Send + Sync + 'static {
     /// How many users there are.
     fn user_count(&self) -> impl Future<Output = Result<u64>> + Send;
 
-    /// Creates a pending user with no credential and [`Method::Password`].
-    /// The login and email are already validated and normalized.
+    /// Creates a pending user with no credential and [`Method::Password`],
+    /// assigning a new id. The login and email are already validated and
+    /// normalized.
+    ///
+    /// Atomically: returns the [`Conflict`], and creates nothing, when another
+    /// user has the login or the email.
     fn create_user(
         &self,
         new: &NewUser,
@@ -227,15 +298,18 @@ pub trait Store: Send + Sync + 'static {
 
     /// Applies `change` to the user, returning `None` if there is no such
     /// user. The change is already validated and normalized.
+    ///
+    /// Atomically: returns the [`Conflict`], and changes nothing, when
+    /// another user has the new login or email.
     fn update_user(
         &self,
         id: UserId,
         change: &UserChange,
     ) -> impl Future<Output = Result<Result<Option<User>, Conflict>>> + Send;
 
-    /// Deletes the user with their sessions and tokens, and the sessions in
-    /// which they impersonate someone ([`Session::impersonator`]). Returns
-    /// whether the user existed.
+    /// In one transaction: deletes the user with their sessions and tokens,
+    /// and the sessions in which they impersonate someone
+    /// ([`Session::impersonator`]). Returns whether the user existed.
     fn delete_user(&self, id: UserId) -> impl Future<Output = Result<bool>> + Send;
 
     /// In one transaction: sets the credential (setting
@@ -252,7 +326,9 @@ pub trait Store: Send + Sync + 'static {
     ) -> impl Future<Output = Result<bool>> + Send;
 
     /// Binds the Google subject `sub` to the user only if the user has none
-    /// or the same one. Returns whether it is bound.
+    /// or the same one, and no other user has `sub`, as one atomic check and
+    /// change. Returns whether `sub` is bound to the user afterwards: `false`
+    /// when there is no such user, or either is bound elsewhere.
     fn bind_google_sub(&self, id: UserId, sub: &str) -> impl Future<Output = Result<bool>> + Send;
 
     /// Sets the user's access. Returns whether the user existed.
@@ -269,8 +345,8 @@ pub trait Store: Send + Sync + 'static {
     /// Returns whether the user existed.
     fn revoke(&self, id: UserId, now: Timestamp) -> impl Future<Output = Result<bool>> + Send;
 
-    /// Inserts a session. May also delete sessions that expired by
-    /// `session.created_at`.
+    /// Inserts a session, whose id is new. May also delete sessions that
+    /// expired by `session.created_at`.
     fn create_session(&self, session: &Session) -> impl Future<Output = Result<()>> + Send;
 
     /// The session with `id`, expired or not.
@@ -289,8 +365,9 @@ pub trait Store: Send + Sync + 'static {
     /// Deletes every session that expired by `now`.
     fn delete_expired_sessions(&self, now: Timestamp) -> impl Future<Output = Result<()>> + Send;
 
-    /// In one transaction: inserts the token and uses up the user's other
-    /// unused tokens at `now`.
+    /// In one transaction: uses up the user's other unused tokens at `now`
+    /// and inserts the token, whose id is new, so a user has at most one live
+    /// link.
     fn create_token(
         &self,
         token: &Token,
@@ -312,8 +389,11 @@ pub trait Store: Send + Sync + 'static {
 
     /// In one transaction: marks the token used at `now` if it is still
     /// unused (otherwise returns `false` and changes nothing), sets the
-    /// token's user's credential as [`set_credential`](Store::set_credential)
-    /// does, deletes all of the user's sessions and creates `session`.
+    /// token's user's credential and marks them active as
+    /// [`set_credential`](Store::set_credential) does, whatever their access
+    /// (a registration link re-registers a revoked user), deletes all of the
+    /// user's sessions and creates `session`. Returns `false`, changing
+    /// nothing, when there is no such token or user.
     fn redeem_token(
         &self,
         token: &str,

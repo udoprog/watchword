@@ -126,14 +126,14 @@ without its default features, so the time zone databases it does not need for
 | `cloudflare` | `server` + the Cloudflare Access provider | aws-lc-rs, reqwest, serde_json |
 | `google` | `server` + the Google OAuth provider (`GoogleConfig`) | reqwest, serde_json, url, lru |
 | `axum08` | `server` + extractors and `routes()` for axum 0.8 | axum 0.8 |
-| `sqll015` | `server` + `SqllStore`, a `Store` over SQLite on a sqll 0.15 pool, its `SCHEMA`, `MIGRATIONS` and `check_schema`, and watchword-core's `sqll015`: the sqll column traits on `UserId` (an integer with the same bits), `Role`, `Access` and `Method` (their names) | sqll 0.15 (`derive`, `pool`, `typed`, `threadsafe`; no default features, the app picks `bundled`) |
+| `sqll015` | watchword-core's `sqll015`: the sqll column traits on `UserId` (an integer with the same bits), `Role`, `Access` and `Method` (their names), for an app's own `Store` over SQLite (2.3); no storage of its own | sqll 0.15 through watchword-core (`threadsafe`; the app picks `bundled`) |
 | `phrasebook02` | `std` + `watchword::phrasebook02` (watchword-core's): `L10N`, the components' messages as a phrasebook catalog, without yew, for native tools such as an l10n checker | phrasebook 0.2 (no features) |
 | `yew023` | `std` + `phrasebook02` + watchword-yew023: components, context, hook, HTTP client, and `L10N` re-exported | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.2 (`yew023`) |
 | `test-util` | `server` + for apps' tests: `Auth::test_user` and `Auth::test_session` (2.2), the store conformance suite as `store_suite!` (2.3); with `google` also `AuthBuilder::google_endpoints`, and with `google` and `axum08` `google::fake::FakeGoogle` (2.4) | nothing more |
 | `musliweb05` *(2.7)* | `alloc` + `musli02` + `watchword::musliweb05`: the auth endpoints and broadcast as musli-web 0.5 API types; with `axum08` also `musliweb05::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.5 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
 
 The modules are `watchword::{types, core, store, cloudflare, google, axum08,
-sqll015, musliweb05, phrasebook02, yew023}`, and the most-used names that need no versioned feature are
+musliweb05, phrasebook02, yew023}`, and the most-used names that need no versioned feature are
 re-exported at the root.
 
 ## 2. API
@@ -477,65 +477,33 @@ pub enum Credential { Password(String /* hash */), Google { sub: String, email: 
 
 Store failures are a `StoreError`, which boxes any error.
 
-The library ships `MemoryStore`, used by its own tests and the example app, and,
-behind `sqll015`, `SqllStore`. The crate's store conformance suite, the
-tests of `Auth`'s rules that depend on what a store keeps, runs against both.
-With `test-util` it is public as `watchword::store_suite!(expr)`, which
-defines one `#[test]` per test, each over a fresh store from `expr`
-(evaluated in the test's async context, so it may `.await`) on a
-current-thread tokio runtime of its own. An app runs it over its own `Store`,
-or over `SqllStore` on its own migrated schema, instead of re-testing
-watchword's sign-in and user-management behaviour; the functions it calls
-are hidden, and new tests arrive in minor releases.
+Every write method is atomic: its checks and writes happen in one transaction
+(or under one lock), so a concurrent call cannot land in between. The trait's
+docs say, method by method, which checks belong inside (a conflicting login or
+email, a revoked user, an unused link, a subject bound elsewhere).
 
-`SqllStore` works on a sqll `Pool`. It exports its statement collections,
-`watchword::sqll015::Read` and `watchword::sqll015::Write`. An app nests these
-in its own pool's collections with `#[sql(statements)]` and implements `AsMut`
-to reach them, so auth shares the app's single write connection;
-`SqllStore::new(pool)` then takes the app's `Arc<Pool<R, W>>`. A store over a
-pool of its own is `SqllStore<Read, Write>`. The pool prepares its statements
-when it opens, so the schema must be in place first. The schema:
+Each app implements `Store` itself, over its own tables, with its own
+migrations, and maps its rows into `User`, `Session` and `Token` (decision
+14). The library ships no tables, schema or migrations; it ships
+`MemoryStore`, used by its own tests and the example app and the reference for
+what each method does, and `examples/sqll-store`, a complete store over SQLite
+with sqll 0.15 for an app to start from: a `Pool` whose statement collections
+are the app's own (so the app's statements share its one write connection),
+set up with `sqll::Migrations` in the pool's write setup, every write in the
+write guard's transaction, and an `accounts` table with an app column
+(`display_name`, no default) that the store fills itself. The `sqll015`
+feature gives such a store watchword-core's sqll column traits on `UserId`,
+`Role`, `Access` and `Method`.
 
-| Table | Columns |
-|---|---|
-| `users` | `id` INTEGER PRIMARY KEY, `login` TEXT UNIQUE, `email` TEXT UNIQUE, `role` TEXT, `access` TEXT, `method` TEXT, `password_hash` TEXT, `google_sub` TEXT UNIQUE, `created_at` INTEGER ms |
-| `sessions` | `id` TEXT PRIMARY KEY, `user_id` → users, `impersonator_id` → users (NULL unless impersonated), `created_at` and `expires_at` INTEGER ms |
-| `auth_tokens` | `id` TEXT PRIMARY KEY, `user_id` → users, `kind` TEXT (`registration`/`reset`), `expires_at` and `used_at` INTEGER ms |
-| `config` | `key` TEXT PRIMARY KEY, `value` TEXT |
-
-`watchword::sqll015::SCHEMA` creates the tables in a new database. An app keeps
-its own columns on `users` (with defaults, since the store inserts only its
-own) and its own tables referencing `users (id)`; the store reads and writes
-only its own columns. An app's SQL may read the store's columns (they change
-only through a new migration), binding and reading `UserId`, `Role`, `Access`
-and `Method` directly, but changes them only through the `Store`. The store deletes a user's sessions and links itself
-rather than relying on `ON DELETE CASCADE`, since an app's connections may not
-enable foreign keys.
-
-The tables ship in two forms that end up the same, so apps stop copying SQL
-out of watchword by hand:
-
-- `watchword::sqll015::MIGRATIONS: &[(&str, &str)]`, ordered `(id, sql)`
-  pairs: `watchword-0001-tables` (the tables as first released, frozen), then
-  each change since (`watchword-0002-sessions-impersonator`, an `ALTER TABLE`
-  adding `sessions.impersonator_id`). Ids are stable and prefixed so they sit
-  in an app's own migrations table; a release only appends. This is the shape
-  sqll's `Migrations` runner takes (on sqll main, after 0.14.7), so watchword
-  exports plain data and depends on no runner: an app hands the pairs to a
-  runner, or splices them into its own list, leaving out the ids its own
-  migrations already did (a copied base schema did `watchword-0001-tables`).
-  The SQL lives in `src/sqll015/migrations/`.
-- `SCHEMA`, what all migrations add up to, for creating a new database in one
-  step (a runner's fresh schema). Rerunning it changes nothing and adds no
-  columns, so it does not upgrade. A test checks that `SCHEMA` and
-  `MIGRATIONS` produce the same tables, indexes and foreign keys.
-
-`watchword::sqll015::check_schema(&Connection)` checks that every table and
-column the store uses exists, and fails with a `sqll015::Error` naming each
-one missing and the migration that adds it, so an app run on a stale database
-fails at startup (at the end of its pool's write setup) with a readable error
-rather than when a statement fails to prepare. It checks names only, and
-ignores the app's own tables and columns.
+The crate's store conformance suite, the tests of `Auth`'s rules that depend
+on what a store keeps, runs against `MemoryStore` and the example store. With
+`test-util` it is public as `watchword::store_suite!(expr)`, which defines one
+`#[test]` per test, each over a fresh store from `expr` (evaluated in the
+test's async context, so it may `.await`) on a current-thread tokio runtime of
+its own. An app runs it over its own `Store` instead of re-testing watchword's
+sign-in and user-management behaviour; the functions it calls are hidden, and
+new tests arrive in minor releases. The example is a cargo example with
+`test = true`, so `cargo test --all-targets` runs the suite over it.
 
 ### 2.4 Sign-in methods
 
@@ -1301,13 +1269,18 @@ once the release is on crates.io.
     endpoints, and the components need no app-supplied client trait because
     musli-web's handle is untyped. The HTTP routes stay, both for apps without
     musli-web and as the fallback while a socket reconnects.
-14. **Storage: the `Store` trait is the API, and `SqllStore` ships too.** An
-    app on another database implements `Store`; an app on sqll takes
-    `SqllStore` over the documented schema instead of writing the same few
-    hundred lines of queries again, migrating its auth tables to that schema
-    once.
-15. **Timestamps** in the library are `jiff::Timestamp`. `SqllStore` stores
-    them as INTEGER milliseconds since the Unix epoch.
+14. **Storage: the `Store` trait is the API, and each app writes its own.**
+    User data has a different shape in each app's database: columns without
+    defaults, values known only at request time, extra tables. A shipped store
+    over a fixed schema, even with overridable queries, cannot fill what
+    watchword does not pass, so the store is the app's, over its own schema and
+    migrations. watchword makes writing one easy instead: the trait's docs say
+    what each method must do atomically, `examples/sqll-store` is a complete
+    store to start from, and `store_suite!` checks the result. (Through 0.3,
+    `sqll015` shipped `SqllStore` with a fixed schema and migrations.)
+15. **Timestamps** in the library are `jiff::Timestamp`. A store keeps them
+    with at least millisecond precision; the example stores them as INTEGER
+    milliseconds since the Unix epoch.
 16. **The socket layer is additive, and is built broadcasts first.** Keeping
     HTTP for everything costs the apps nothing today, since the components
     already make every request themselves. What it leaves to each app is

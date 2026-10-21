@@ -28,7 +28,7 @@ any feature but `axum08` and `sqll015`. Only `std` is on by default.
 | `musli02` | musli 0.2 `Encode`/`Decode` on the types, so an app can embed them in its own WebSocket messages |
 | `musliweb05` | `alloc` + `musli02` + [`musliweb05`]: the account, user-management and Cloudflare Access settings endpoints and `AuthBroadcast` as musli-web 0.5 API types, with their ids pinned in 32000–32255 |
 | `axum08` | `std` + axum 0.8 `IntoResponse` for [`AuthError`], answering with its JSON body and status; watchword's `axum08` feature turns it on (not for wasm) |
-| `sqll015` | `std` + sqll 0.15 `BindValue`, `Bind` and `FromColumn` for `UserId` (an integer with the same bits, as watchword's `SqllStore` stores it) and for `Role`, `Access` and `Method` (their names as text), so an app's own statements bind and read them directly; watchword's `sqll015` feature turns it on. It takes sqll with `threadsafe` only; the app names `bundled` or links its own SQLite (not for wasm) |
+| `sqll015` | `std` + sqll 0.15 `BindValue`, `Bind` and `FromColumn` for `UserId` (an integer with the same bits) and for `Role`, `Access` and `Method` (their names as text), so an app's own statements bind and read them directly; watchword's `sqll015` feature turns it on. It takes sqll with `threadsafe` only; the app names `bundled` or links its own SQLite (not for wasm) |
 | `phrasebook02` | `std` + [`phrasebook02`]: `L10N`, watchword's messages (the text of its Yew components) as a [phrasebook] 0.1 catalog, for a tool such as an app's localization checker that needs them without building a frontend; watchword-yew023 re-exports it, and watchword's `phrasebook02` and `yew023` features turn it on |
 
 [`AuthError`]: https://docs.rs/watchword-core/latest/watchword_core/enum.AuthError.html

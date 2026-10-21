@@ -8,9 +8,9 @@ use crate::{Access, Method, Role, UserId};
 #[cfg(test)]
 mod tests;
 
-/// Binds as an SQLite integer with the same bits, as watchword's `SqllStore`
-/// stores ids: every id binds, and one beyond `i64::MAX` binds as a negative
-/// integer that no stored user has.
+/// Binds as an SQLite integer with the same bits, so an `INTEGER PRIMARY KEY`
+/// holds every id a store assigns: every id binds, and one beyond `i64::MAX`
+/// binds as a negative integer that no stored user has.
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "sqll015")))]
 impl BindValue for UserId {
     #[inline]

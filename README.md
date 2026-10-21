@@ -26,12 +26,12 @@ nor `alloc`, it has only the plain types (`UserId`, `Role`, `Access`,
 rest of [`types`]. The server layers and `yew023` imply `std`.
 
 A dependency that is not yet 1.0 and appears in the API is named after its
-version: its feature and module are `axum08` for axum 0.8, `sqll015` for
-sqll 0.15, `musli02` for musli 0.2, `musliweb05` for musli-web 0.5,
-`phrasebook02` for phrasebook 0.2 and `yew023` for yew 0.23. A later
-version is added beside it, so a watchword upgrade never forces an app onto
-a new axum, sqll, musli, musli-web, phrasebook or yew, and an app moves when
-it chooses.
+version: its feature (and module, if it has one) is `axum08` for axum
+0.8, `sqll015` for sqll 0.15, `musli02` for musli 0.2, `musliweb05` for
+musli-web 0.5, `phrasebook02` for phrasebook 0.2 and `yew023` for yew
+0.23. A later version is added beside it, so a watchword upgrade never
+forces an app onto a new axum, sqll, musli, musli-web, phrasebook or yew,
+and an app moves when it chooses.
 
 | Feature | Module | What it provides |
 |---|---|---|
@@ -44,8 +44,8 @@ it chooses.
 | `cloudflare` | [`cloudflare`] | Cloudflare Access JWT verification with a pluggable `KeyFetcher`; `Auth::cloudflare` and `Auth::set_cloudflare`, which keep the settings in the store; with `axum08`, admin routes for them (implies `server`) |
 | `google` | [`google`] | Google OAuth: `GoogleConfig::new` for `AuthBuilder::google`; with `axum08`, `routes()` serves its start, registration, account-switch and callback routes (implies `server`) |
 | `axum08` | [`axum08`] | for axum 0.8: the `SignedIn`, `Admin`, `MaybeSignedIn` and `LiveSession` extractors and `routes()` for the `/api/auth` JSON routes, plus the Cloudflare and Google routes when those features are on (implies `server`) |
-| `sqll015` | [`sqll015`] | `SqllStore`, a `Store` over SQLite on a sqll 0.15 pool (its own, or nested in the app's), its `SCHEMA` for a new database, its ordered `MIGRATIONS` (the first tables and every upgrade since) for an app's migration runner, `check_schema` to fail at startup on missing tables or columns, and watchword-core's `sqll015` (sqll's bind and column traits on `UserId`, `Role`, `Access` and `Method`) (implies `server`). It takes sqll with `derive`, `pool`, `typed` and `threadsafe` only; the app names `bundled` or links its own SQLite |
-| `test-util` | [`store_suite!`], [`google::fake`] | for an app's tests: `Auth::test_user` and `Auth::test_session`, an active user and a session without signing in; `store_suite!`, watchword's store conformance suite, to run over the app's own `Store` or migrated `SqllStore`; with `google`, `AuthBuilder::google_endpoints`, and with `google` and `axum08` also `FakeGoogle`, a local fake Google to sign in through offline (implies `server`) |
+| `sqll015` | | sqll 0.15 `BindValue`, `Bind` and `FromColumn` on `UserId` (an integer with the same bits), `Role`, `Access` and `Method` (their names), from the [watchword-core] crate, for an app's own `Store` over SQLite such as [`examples/sqll-store`]; no storage of its own |
+| `test-util` | [`store_suite!`], [`google::fake`] | for an app's tests: `Auth::test_user` and `Auth::test_session`, an active user and a session without signing in; `store_suite!`, watchword's store conformance suite, to run over the app's own `Store`; with `google`, `AuthBuilder::google_endpoints`, and with `google` and `axum08` also `FakeGoogle`, a local fake Google to sign in through offline (implies `server`) |
 | `phrasebook02` | [`phrasebook02`] | `L10N`, watchword's messages (the text of the `yew023` components) as a [phrasebook] 0.1 catalog, for a native tool such as an app's localization checker that needs them without building yew, from the [watchword-core] crate (implies `std`) |
 | `yew023` | [`yew023`] | for yew 0.23: `AuthProvider`, `use_auth`, `SignIn`, `Register`, `AccountPanel`, `UserMenu`, `AdminUsers`, `AdminCloudflare`, `CloudflareSettings`, the `http` client and `L10N`, the components' messages as a [phrasebook] catalog, from the [watchword-yew023] crate (implies `std` and `phrasebook02`) |
 
@@ -79,10 +79,30 @@ watchword = { version = "0.3", features = ["yew023", "musliweb05"] }
 ```
 
 Take only the sign-in methods the app offers: `cloudflare` and `google`
-each add one, and password sign-in is always there. `sqll015` adds a store
-over SQLite; without it the app implements [`Store`] over its own database.
-`test-util`, under `dev-dependencies`, gives the app's tests users and
-sessions without going through sign-in, and the store conformance suite.
+each add one, and password sign-in is always there. `test-util`, under
+`dev-dependencies`, gives the app's tests users and sessions without going
+through sign-in, and the store conformance suite.
+
+<br>
+
+## Storage
+
+watchword keeps users, sessions, registration links and settings through
+the [`Store`] trait, which each app implements over its own database, with
+its own tables and migrations: the shape of user data differs between
+apps, and only the app knows how to fill its own columns. watchword ships
+no tables or migrations, only `MemoryStore`, which keeps everything in
+memory, for tests and trying things out.
+
+Start from [`examples/sqll-store`], a complete `Store` over SQLite with
+sqll 0.15 (taking the `sqll015` feature), and change its tables to the
+app's. The [`Store`] docs say what each method must do atomically, and the
+store conformance suite, [`store_suite!`] (feature `test-util`), checks
+the result from the app's tests:
+
+```sh
+cargo test --example sqll-store --features test-util,sqll015
+```
 
 The examples here refer to the crate as `watchword`. An app may give the
 dependency a shorter key, such as `auth = { package = "watchword", ... }`,
@@ -128,11 +148,11 @@ downloading it unless it is installed or already in trunk's cache.
 [`core`]: https://docs.rs/watchword/latest/watchword/core/index.html
 [`docs/design.md`]: https://github.com/udoprog/watchword/blob/main/docs/design.md
 [`examples/app`]: https://github.com/udoprog/watchword/tree/main/examples/app
+[`examples/sqll-store`]: https://github.com/udoprog/watchword/tree/main/examples/sqll-store
 [`google::fake`]: https://docs.rs/watchword/latest/watchword/google/fake/index.html
 [`google`]: https://docs.rs/watchword/latest/watchword/google/index.html
 [`musliweb05`]: https://docs.rs/watchword/latest/watchword/musliweb05/index.html
 [`phrasebook02`]: https://docs.rs/watchword/latest/watchword/phrasebook02/index.html
-[`sqll015`]: https://docs.rs/watchword/latest/watchword/sqll015/index.html
 [`store_suite!`]: https://docs.rs/watchword/latest/watchword/macro.store_suite.html
 [`store`]: https://docs.rs/watchword/latest/watchword/store/index.html
 [`Store`]: https://docs.rs/watchword/latest/watchword/store/trait.Store.html

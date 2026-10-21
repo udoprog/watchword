@@ -36,7 +36,7 @@ server = ["std", "dep:base64", "dep:bcrypt", "dep:cookie", "dep:hmac", "dep:http
 cloudflare = ["server", "dep:aws-lc-rs", "dep:reqwest", "dep:serde_json"]
 google = ["server", "dep:reqwest", "dep:serde_json", "dep:url", "dep:lru", "axum08?/query"]
 axum08 = ["server", "dep:axum08", "watchword-core/axum08", "musli-web05?/ws"]
-sqll015 = ["server", "dep:sqll015", "watchword-core/sqll015"]
+sqll015 = ["watchword-core/sqll015"]
 test-util = ["server", "axum08?/http1"]
 phrasebook02 = ["std", "watchword-core/phrasebook02"]
 yew023 = ["std", "phrasebook02", "dep:watchword-yew023"]
@@ -75,11 +75,6 @@ axum08 = { package = "axum", version = "0.8.9", default-features = false, featur
 # musliweb05; with axum08 its `ws` server side
 musli-web05 = { package = "musli-web", version = "0.5.0", default-features = false, optional = true }
 
-# sqll015; only what `SqllStore` uses. `threadsafe` because pooled statements
-# are converted to `SendStatement`. The app picks the linking (`bundled` or a
-# system SQLite) and anything else (`std`, `alloc`) it needs itself.
-sqll015 = { package = "sqll", version = "0.15.0", default-features = false, features = ["derive", "pool", "typed", "threadsafe"], optional = true }
-
 # yew023
 watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.3.0", default-features = false, optional = true }
 
@@ -91,9 +86,18 @@ axum08 = { package = "axum", version = "0.8.9", default-features = false, featur
 musli-web05 = { package = "musli-web", version = "0.5.0", default-features = false, features = ["axum08", "tungstenite030"] }
 musli = "0.2.0"
 serde_json = "1.0.151"
-sqll015 = { package = "sqll", version = "0.15.0", features = ["bundled"] }
+# The sqll-store example, an app's own `Store` over SQLite.
+sqll = { version = "0.15.0", features = ["bundled"] }
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }
+
+# An app's own `Store` over SQLite with sqll 0.15, run through the store
+# conformance suite by `cargo test --all-targets`.
+[[example]]
+name = "sqll-store"
+path = "examples/sqll-store/main.rs"
+required-features = ["test-util", "sqll015"]
+test = true
 
 # Unreleased versions of these crates, until they are published.
 [patch.crates-io]

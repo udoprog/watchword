@@ -51,9 +51,11 @@ jobs:
     - run: cargo clippy -p watchword-core --all-targets --no-default-features --features musli02 -- -D warnings
     - run: cargo clippy -p watchword-core --all-targets --no-default-features --features musliweb05 -- -D warnings
     - run: cargo clippy -p watchword-core --all-targets --no-default-features --features axum08 -- -D warnings
+    - run: cargo clippy -p watchword-core --all-targets --no-default-features --features sqll015 -- -D warnings
     - run: cargo clippy -p watchword-core --all-targets --no-default-features --features phrasebook02 -- -D warnings
     - run: cargo check -p watchword-core --no-default-features
     - run: cargo check -p watchword-core --no-default-features --features alloc
+    - run: cargo check -p watchword-core --no-default-features --features sqll015
     - run: cargo check --no-default-features --features alloc
     - run: cargo clippy -p watchword-yew023 --all-targets -- -D warnings
     - run: cargo clippy -p watchword-yew023 --all-targets --features musliweb05 -- -D warnings

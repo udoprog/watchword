@@ -49,9 +49,10 @@ where
 /// expression is evaluated inside the test's async context, so it may
 /// `.await`, and the store must be `Clone`, its clones sharing their records.
 ///
-/// This is how watchword tests `MemoryStore` and `SqllStore`, and how an app
-/// tests its own `Store`, or `SqllStore` over its own migrated schema, rather
-/// than re-testing watchword's sign-in and user-management rules itself.
+/// This is how watchword tests `MemoryStore` and its `examples/sqll-store`, and
+/// how an app checks its own `Store`, rather than re-testing watchword's
+/// sign-in and user-management rules itself. A store that passes it is one
+/// `Auth` works with.
 /// Each test runs on a current-thread tokio runtime of its own, so the app
 /// needs no tokio of its own for it. New tests are added in minor releases.
 ///
@@ -64,8 +65,8 @@ where
 /// mod store_tests {
 ///     use watchword::MemoryStore;
 ///
-///     // An app passes its own store, such as
-///     // `SqllStore::new(open_scratch_pool().await?)`.
+///     // An app passes its own store over a fresh, empty database, such as
+///     // `AppStore::open_scratch().await?`.
 ///     watchword::store_suite!(MemoryStore::new());
 /// }
 /// # fn main() {}
