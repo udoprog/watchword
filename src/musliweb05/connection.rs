@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use musli_web05::api::EncodeBody;
+use musli_web05::api::DecodeBody;
 use musli_web05::ws::{self, Incoming, Outgoing};
 
 use super::{
@@ -12,12 +12,9 @@ use crate::Auth;
 use crate::axum08::SignedIn;
 #[cfg(doc)]
 use crate::core::Error;
-use crate::core::{AuthEvent, Result};
+use crate::core::{AuthEvent, Caller, Result};
 use crate::store::{Session, User};
-use crate::types::{
-    Access, AuthError, CloudflareConfig, CreatedUser, Invalid, NewUser, PasswordChange, UserChange,
-    UserId,
-};
+use crate::types::{Access, AuthError, AuthRequest, UserId};
 
 /// watchword's side of one musli-web WebSocket, signed in with one session.
 ///
@@ -303,10 +300,11 @@ impl Connection {
     /// [`Auth::session`], as the HTTP routes' extractors do, so a session
     /// that has ended since the socket opened is refused with
     /// [`AuthError::Unauthorized`], and a role change or revocation applies
-    /// to the next request. The request then runs the same [`Auth`]
-    /// operation as its HTTP route, with that user as the actor: the admin
-    /// endpoints refuse with [`AuthError::Forbidden`] unless the user is an
-    /// admin now, and the operations enforce the rest of their rules
+    /// to the next request. The request then runs through
+    /// [`Auth::dispatch`], as its HTTP route does, with that user as the
+    /// actor: the admin endpoints refuse with [`AuthError::Forbidden`]
+    /// unless the user is an admin now, and the operations enforce the rest
+    /// of their rules
     /// themselves. Without the `cloudflare` feature, the Cloudflare settings
     /// endpoints refuse an admin with [`AuthError::NotFound`].
     ///
@@ -344,213 +342,18 @@ impl Connection {
         incoming: &mut Incoming<'_>,
         outgoing: &mut Outgoing<'_>,
     ) -> Result<bool> {
-        match request {
-            Request::Me => {
-                let Some(MeRequest) = incoming.read() else {
-                    return Ok(false);
-                };
+        let Some(request) = decode(request, incoming) else {
+            return Ok(false);
+        };
 
-                let response = async {
-                    let (user, session) = self.signed_in().await?;
-                    self.auth.session_info(&user, &session).await
-                };
+        // Only an HTTP response can carry the cookie, so watchword's list
+        // has no endpoint for a request that changes it.
+        debug_assert_eq!(request.cookie(), None);
 
-                respond(outgoing, response.await)
-            }
-            Request::UpdateAccount => {
-                let Some(change) = incoming.read::<UserChange>() else {
-                    return Ok(false);
-                };
-
-                let response = async {
-                    let (user, session) = self.signed_in().await?;
-
-                    if change.role.is_some() {
-                        return Err(AuthError::Invalid(Invalid::RoleNotChangeable).into());
-                    }
-
-                    let user = self
-                        .auth
-                        .update_user(&user, &session, user.id, &change)
-                        .await?;
-                    self.auth.session_info(&user, &session).await
-                };
-
-                respond(outgoing, response.await)
-            }
-            Request::ChangePassword => {
-                let Some(change) = incoming.read::<PasswordChange>() else {
-                    return Ok(false);
-                };
-
-                let response = async {
-                    let (user, session) = self.signed_in().await?;
-                    let user = self.auth.change_password(&user, &session, &change).await?;
-                    self.auth.session_info(&user, &session).await
-                };
-
-                respond(outgoing, response.await)
-            }
-            Request::Users => {
-                let Some(UsersRequest) = incoming.read() else {
-                    return Ok(false);
-                };
-
-                let response = async {
-                    let admin = self.require_admin().await?;
-                    self.auth.users(&admin).await
-                };
-
-                respond(outgoing, response.await)
-            }
-            Request::CreateUser => {
-                let Some(new) = incoming.read::<NewUser>() else {
-                    return Ok(false);
-                };
-
-                let response = async {
-                    let (admin, session) = self.admin_session().await?;
-                    let (entry, link) = self.auth.create_user(&admin, &session, &new).await?;
-                    Ok(CreatedUser { entry, link })
-                };
-
-                respond(outgoing, response.await)
-            }
-            Request::UpdateUser => {
-                let Some(UserUpdate { id, change }) = incoming.read() else {
-                    return Ok(false);
-                };
-
-                let response = async {
-                    let (admin, session) = self.admin_session().await?;
-                    let user = self.auth.update_user(&admin, &session, id, &change).await?;
-                    Ok(user.info())
-                };
-
-                respond(outgoing, response.await)
-            }
-            Request::DeleteUser => {
-                let Some(DeleteUserRequest { id }) = incoming.read() else {
-                    return Ok(false);
-                };
-
-                let response = async {
-                    let (admin, session) = self.admin_session().await?;
-                    self.auth.delete_user(&admin, &session, id).await
-                };
-
-                respond(outgoing, response.await)
-            }
-            Request::IssueLink => {
-                let Some(IssueLinkRequest { id }) = incoming.read() else {
-                    return Ok(false);
-                };
-
-                let response = async {
-                    let (admin, session) = self.admin_session().await?;
-                    self.auth.issue_link(&admin, &session, id).await
-                };
-
-                respond(outgoing, response.await)
-            }
-            Request::RevokeLink => {
-                let Some(RevokeLinkRequest { id }) = incoming.read() else {
-                    return Ok(false);
-                };
-
-                let response = async {
-                    let (admin, session) = self.admin_session().await?;
-                    self.auth.revoke_link(&admin, &session, id).await
-                };
-
-                respond(outgoing, response.await)
-            }
-            Request::SignOutUser => {
-                let Some(SignOutUserRequest { id }) = incoming.read() else {
-                    return Ok(false);
-                };
-
-                let response = async {
-                    let (admin, session) = self.admin_session().await?;
-                    self.auth.sign_out_everywhere(&admin, &session, id).await
-                };
-
-                respond(outgoing, response.await)
-            }
-            Request::RevokeAccess => {
-                let Some(RevokeAccessRequest { id }) = incoming.read() else {
-                    return Ok(false);
-                };
-
-                let response = async {
-                    let (admin, session) = self.admin_session().await?;
-                    let user = self.auth.revoke_access(&admin, &session, id).await?;
-                    Ok(user.info())
-                };
-
-                respond(outgoing, response.await)
-            }
-            Request::Cloudflare => {
-                let Some(CloudflareRequest) = incoming.read() else {
-                    return Ok(false);
-                };
-
-                let response = async {
-                    self.require_admin().await?;
-                    self.cloudflare().await
-                };
-
-                respond(outgoing, response.await)
-            }
-            Request::SetCloudflare => {
-                let Some(config) = incoming.read::<CloudflareConfig>() else {
-                    return Ok(false);
-                };
-
-                let response = async {
-                    let (admin, session) = self.admin_session().await?;
-                    self.set_cloudflare(&admin, &session, config).await
-                };
-
-                respond(outgoing, response.await)
-            }
-            Request::Unknown(_) => Ok(false),
-        }
-    }
-
-    /// The Cloudflare Access settings, or their default when there are
-    /// none, as `GET /api/auth/cloudflare` answers.
-    #[cfg(feature = "cloudflare")]
-    async fn cloudflare(&self) -> Result<CloudflareConfig> {
-        Ok(self.auth.cloudflare().await?.unwrap_or_default())
-    }
-
-    /// Without the `cloudflare` feature there are no settings, as there is
-    /// no route for them.
-    #[cfg(not(feature = "cloudflare"))]
-    async fn cloudflare(&self) -> Result<CloudflareConfig> {
-        Err(AuthError::NotFound.into())
-    }
-
-    /// Stores and applies the settings, as `PUT /api/auth/cloudflare` does.
-    #[cfg(feature = "cloudflare")]
-    async fn set_cloudflare(
-        &self,
-        admin: &User,
-        session: &Session,
-        config: CloudflareConfig,
-    ) -> Result<CloudflareConfig> {
-        self.auth.set_cloudflare(admin, session, config).await
-    }
-
-    #[cfg(not(feature = "cloudflare"))]
-    async fn set_cloudflare(
-        &self,
-        _: &User,
-        _: &Session,
-        _: CloudflareConfig,
-    ) -> Result<CloudflareConfig> {
-        Err(AuthError::NotFound.into())
+        let caller = Caller::new().session(self.session_id());
+        let dispatched = self.auth.dispatch(&caller, request).await?;
+        outgoing.write(dispatched.response);
+        Ok(true)
     }
 
     /// The id of the user this connection signed in as, as its upgrade
@@ -607,14 +410,72 @@ impl Connection {
     }
 }
 
-/// Writes an operation's value as the endpoint's response, passing a
-/// refusal or an internal failure on as the request's error.
-fn respond<T>(outgoing: &mut Outgoing<'_>, result: Result<T>) -> Result<bool>
-where
-    T: EncodeBody,
-{
-    outgoing.write(result?);
-    Ok(true)
+/// Where [`decode`] reads a request's body from: musli-web's [`Incoming`],
+/// or a test's stand-in.
+pub(super) trait ReadBody {
+    /// The body as a `T`, or `None` when it does not decode as one.
+    fn read<T>(&mut self) -> Option<T>
+    where
+        T: for<'de> DecodeBody<'de> + 'static;
+}
+
+impl ReadBody for Incoming<'_> {
+    fn read<T>(&mut self) -> Option<T>
+    where
+        T: for<'de> DecodeBody<'de> + 'static,
+    {
+        Incoming::read(self)
+    }
+}
+
+/// The [`AuthRequest`] of a request of watchword's list, or `None` when its
+/// body does not decode or the id is not one of the list's endpoints.
+pub(super) fn decode(request: Request, body: &mut impl ReadBody) -> Option<AuthRequest> {
+    let request = match request {
+        Request::Me => {
+            let MeRequest = body.read()?;
+            AuthRequest::Me
+        }
+        Request::UpdateAccount => AuthRequest::UpdateAccount(body.read()?),
+        Request::ChangePassword => AuthRequest::ChangePassword(body.read()?),
+        Request::Users => {
+            let UsersRequest = body.read()?;
+            AuthRequest::Users
+        }
+        Request::CreateUser => AuthRequest::CreateUser(body.read()?),
+        Request::UpdateUser => {
+            let UserUpdate { id, change } = body.read()?;
+            AuthRequest::UpdateUser { id, change }
+        }
+        Request::DeleteUser => {
+            let DeleteUserRequest { id } = body.read()?;
+            AuthRequest::DeleteUser { id }
+        }
+        Request::IssueLink => {
+            let IssueLinkRequest { id } = body.read()?;
+            AuthRequest::IssueLink { id }
+        }
+        Request::RevokeLink => {
+            let RevokeLinkRequest { id } = body.read()?;
+            AuthRequest::RevokeLink { id }
+        }
+        Request::SignOutUser => {
+            let SignOutUserRequest { id } = body.read()?;
+            AuthRequest::SignOutUser { id }
+        }
+        Request::RevokeAccess => {
+            let RevokeAccessRequest { id } = body.read()?;
+            AuthRequest::RevokeAccess { id }
+        }
+        Request::Cloudflare => {
+            let CloudflareRequest = body.read()?;
+            AuthRequest::Cloudflare
+        }
+        Request::SetCloudflare => AuthRequest::SetCloudflare(body.read()?),
+        Request::Unknown(_) => return None,
+    };
+
+    Some(request)
 }
 
 /// watchword's endpoints, for an app that combines its own handler with this

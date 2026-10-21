@@ -28,7 +28,8 @@ musli-web-macros):
 
 - **watchword-core**: the types of section 2.1 (`UserId`, `Role`, `Access`,
   `Method`, the wire types, `AuthError`, `validate_password`,
-  `normalize_email`). Safe for wasm32, and `no_std`: with neither `std` (on
+  `normalize_email`, and the `AuthRequest`/`AuthResponse` enums of 2.2's
+  dispatch). Safe for wasm32, and `no_std`: with neither `std` (on
   by default) nor `alloc` it has only the plain types (`UserId`, `Role`,
   `Access`, `Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN`), and
   `alloc` adds those holding strings. Its `musli02` feature adds musli's
@@ -403,6 +404,48 @@ The sign-in throttle limits failed password sign-ins per client address (30
 per 15 minutes; IPv6 grouped by /64) and per login (10 per 15 minutes). The
 client address comes from `CF-Connecting-IP` or `X-Forwarded-For` only when the
 peer is a trusted proxy.
+
+#### One dispatch for every transport
+
+Every operation a client can request is a variant of one enum,
+`watchword_core::AuthRequest` (feature `alloc`), answered by an
+`AuthResponse` (one variant per type of answer, `Done` for none), and run by
+one method:
+
+```rust
+let caller = Caller::new()                 // signed out, no headers, no address
+    .signed_in(&user, &session)            // already read for this request (the HTTP extractors)
+    .session(&session_id)                  // or: read through `Auth::session` when needed (a socket)
+    .headers(&headers)                     // the cookie, when neither is given; Cloudflare Access credentials
+    .address(auth.client_address(peer, &headers));   // what `Login` is throttled by; it needs one
+let Dispatched { response, cookie, .. } = auth.dispatch(&caller, AuthRequest::Me).await?;
+// cookie: Option<SessionCookie>, `Set(Session)` or `Clear`, for the requests that change it
+```
+
+`dispatch` makes the checks (signed in, admin now) and calls the operation,
+so each operation is written once. The HTTP routes and the musli-web
+`Connection` are adapters around it: a route extracts as before
+(`SignedIn`/`Admin` first, then the path and the body, so the order of
+refusals is unchanged), builds the `AuthRequest`, and answers with the
+response (`AuthResponse: IntoResponse` in watchword-core's `axum08`) and the
+cookie `dispatch` asked for; `Connection::handle` decodes the endpoint's
+body into the `AuthRequest`, dispatches it with the upgrade's session id,
+and writes the response, which encodes as the value it carries (watchword-core's
+`musliweb05`), the endpoint's own response type. Neither the HTTP paths and
+bodies nor the musli-web endpoints and their types changed: the enum is not a
+wire format and has no serde or musli derives of its own.
+
+`AuthRequest::cookie()` says which requests set (`Login`, `CloudflareSignIn`,
+`Register`), replace (`Impersonate`, `StopImpersonating`) or clear
+(`Logout`) the session cookie. It is one exhaustive `match` in the type, not
+a list in each adapter: `dispatch` answers exactly those with a
+`SessionCookie` (asserted in debug builds and tested), the HTTP adapter
+applies it, and watchword's musli-web list has no endpoint for any of them,
+which a test checks along with HTTP/socket parity: every endpoint of the
+list decodes into an `AuthRequest` with no cookie change, and the HTTP route
+for that request exists. A frontend transport uses the same method to send
+those requests over HTTP. The Google routes stay outside the enum: they are
+browser navigations and redirects, not requests a client sends. Decision 29.
 
 ### 2.3 Storage (`server`)
 
@@ -1009,10 +1052,11 @@ event = events.recv() => {
   same arm before; a loop that needs more (the guard's `changed`, say) keeps
   it by hand with `update` and `lagged`.
 - `handle` takes a request of watchword's list. It decodes
-  the body, re-reads the session and its user through `Auth::session` (as
-  `SignedIn` does on every HTTP request), answers `Unauthorized` when the
-  session has ended, and calls the same `Auth` operation the HTTP route calls,
-  with the fresh user as the actor. Admin rights, never-on-oneself, the
+  the body into an `AuthRequest` and runs it through `Auth::dispatch`, as
+  the HTTP route does, which re-reads the session and its user through
+  `Auth::session` (as `SignedIn` does on every HTTP request), answers
+  `Unauthorized` when the session has ended, and calls the operation with
+  the fresh user as the actor. Admin rights, never-on-oneself, the
   impersonation rules and the rest of section 3 are enforced inside those
   operations, so an app cannot route a request around them and a role change
   applies to the next request on an open socket.
@@ -1502,3 +1546,29 @@ once the release is on crates.io.
     hidden functions rather than as named public tests, so it can grow
     without each test becoming API; it runs each test on its own runtime so
     an app needs no tokio `macros` for it.
+29. **One internal request enum, run by `Auth::dispatch`, public in
+    watchword-core.** The axum routes and the socket `Connection` each
+    mapped their requests onto `Auth` methods, with the checks (signed in,
+    admin, the role refusal of `PATCH /account`) written twice, so the two
+    transports agreed only while someone kept them in step. Now each
+    operation is a variant of `AuthRequest`, run once by `dispatch`, and the
+    transports are adapters (2.2). The enum is public, in watchword-core
+    beside the wire types, because a frontend needs it: watchword-yew023's
+    injectable transport carries an `AuthRequest` and returns its
+    `AuthResponse`, and a test transport can call `Auth::dispatch` directly.
+    Both enums are `#[non_exhaustive]`, so a new operation is a new variant
+    without breaking an app's transport, which matches with a wildcard; the
+    price is that watchword's own `dispatch`, in another crate, needs a
+    wildcard arm too (refusing with `NotFound`), which the exact `=` pin
+    between the crates keeps unreachable. They are not a wire format: no
+    serde or musli derives, so the HTTP paths and the musli-web endpoints
+    stay as they are and can keep their own shapes; an
+    `AuthResponse` only encodes (for musli-web) as the value it carries.
+    Which requests touch the session cookie is a method on the request
+    (`cookie()`), one exhaustive match in the crate that defines the enum,
+    rather than lists in each adapter and client. `Caller`, `Dispatched` and
+    `SessionCookie` are public with `dispatch`, since a test transport needs
+    them; `Dispatched` is `#[non_exhaustive]` for the same reason as the
+    enums. `Login` without the caller's address is refused (and logged)
+    rather than throttled under a shared placeholder; the HTTP route keeps
+    answering a missing connect-info with its 500, as before.

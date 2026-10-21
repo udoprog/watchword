@@ -1810,6 +1810,10 @@ fn is_https(headers: &HeaderMap) -> bool {
         .is_some_and(|proto| proto.trim().eq_ignore_ascii_case("https"))
 }
 
+mod dispatch;
+
+pub use self::dispatch::{Caller, Dispatched, SessionCookie};
+
 #[cfg(feature = "cloudflare")]
 mod cloudflare;
 

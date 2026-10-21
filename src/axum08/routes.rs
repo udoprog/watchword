@@ -1,11 +1,10 @@
 use std::net::SocketAddr;
 use std::string::String;
-use std::vec::Vec;
 
 use axum08::extract::rejection::JsonRejection;
 use axum08::extract::{ConnectInfo, FromRef, FromRequest, FromRequestParts, Path, Request, State};
 use axum08::http::request::Parts;
-use axum08::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum08::http::{HeaderMap, StatusCode, header};
 use axum08::response::{IntoResponse, Response};
 use axum08::routing::{get, post};
 use axum08::{Json, Router};
@@ -13,11 +12,12 @@ use serde::de::DeserializeOwned;
 
 use super::{Admin, SignedIn};
 use crate::Auth;
-use crate::core::Error;
-use crate::store::{Session, User};
+use crate::core::{Caller, Error, SessionCookie};
+#[cfg(doc)]
+use crate::types::{AuthConfig, CreatedUser, Link, RegisterInfo, UserEntry, UserInfo};
 use crate::types::{
-    AuthConfig, AuthError, CreatedUser, Invalid, Link, LoginRequest, NewUser, PasswordChange,
-    RegisterInfo, RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
+    AuthError, AuthRequest, Invalid, LoginRequest, NewUser, PasswordChange, RegisterRequest,
+    UserChange, UserId,
 };
 
 /// The library's `/api/auth` JSON routes, to merge into the app's router.
@@ -181,54 +181,49 @@ where
     }
 }
 
-/// Answers `user` with a cookie that signs in `session`, which is not
-/// impersonated.
-fn signed_in(auth: &Auth, headers: &HeaderMap, user: &User, session: &Session) -> Response {
-    signed_in_as(auth, headers, user.info(), session)
+/// Dispatches `request` for `caller` and answers with its response,
+/// setting or clearing the session cookie as the dispatch says.
+async fn answer(auth: &Auth, caller: Caller<'_>, request: AuthRequest) -> Result<Response, Error> {
+    let dispatched = auth.dispatch(&caller, request).await?;
+    let mut response = dispatched.response.into_response();
+
+    if let Some(cookie) = dispatched.cookie {
+        let empty = HeaderMap::new();
+        let headers = caller.http_headers().unwrap_or(&empty);
+
+        let value = match cookie {
+            SessionCookie::Set(session) => auth.set_cookie(headers, &session.id),
+            SessionCookie::Clear => auth.clear_cookie(headers),
+        };
+
+        response.headers_mut().insert(header::SET_COOKIE, value);
+    }
+
+    Ok(response)
 }
 
-/// Answers `info` with a cookie that signs in `session`.
-fn signed_in_as(auth: &Auth, headers: &HeaderMap, info: UserInfo, session: &Session) -> Response {
-    let cookie = auth.set_cookie(headers, &session.id);
-    ([(header::SET_COOKIE, cookie)], Json(info)).into_response()
+/// The caller of a route behind [`SignedIn`] or [`Admin`].
+fn signed_in(SignedIn { user, session }: &SignedIn) -> Caller<'_> {
+    Caller::new().signed_in(user, session)
 }
 
-fn cookie_header(value: HeaderValue) -> [(header::HeaderName, HeaderValue); 1] {
-    [(header::SET_COOKIE, value)]
-}
-
-async fn config(State(auth): State<Auth>, headers: HeaderMap) -> Result<Json<AuthConfig>, Error> {
-    Ok(Json(AuthConfig {
-        password: true,
-        google: auth.offers_google(),
-        cloudflare: cloudflare_available(&auth, &headers).await?,
-        logins: auth.uses_logins(),
-    }))
-}
-
-/// Whether the request's Cloudflare Access credentials sign in a user.
-#[cfg(feature = "cloudflare")]
-async fn cloudflare_available(auth: &Auth, headers: &HeaderMap) -> Result<bool, Error> {
-    auth.cloudflare_available(headers).await
-}
-
-#[cfg(not(feature = "cloudflare"))]
-async fn cloudflare_available(_: &Auth, _: &HeaderMap) -> Result<bool, Error> {
-    Ok(false)
+async fn config(State(auth): State<Auth>, headers: HeaderMap) -> Result<Response, Error> {
+    let caller = Caller::new().headers(&headers);
+    answer(&auth, caller, AuthRequest::Config).await
 }
 
 #[cfg(feature = "cloudflare")]
 async fn cloudflare(State(auth): State<Auth>, headers: HeaderMap) -> Result<Response, Error> {
-    let (user, session) = auth.sign_in_cloudflare(&headers).await?;
-    Ok(signed_in(&auth, &headers, &user, &session))
+    let caller = Caller::new().headers(&headers);
+    answer(&auth, caller, AuthRequest::CloudflareSignIn).await
 }
 
 #[cfg(feature = "cloudflare")]
 async fn cloudflare_settings(
     State(auth): State<Auth>,
-    _: Admin,
-) -> Result<Json<crate::types::CloudflareConfig>, Error> {
-    Ok(Json(auth.cloudflare().await?.unwrap_or_default()))
+    Admin(admin): Admin,
+) -> Result<Response, Error> {
+    answer(&auth, signed_in(&admin), AuthRequest::Cloudflare).await
 }
 
 #[cfg(feature = "cloudflare")]
@@ -236,18 +231,12 @@ async fn set_cloudflare_settings(
     State(auth): State<Auth>,
     Admin(admin): Admin,
     Body(config): Body<crate::types::CloudflareConfig>,
-) -> Result<Json<crate::types::CloudflareConfig>, Error> {
-    Ok(Json(
-        auth.set_cloudflare(&admin.user, &admin.session, config)
-            .await?,
-    ))
+) -> Result<Response, Error> {
+    answer(&auth, signed_in(&admin), AuthRequest::SetCloudflare(config)).await
 }
 
-async fn me(
-    State(auth): State<Auth>,
-    SignedIn { user, session }: SignedIn,
-) -> Result<Json<UserInfo>, Error> {
-    Ok(Json(auth.session_info(&user, &session).await?))
+async fn me(State(auth): State<Auth>, user: SignedIn) -> Result<Response, Error> {
+    answer(&auth, signed_in(&user), AuthRequest::Me).await
 }
 
 async fn login(
@@ -265,24 +254,17 @@ async fn login(
     };
 
     let address = auth.client_address(peer.ip(), &headers);
-    let (user, session) = auth.sign_in_password(address, &request).await?;
-    Ok(signed_in(&auth, &headers, &user, &session))
+    let caller = Caller::new().headers(&headers).address(address);
+    answer(&auth, caller, AuthRequest::Login(request)).await
 }
 
 async fn logout(State(auth): State<Auth>, headers: HeaderMap) -> Result<Response, Error> {
-    if let Some(id) = auth.session_id(&headers) {
-        auth.sign_out(&id).await?;
-    }
-
-    let clear = auth.clear_cookie(&headers);
-    Ok((StatusCode::NO_CONTENT, cookie_header(clear)).into_response())
+    let caller = Caller::new().headers(&headers);
+    answer(&auth, caller, AuthRequest::Logout).await
 }
 
-async fn register_info(
-    State(auth): State<Auth>,
-    Token(token): Token,
-) -> Result<Json<RegisterInfo>, Error> {
-    Ok(Json(auth.register_info(&token).await?))
+async fn register_info(State(auth): State<Auth>, Token(token): Token) -> Result<Response, Error> {
+    answer(&auth, Caller::new(), AuthRequest::RegisterInfo { token }).await
 }
 
 async fn register(
@@ -291,46 +273,36 @@ async fn register(
     headers: HeaderMap,
     Body(request): Body<RegisterRequest>,
 ) -> Result<Response, Error> {
-    let (user, session) = auth.register(&token, &request).await?;
-    Ok(signed_in(&auth, &headers, &user, &session))
+    let caller = Caller::new().headers(&headers);
+    answer(&auth, caller, AuthRequest::Register { token, request }).await
 }
 
 async fn change_password(
     State(auth): State<Auth>,
-    SignedIn { user, session }: SignedIn,
+    user: SignedIn,
     Body(change): Body<PasswordChange>,
-) -> Result<Json<UserInfo>, Error> {
-    let user = auth.change_password(&user, &session, &change).await?;
-    Ok(Json(auth.session_info(&user, &session).await?))
+) -> Result<Response, Error> {
+    answer(&auth, signed_in(&user), AuthRequest::ChangePassword(change)).await
 }
 
 async fn update_account(
     State(auth): State<Auth>,
-    SignedIn { user, session }: SignedIn,
+    user: SignedIn,
     Body(change): Body<UserChange>,
-) -> Result<Json<UserInfo>, Error> {
-    if change.role.is_some() {
-        return Err(AuthError::Invalid(Invalid::RoleNotChangeable).into());
-    }
-
-    let user = auth.update_user(&user, &session, user.id, &change).await?;
-    Ok(Json(auth.session_info(&user, &session).await?))
+) -> Result<Response, Error> {
+    answer(&auth, signed_in(&user), AuthRequest::UpdateAccount(change)).await
 }
 
-async fn users(
-    State(auth): State<Auth>,
-    Admin(admin): Admin,
-) -> Result<Json<Vec<UserEntry>>, Error> {
-    Ok(Json(auth.users(&admin.user).await?))
+async fn users(State(auth): State<Auth>, Admin(admin): Admin) -> Result<Response, Error> {
+    answer(&auth, signed_in(&admin), AuthRequest::Users).await
 }
 
 async fn create_user(
     State(auth): State<Auth>,
     Admin(admin): Admin,
     Body(new): Body<NewUser>,
-) -> Result<Json<CreatedUser>, Error> {
-    let (entry, link) = auth.create_user(&admin.user, &admin.session, &new).await?;
-    Ok(Json(CreatedUser { entry, link }))
+) -> Result<Response, Error> {
+    answer(&auth, signed_in(&admin), AuthRequest::CreateUser(new)).await
 }
 
 async fn update_user(
@@ -338,58 +310,53 @@ async fn update_user(
     Admin(admin): Admin,
     Id(id): Id,
     Body(change): Body<UserChange>,
-) -> Result<Json<UserInfo>, Error> {
-    let user = auth
-        .update_user(&admin.user, &admin.session, id, &change)
-        .await?;
-    Ok(Json(user.info()))
+) -> Result<Response, Error> {
+    answer(
+        &auth,
+        signed_in(&admin),
+        AuthRequest::UpdateUser { id, change },
+    )
+    .await
 }
 
 async fn delete_user(
     State(auth): State<Auth>,
     Admin(admin): Admin,
     Id(id): Id,
-) -> Result<StatusCode, Error> {
-    auth.delete_user(&admin.user, &admin.session, id).await?;
-    Ok(StatusCode::NO_CONTENT)
+) -> Result<Response, Error> {
+    answer(&auth, signed_in(&admin), AuthRequest::DeleteUser { id }).await
 }
 
 async fn issue_link(
     State(auth): State<Auth>,
     Admin(admin): Admin,
     Id(id): Id,
-) -> Result<Json<Link>, Error> {
-    Ok(Json(
-        auth.issue_link(&admin.user, &admin.session, id).await?,
-    ))
+) -> Result<Response, Error> {
+    answer(&auth, signed_in(&admin), AuthRequest::IssueLink { id }).await
 }
 
 async fn revoke_link(
     State(auth): State<Auth>,
     Admin(admin): Admin,
     Id(id): Id,
-) -> Result<StatusCode, Error> {
-    auth.revoke_link(&admin.user, &admin.session, id).await?;
-    Ok(StatusCode::NO_CONTENT)
+) -> Result<Response, Error> {
+    answer(&auth, signed_in(&admin), AuthRequest::RevokeLink { id }).await
 }
 
 async fn sign_out_everywhere(
     State(auth): State<Auth>,
     Admin(admin): Admin,
     Id(id): Id,
-) -> Result<StatusCode, Error> {
-    auth.sign_out_everywhere(&admin.user, &admin.session, id)
-        .await?;
-    Ok(StatusCode::NO_CONTENT)
+) -> Result<Response, Error> {
+    answer(&auth, signed_in(&admin), AuthRequest::SignOutUser { id }).await
 }
 
 async fn revoke_access(
     State(auth): State<Auth>,
     Admin(admin): Admin,
     Id(id): Id,
-) -> Result<Json<UserInfo>, Error> {
-    let user = auth.revoke_access(&admin.user, &admin.session, id).await?;
-    Ok(Json(user.info()))
+) -> Result<Response, Error> {
+    answer(&auth, signed_in(&admin), AuthRequest::RevokeAccess { id }).await
 }
 
 async fn impersonate(
@@ -398,16 +365,15 @@ async fn impersonate(
     Id(id): Id,
     headers: HeaderMap,
 ) -> Result<Response, Error> {
-    let (user, session) = auth.impersonate(&admin.user, &admin.session, id).await?;
-    let info = auth.session_info(&user, &session).await?;
-    Ok(signed_in_as(&auth, &headers, info, &session))
+    let caller = signed_in(&admin).headers(&headers);
+    answer(&auth, caller, AuthRequest::Impersonate { id }).await
 }
 
 async fn stop_impersonating(
     State(auth): State<Auth>,
-    SignedIn { session, .. }: SignedIn,
+    user: SignedIn,
     headers: HeaderMap,
 ) -> Result<Response, Error> {
-    let (admin, session) = auth.stop_impersonating(&session).await?;
-    Ok(signed_in(&auth, &headers, &admin, &session))
+    let caller = signed_in(&user).headers(&headers);
+    answer(&auth, caller, AuthRequest::StopImpersonating).await
 }

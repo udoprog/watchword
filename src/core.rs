@@ -19,8 +19,8 @@ pub use self::password::{PasswordError, dummy_hash, hash_password, verify_passwo
 #[cfg(all(feature = "google", feature = "axum08"))]
 pub(crate) use self::service::GoogleReturn;
 pub use self::service::{
-    Auth, AuthBuilder, AuthEvent, Bootstrap, BootstrapAdmin, CookieConfig, Error, Result, Secure,
-    load_or_create_key,
+    Auth, AuthBuilder, AuthEvent, Bootstrap, BootstrapAdmin, Caller, CookieConfig, Dispatched,
+    Error, Result, Secure, SessionCookie, load_or_create_key,
 };
 pub use self::session::{
     SESSION_LIFETIME, SESSION_LIFETIME_DAYS, TOKEN_LIFETIME, is_expired, new_session_id, new_token,

@@ -1,6 +1,7 @@
 //! The filter of `Connection::update`, over `MemoryStore`; `socket` tests
 //! `Connection::handle` over a real WebSocket.
 
+mod parity;
 mod socket;
 
 use std::borrow::ToOwned;
