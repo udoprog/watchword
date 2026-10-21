@@ -6,8 +6,9 @@
 [<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/udoprog/watchword/ci.yml?branch=main&style=for-the-badge" height="20">](https://github.com/udoprog/watchword/actions?query=branch%3Amain)
 
 [watchword]'s frontend for [Yew] 0.23: the sign-in, registration, account
-and user management components, the auth context and hook, and the HTTP
-client for watchword's `/api/auth` routes. Built for
+and user management components, the auth context and hook, and the
+service the components and the app make their requests with, over HTTP,
+the app's socket, or a transport of the app's. Built for
 `wasm32-unknown-unknown`.
 
 Apps take it through watchword's `yew023` feature, as `watchword::yew023`,
@@ -74,7 +75,75 @@ Inside the provider, [`UserMenu`] gives the signed-in user Account, Users
 for admins, and [`AdminCloudflare`] is the Cloudflare Access settings
 page for admins, which loads and saves the settings watchword keeps.
 [`CloudflareSettings`] is its form alone, for an app that stores the
-settings itself. They talk to the server through [`http`].
+settings itself.
+
+<br>
+
+## Making requests
+
+watchword's components make every request with the [`AuthService`] that
+[`AuthProvider`] provides, and an app's own components get the same one
+with [`use_auth_service`], so an app's account page behaves as
+watchword's does: over the app's socket once it is handed over (see
+[below](#with-a-musli-web-socket)), and over HTTP otherwise. The service
+has a method for each operation. It only makes the request, so a
+component passes a changed user on to the context itself:
+
+```rust
+use watchword::types::UserChange;
+use watchword::yew023::{use_auth, use_auth_service};
+
+#[function_component]
+fn ClearEmail() -> Html {
+    let auth = use_auth();
+    let service = use_auth_service();
+
+    let onclick = Callback::from(move |_| {
+        let auth = auth.clone();
+        let service = service.clone();
+
+        yew::platform::spawn_local(async move {
+            let change = UserChange {
+                email: Some(None),
+                ..UserChange::default()
+            };
+
+            match service.update_account(change).await {
+                Ok(user) => auth.set_user(user),
+                Err(error) if error.is_unauthorized() => auth.check_session(),
+                Err(..) => {}
+            }
+        });
+    });
+
+    html! { <button {onclick}>{"Forget my email"}</button> }
+}
+```
+
+The service is a context of its own, apart from [`AuthContext`], so a
+component that only shows the user does not render again when it
+changes.
+
+Underneath is a [`Transport`], which carries an `AuthRequest` to the
+server and brings back its `AuthResponse`. An app or a test supplies its
+own with the provider's `service` prop, such as one that calls the
+server's `Auth::dispatch` directly over an in-memory store, so components
+can be tested without HTTP or a socket:
+
+```rust
+use watchword::yew023::{AuthProvider, AuthService};
+
+let service = AuthService::new(MyTransport::new());
+
+html! {
+    <AuthProvider title="My App" service={service}>
+        <App />
+    </AuthProvider>
+}
+```
+
+The [`http`] module is the low-level layer under [`HttpTransport`]: one
+function per `/api/auth` route, always over HTTP.
 
 <br>
 
@@ -143,10 +212,11 @@ user is replaced when it changes elsewhere, and the shared [`Users`]
 (which [`AdminUsers`] shows) applies users created, changed and deleted
 by others in place, so the app no longer bumps its `refresh` prop. Each
 update is also passed to the app's [`AuthContext::on_update`] listeners.
-The account and admin requests go over the socket too while it is open,
-with the same `AuthError`s as over HTTP, and over HTTP when the socket
-could not send them, such as while it reconnects; signing in and out,
-registration and impersonation always use HTTP. When the socket closes, and every 10 seconds while it stays closed,
+The [`AuthService`]'s requests go over the socket too while it is open,
+the app's own included, with the same `AuthError`s as over HTTP, and over
+HTTP when the socket could not send them, such as while it reconnects;
+signing in and out, registration and impersonation always use HTTP. When
+the socket closes, and every 10 seconds while it stays closed,
 the provider checks the session over HTTP, so a session that ended, whose
 upgrade the server now refuses, shows the sign-in page.
 
@@ -272,9 +342,13 @@ order:
 [`AuthContext::subscribe_users`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html#method.subscribe_users
 [`AuthSubscription`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthSubscription.html
 [`AuthProvider`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthProvider.html
+[`AuthService`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthService.html
 [`CloudflareSettings`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.CloudflareSettings.html
 [`http`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/http/index.html
+[`HttpTransport`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.HttpTransport.html
 [`L10N`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/static.L10N.html
+[`Transport`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/trait.Transport.html
+[`use_auth_service`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth_service.html
 [`use_auth`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth.html
 [`use_is_admin`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_is_admin.html
 [`use_users`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_users.html

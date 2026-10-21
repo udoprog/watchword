@@ -3,8 +3,9 @@
 //! [<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-watchword--yew023-66c2a5?style=for-the-badge&logoColor=white&logo=data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTIiPjxwYXRoIGZpbGw9IiNmNWY1ZjUiIGQ9Ik00ODguNiAyNTAuMkwzOTIgMjE0VjEwNS41YzAtMTUtOS4zLTI4LjQtMjMuNC0zMy43bC0xMDAtMzcuNWMtOC4xLTMuMS0xNy4xLTMuMS0yNS4zIDBsLTEwMCAzNy41Yy0xNC4xIDUuMy0yMy40IDE4LjctMjMuNCAzMy43VjIxNGwtOTYuNiAzNi4yQzkuMyAyNTUuNSAwIDI2OC45IDAgMjgzLjlWMzk0YzAgMTMuNiA3LjcgMjYuMSAxOS45IDMyLjJsMTAwIDUwYzEwLjEgNS4xIDIyLjEgNS4xIDMyLjIgMGwxMDMuOS01MiAxMDMuOSA1MmMxMC4xIDUuMSAyMi4xIDUuMSAzMi4yIDBsMTAwLTUwYzEyLjItNi4xIDE5LjktMTguNiAxOS45LTMyLjJWMjgzLjljMC0xNS05LjMtMjguNC0yMy40LTMzLjd6TTM1OCAyMTQuOGwtODUgMzEuOXYtNjguMmw4NS0zN3Y3My4zek0xNTQgMTA0LjFsMTAyLTM4LjIgMTAyIDM4LjJ2LjZsLTEwMiA0MS40LTEwMi00MS40di0uNnptODQgMjkxLjFsLTg1IDQyLjV2LTc5LjFsODUtMzguOHY3NS40em0wLTExMmwtMTAyIDQxLjQtMTAyLTQxLjR2LS42bDEwMi0zOC4yIDEwMiAzOC4ydi42em0yNDAgMTEybC04NSA0Mi41di03OS4xbDg1LTM4Ljh2NzUuNHptMC0xMTJsLTEwMiA0MS40LTEwMi00MS40di0uNmwxMDItMzguMiAxMDIgMzguMnYuNnoiPjwvcGF0aD48L3N2Zz4K" height="20">](https://docs.rs/watchword-yew023)
 //!
 //! [watchword]'s frontend for [Yew] 0.23: the sign-in, registration, account
-//! and user management components, the auth context and hook, and the HTTP
-//! client for watchword's `/api/auth` routes. Built for
+//! and user management components, the auth context and hook, and the
+//! service the components and the app make their requests with, over HTTP,
+//! the app's socket, or a transport of the app's. Built for
 //! `wasm32-unknown-unknown`.
 //!
 //! Apps take it through watchword's `yew023` feature, as `watchword::yew023`,
@@ -71,7 +72,75 @@
 //! for admins, and [`AdminCloudflare`] is the Cloudflare Access settings
 //! page for admins, which loads and saves the settings watchword keeps.
 //! [`CloudflareSettings`] is its form alone, for an app that stores the
-//! settings itself. They talk to the server through [`http`].
+//! settings itself.
+//!
+//! <br>
+//!
+//! ## Making requests
+//!
+//! watchword's components make every request with the [`AuthService`] that
+//! [`AuthProvider`] provides, and an app's own components get the same one
+//! with [`use_auth_service`], so an app's account page behaves as
+//! watchword's does: over the app's socket once it is handed over (see
+//! [below](#with-a-musli-web-socket)), and over HTTP otherwise. The service
+//! has a method for each operation. It only makes the request, so a
+//! component passes a changed user on to the context itself:
+//!
+//! ```ignore
+//! use watchword::types::UserChange;
+//! use watchword::yew023::{use_auth, use_auth_service};
+//!
+//! #[function_component]
+//! fn ClearEmail() -> Html {
+//!     let auth = use_auth();
+//!     let service = use_auth_service();
+//!
+//!     let onclick = Callback::from(move |_| {
+//!         let auth = auth.clone();
+//!         let service = service.clone();
+//!
+//!         yew::platform::spawn_local(async move {
+//!             let change = UserChange {
+//!                 email: Some(None),
+//!                 ..UserChange::default()
+//!             };
+//!
+//!             match service.update_account(change).await {
+//!                 Ok(user) => auth.set_user(user),
+//!                 Err(error) if error.is_unauthorized() => auth.check_session(),
+//!                 Err(..) => {}
+//!             }
+//!         });
+//!     });
+//!
+//!     html! { <button {onclick}>{"Forget my email"}</button> }
+//! }
+//! ```
+//!
+//! The service is a context of its own, apart from [`AuthContext`], so a
+//! component that only shows the user does not render again when it
+//! changes.
+//!
+//! Underneath is a [`Transport`], which carries an `AuthRequest` to the
+//! server and brings back its `AuthResponse`. An app or a test supplies its
+//! own with the provider's `service` prop, such as one that calls the
+//! server's `Auth::dispatch` directly over an in-memory store, so components
+//! can be tested without HTTP or a socket:
+//!
+//! ```ignore
+//! use watchword::yew023::{AuthProvider, AuthService};
+//!
+//! let service = AuthService::new(MyTransport::new());
+//!
+//! html! {
+//!     <AuthProvider title="My App" service={service}>
+//!         <App />
+//!     </AuthProvider>
+//! }
+//! ```
+//!
+//! The [`http`] module is the low-level layer under [`HttpTransport`]: one
+//! function per `/api/auth` route, always over HTTP.
 //!
 //! <br>
 //!
@@ -140,10 +209,11 @@
 //! (which [`AdminUsers`] shows) applies users created, changed and deleted
 //! by others in place, so the app no longer bumps its `refresh` prop. Each
 //! update is also passed to the app's [`AuthContext::on_update`] listeners.
-//! The account and admin requests go over the socket too while it is open,
-//! with the same `AuthError`s as over HTTP, and over HTTP when the socket
-//! could not send them, such as while it reconnects; signing in and out,
-//! registration and impersonation always use HTTP. When the socket closes, and every 10 seconds while it stays closed,
+//! The [`AuthService`]'s requests go over the socket too while it is open,
+//! the app's own included, with the same `AuthError`s as over HTTP, and over
+//! HTTP when the socket could not send them, such as while it reconnects;
+//! signing in and out, registration and impersonation always use HTTP. When
+//! the socket closes, and every 10 seconds while it stays closed,
 //! the provider checks the session over HTTP, so a session that ended, whose
 //! upgrade the server now refuses, shows the sign-in page.
 //!
@@ -269,9 +339,13 @@
 //! [`AuthContext::subscribe_users`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthContext.html#method.subscribe_users
 //! [`AuthSubscription`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthSubscription.html
 //! [`AuthProvider`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthProvider.html
+//! [`AuthService`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthService.html
 //! [`CloudflareSettings`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.CloudflareSettings.html
 //! [`http`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/http/index.html
+//! [`HttpTransport`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.HttpTransport.html
 //! [`L10N`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/static.L10N.html
+//! [`Transport`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/trait.Transport.html
+//! [`use_auth_service`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth_service.html
 //! [`use_auth`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth.html
 //! [`use_is_admin`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_is_admin.html
 //! [`use_users`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_users.html
@@ -305,11 +379,11 @@ mod admin_users;
 #[cfg(feature = "std")]
 mod browser;
 #[cfg(feature = "std")]
-mod client;
-#[cfg(feature = "std")]
 mod cloudflare_settings;
 #[cfg(feature = "std")]
 mod context;
+#[cfg(feature = "std")]
+mod error;
 #[cfg(feature = "std")]
 mod form;
 #[cfg(feature = "std")]
@@ -321,9 +395,13 @@ mod provider;
 #[cfg(feature = "std")]
 mod register;
 #[cfg(feature = "std")]
+mod service;
+#[cfg(feature = "std")]
 mod sign_in;
 #[cfg(feature = "musliweb05")]
 mod socket;
+#[cfg(feature = "std")]
+mod transport;
 #[cfg(feature = "std")]
 mod user_menu;
 #[cfg(feature = "std")]
@@ -353,6 +431,18 @@ pub use self::context::{AuthContext, AuthSubscription, use_auth, use_is_admin};
 #[cfg(feature = "musliweb05")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb05")))]
 pub use self::context::use_auth_update;
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
+pub use self::error::Error;
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
+pub use self::service::{AuthService, use_auth_service};
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
+pub use self::transport::{HttpTransport, Transport, TransportFuture};
 
 #[cfg(feature = "std")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]

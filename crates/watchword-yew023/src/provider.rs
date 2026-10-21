@@ -8,17 +8,18 @@ use phrasebook02::Phrases;
 use phrasebook02::yew023::PhrasesContext;
 use yew::prelude::*;
 
+use super::Error;
 use super::browser;
-use super::client::Client;
 use super::context::AuthContext;
-use super::http::{self, Error};
 use super::l10n;
 #[cfg(feature = "musliweb05")]
 use super::listener::Subscribers;
 use super::register::Register;
+use super::service::AuthService;
 use super::sign_in::SignIn;
 #[cfg(feature = "musliweb05")]
 use super::socket::{Socket, SocketHandle};
+use super::transport::{DefaultTransport, Transport};
 use super::users::UsersStore;
 #[cfg(feature = "musliweb05")]
 use watchword_core::musliweb05::AuthUpdate;
@@ -47,6 +48,17 @@ pub struct AuthProviderProps {
     /// this path itself.
     #[prop_or_default]
     pub sign_in_path: Option<AttrValue>,
+    /// The service the provider and everything it renders make their
+    /// requests with, given to them through
+    /// [`use_auth_service`](super::use_auth_service): an
+    /// [`AuthService::new`] over a [`Transport`](super::Transport) of the
+    /// app's, such as a test's that calls the server's `Auth::dispatch`
+    /// directly. Defaults to the socket handed over with
+    /// [`AuthContext::set_socket`] (feature `musliweb05`) while it is open,
+    /// and HTTP otherwise. With a service of the app's, a socket handed over
+    /// is still followed for its broadcasts, but carries no requests.
+    #[prop_or_default]
+    pub service: Option<AuthService>,
     /// The app, rendered once a user is signed in.
     #[prop_or_default]
     pub children: Html,
@@ -59,6 +71,10 @@ pub struct AuthProviderProps {
 /// out, it shows [`SignIn`]; on a `/register/{token}` page it shows
 /// [`Register`]. Once a user is signed in it renders its children with an
 /// [`AuthContext`], available through [`use_auth`](super::use_auth).
+///
+/// It provides an [`AuthService`] to everything it renders, through
+/// [`use_auth_service`](super::use_auth_service), which it also makes its own
+/// requests with; see [`service`](AuthProviderProps::service).
 ///
 /// Signing in returns to a `?next=` in the URL, as watchword's
 /// `axum08::RequireSession` redirects with, before the children are
@@ -85,6 +101,12 @@ pub struct AuthProvider {
     state: State,
     /// The app's phrases, with watchword's catalog as the backstop.
     l10n: PhrasesContext,
+    /// The transport used without the `service` prop, which the socket is
+    /// handed to.
+    transport: Rc<DefaultTransport>,
+    /// The service the requests are made with: the prop's, or one over
+    /// `transport`.
+    service: AuthService,
     config: Option<AuthConfig>,
     register_token: Option<AttrValue>,
     checking: bool,
@@ -174,10 +196,15 @@ impl Component for AuthProvider {
         let check_session = link.callback(|()| Msg::CheckSession);
 
         let l10n = PhrasesContext::new_with(link, link.callback(Msg::Phrases), &L10N);
+        let transport = Rc::new(DefaultTransport::default());
+        let service = service(ctx.props(), &transport);
 
         Self {
             state: State::Loading,
             l10n,
+            users: UsersStore::new(service.clone(), check_session.clone()),
+            transport,
+            service,
             config: None,
             register_token: browser::register_token().map(AttrValue::from),
             checking: false,
@@ -197,7 +224,6 @@ impl Component for AuthProvider {
             on_socket_state: link.callback(Msg::SocketState),
             #[cfg(feature = "musliweb05")]
             socket_watch: 0,
-            users: UsersStore::new(Client::default(), check_session),
             #[cfg(feature = "musliweb05")]
             updates: Subscribers::default(),
         }
@@ -208,14 +234,15 @@ impl Component for AuthProvider {
             Msg::Load => {
                 self.state = State::Loading;
                 let register = self.register_token.is_some();
+                let service = self.service.clone();
 
                 ctx.link().send_future(async move {
-                    let config = http::config().await;
+                    let config = service.config().await;
 
                     // A link's page does not need the user, and the user is
                     // not worth asking for without the config.
                     let me = match &config {
-                        Ok(..) if !register => Some(http::me().await),
+                        Ok(..) if !register => Some(service.me().await),
                         _ => None,
                     };
 
@@ -257,10 +284,12 @@ impl Component for AuthProvider {
                 self.signed_in_as(user);
             }
             Msg::SignOut => {
-                ctx.link().send_future(async {
+                let service = self.service.clone();
+
+                ctx.link().send_future(async move {
                     // The session is forgotten here either way; a failed
                     // request leaves it to expire on the server.
-                    let _ = http::logout().await;
+                    let _ = service.logout().await;
                     Msg::SignedOut
                 });
 
@@ -271,12 +300,12 @@ impl Component for AuthProvider {
                 self.state = State::SignedOut { ended: false };
             }
             Msg::Refresh => {
-                let client = self.client();
+                let service = self.service.clone();
 
                 ctx.link().send_future(async move {
                     Msg::Refreshed {
-                        config: http::config().await,
-                        me: client.me().await,
+                        config: service.config().await,
+                        me: service.me().await,
                     }
                 });
 
@@ -317,8 +346,8 @@ impl Component for AuthProvider {
 
                 let handle =
                     handle.map(|handle| SocketHandle::new(handle, self.on_socket_state.clone()));
-                let changed = self.socket.set(handle.as_ref(), self.on_update.clone());
-                self.users.set_client(self.client());
+                self.socket.set(handle.as_ref(), self.on_update.clone());
+                self.transport.set_socket(handle.clone());
 
                 // A socket handed over closed may be refused already. The
                 // session was just checked to show the app, so the first
@@ -329,7 +358,9 @@ impl Component for AuthProvider {
                     self.watch_closed_socket(ctx);
                 }
 
-                return changed;
+                // Nothing shown depends on the socket: the transport has it,
+                // outside the contexts.
+                return false;
             }
             #[cfg(feature = "musliweb05")]
             Msg::SocketState(open) => {
@@ -416,14 +447,37 @@ impl Component for AuthProvider {
         #[cfg(feature = "musliweb05")]
         if self.socket.handle().is_some() {
             self.socket = Socket::default();
-            self.users.set_client(self.client());
+            self.transport.set_socket(None);
         }
 
         // So is the users list.
         self.users.clear();
     }
 
+    fn changed(&mut self, ctx: &Context<Self>, _: &Self::Properties) -> bool {
+        let service = service(ctx.props(), &self.transport);
+
+        // The list came over the other service, maybe from another server.
+        if service != self.service {
+            self.users.set_service(service.clone());
+            self.users.invalidate();
+            self.service = service;
+        }
+
+        true
+    }
+
     fn view(&self, ctx: &Context<Self>) -> Html {
+        html! {
+            <ContextProvider<AuthService> context={self.service.clone()}>
+                {self.view_state(ctx)}
+            </ContextProvider<AuthService>>
+        }
+    }
+}
+
+impl AuthProvider {
+    fn view_state(&self, ctx: &Context<Self>) -> Html {
         let props = ctx.props();
 
         let config = self.config.unwrap_or(AuthConfig {
@@ -485,8 +539,6 @@ impl Component for AuthProvider {
                     set_user: self.set_user.clone(),
                     check_session: self.check_session.clone(),
                     #[cfg(feature = "musliweb05")]
-                    socket: self.socket.handle().cloned(),
-                    #[cfg(feature = "musliweb05")]
                     set_socket: self.set_socket.clone(),
                     users: self.users.clone(),
                     #[cfg(feature = "musliweb05")]
@@ -501,9 +553,7 @@ impl Component for AuthProvider {
             }
         }
     }
-}
 
-impl AuthProvider {
     /// Asks the server whether the session is still live, unless a check is
     /// in flight.
     fn check_session(&mut self, ctx: &Context<Self>) {
@@ -512,8 +562,10 @@ impl AuthProvider {
         }
 
         self.checking = true;
+        let service = self.service.clone();
+
         ctx.link()
-            .send_future(async { Msg::Checked(http::me().await) });
+            .send_future(async move { Msg::Checked(service.me().await) });
     }
 
     /// Sends [`Msg::SocketClosed`] after [`CLOSED_SOCKET_CHECK`], for the
@@ -526,14 +578,6 @@ impl AuthProvider {
             yew::platform::time::sleep(CLOSED_SOCKET_CHECK).await;
             Msg::SocketClosed(watch)
         });
-    }
-
-    /// The transport for the requests that can use the socket.
-    fn client(&self) -> Client {
-        Client {
-            #[cfg(feature = "musliweb05")]
-            socket: self.socket.handle().cloned(),
-        }
     }
 
     /// The notice shown when the session ended under the user.
@@ -574,6 +618,14 @@ impl AuthProvider {
             }
             Err(..) => {}
         }
+    }
+}
+
+/// The service `props` give, or the one over `transport`.
+fn service(props: &AuthProviderProps, transport: &Rc<DefaultTransport>) -> AuthService {
+    match &props.service {
+        Some(service) => service.clone(),
+        None => AuthService::from_rc(transport.clone() as Rc<dyn Transport>),
     }
 }
 

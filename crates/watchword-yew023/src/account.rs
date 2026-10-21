@@ -6,11 +6,13 @@ use phrasebook02::yew023::use_phrases_with;
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
+use super::Error;
 use super::browser;
 use super::context::use_auth;
 use super::form::{identity_change, optional};
-use super::http::{self, Error};
+use super::http;
 use super::l10n::{self, error_message, role_name};
+use super::service::use_auth_service;
 use watchword_core::phrasebook02::L10N;
 use watchword_core::{
     AuthError, Invalid, Method, PasswordChange, UserChange, UserInfo, validate_password,
@@ -98,6 +100,7 @@ struct ProfileFormProps {
 #[function_component]
 fn ProfileForm(props: &ProfileFormProps) -> Html {
     let auth = use_auth();
+    let service = use_auth_service();
     let phrases = use_phrases_with(&L10N);
     let login = use_state(|| props.user.login.clone().unwrap_or_default());
     let email = use_state(|| props.user.email.clone().unwrap_or_default());
@@ -134,6 +137,7 @@ fn ProfileForm(props: &ProfileFormProps) -> Html {
         let busy = busy.clone();
         let message = message.clone();
         let auth = auth.clone();
+        let service = service.clone();
         let phrases = phrases.clone();
 
         Callback::from(move |e: SubmitEvent| {
@@ -160,10 +164,11 @@ fn ProfileForm(props: &ProfileFormProps) -> Html {
             let busy = busy.clone();
             let message = message.clone();
             let auth = auth.clone();
+            let service = service.clone();
             let phrases = phrases.clone();
 
             spawn_local(async move {
-                match auth.client().update_account(&change).await {
+                match service.update_account(change).await {
                     Ok(user) => {
                         message.set(Some(Message::Notice(l10n::text(
                             &phrases,
@@ -245,6 +250,7 @@ struct PasswordFormProps {
 #[function_component]
 fn PasswordForm(props: &PasswordFormProps) -> Html {
     let auth = use_auth();
+    let service = use_auth_service();
     let phrases = use_phrases_with(&L10N);
     let old_password = use_state(String::new);
     let new_password = use_state(String::new);
@@ -271,6 +277,7 @@ fn PasswordForm(props: &PasswordFormProps) -> Html {
         let busy = busy.clone();
         let message = message.clone();
         let auth = auth.clone();
+        let service = service.clone();
         let phrases = phrases.clone();
 
         Callback::from(move |e: SubmitEvent| {
@@ -309,10 +316,11 @@ fn PasswordForm(props: &PasswordFormProps) -> Html {
             let busy = busy.clone();
             let message = message.clone();
             let auth = auth.clone();
+            let service = service.clone();
             let phrases = phrases.clone();
 
             spawn_local(async move {
-                match auth.client().change_password(&request).await {
+                match service.change_password(request).await {
                     Ok(user) => {
                         old_password.set(String::new());
                         new_password.set(String::new());

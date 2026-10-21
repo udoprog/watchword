@@ -12,17 +12,17 @@ use phrasebook02::{Args, Phrases, args};
 use yew::context::ContextHandle;
 use yew::prelude::*;
 
+use super::Error;
 use super::browser;
-use super::client::Client;
 use super::context::AuthContext;
 use super::form::{identity_change, optional};
-use super::http::{self, CreatedUser, Error};
 use super::l10n::{self, error_message, role_name};
 use super::listener::Listener;
+use super::service::AuthService;
 use super::users::{Users, UsersStore, retain_links};
 use watchword_core::phrasebook02::L10N;
 use watchword_core::{
-    Access, Link, Method, NewUser, Role, UserChange, UserEntry, UserId, UserInfo,
+    Access, CreatedUser, Link, Method, NewUser, Role, UserChange, UserEntry, UserId, UserInfo,
 };
 
 /// The default `page_size` of [`AdminUsers`].
@@ -110,8 +110,9 @@ pub struct AdminUsersProps {
 /// another admin, change in the list in place. A broadcast does not carry
 /// link state, so the list is fetched again when it cannot be known: for a
 /// user created elsewhere, and when a user's account state or sign-in method
-/// changes, which uses up their links. Its requests, except Impersonate, go
-/// over the socket while it is open.
+/// changes, which uses up their links. It makes its requests with the
+/// provider's [`AuthService`], so they go over the socket while it is open,
+/// except Impersonate.
 ///
 /// Its text comes from the [`Phrases`](phrasebook02::Phrases) the app
 /// provides, falling back to watchword's English (see [`L10N`](super::L10N)).
@@ -127,6 +128,10 @@ pub struct AdminUsers {
     auth: Option<AuthContext>,
     /// Keeps this subscribed to the context.
     _context: Option<ContextHandle<AuthContext>>,
+    /// The service the requests are made with.
+    service: AuthService,
+    /// Keeps this subscribed to the service.
+    _service: Option<ContextHandle<AuthService>>,
     /// The app's phrases, with watchword's catalog as the backstop.
     l10n: PhrasesContext,
     /// The query when the app does not keep it.
@@ -199,6 +204,7 @@ pub enum Msg {
     Copy(String),
     Copied(bool),
     Context(AuthContext),
+    Service(AuthService),
     Phrases(Phrases),
 }
 
@@ -216,7 +222,12 @@ impl Component for AdminUsers {
 
         let store = match &auth {
             Some(auth) => auth.users.clone(),
-            None => UsersStore::new(Client::default(), Callback::noop()),
+            None => UsersStore::new(AuthService::default(), Callback::noop()),
+        };
+
+        let (service, _service) = match link.context::<AuthService>(link.callback(Msg::Service)) {
+            Some((service, handle)) => (service, Some(handle)),
+            None => (AuthService::default(), None),
         };
 
         let (users, _users) = store.subscribe(link.callback(Msg::Users));
@@ -228,6 +239,8 @@ impl Component for AdminUsers {
             _users,
             auth,
             _context,
+            service,
+            _service,
             l10n,
             query: ctx.props().query.clone(),
             adding: None,
@@ -333,9 +346,9 @@ impl Component for AdminUsers {
 
                 self.busy = true;
                 self.message = None;
-                let client = self.client();
+                let service = self.service.clone();
                 ctx.link()
-                    .send_future(async move { Msg::Added(client.create_user(&new).await) });
+                    .send_future(async move { Msg::Added(service.create_user(new).await) });
             }
             Msg::Added(result) => {
                 self.busy = false;
@@ -495,9 +508,9 @@ impl Component for AdminUsers {
 
                 self.busy = true;
                 self.message = None;
-                let client = self.client();
+                let service = self.service.clone();
                 ctx.link()
-                    .send_future(async move { Msg::Issued(id, client.issue_link(id).await) });
+                    .send_future(async move { Msg::Issued(id, service.issue_link(id).await) });
             }
             Msg::Issued(id, result) => {
                 self.busy = false;
@@ -548,23 +561,17 @@ impl Component for AdminUsers {
                 self.confirm = None;
                 self.message = None;
 
-                let client = self.client();
+                let service = self.service.clone();
 
                 ctx.link().send_future(async move {
                     let result = match action {
-                        Action::RevokeLink => client.revoke_link(id).await,
-                        Action::SignOut => client.sign_out_user(id).await,
-                        Action::RevokeAccess => client.revoke_access(id).await,
-                        Action::Impersonate => {
-                            let result = http::impersonate(id).await;
-
-                            if result.is_ok() {
-                                client.session_replaced();
-                            }
-
-                            result
-                        }
-                        Action::Delete => client.delete_user(id).await,
+                        Action::RevokeLink => service.revoke_link(id).await,
+                        Action::SignOut => service.sign_out_user(id).await,
+                        Action::RevokeAccess => service.revoke_access(id).await.map(drop),
+                        // The provider's transport stops using a socket that
+                        // speaks for the session this replaced.
+                        Action::Impersonate => service.impersonate(id).await.map(drop),
+                        Action::Delete => service.delete_user(id).await,
                     };
 
                     Msg::Done(id, action, result)
@@ -643,6 +650,10 @@ impl Component for AdminUsers {
 
                 self.auth = Some(auth);
             }
+            Msg::Service(service) => {
+                self.service = service;
+                return false;
+            }
             Msg::Phrases(phrases) => return self.l10n.set(phrases),
         }
 
@@ -717,15 +728,6 @@ impl Component for AdminUsers {
 }
 
 impl AdminUsers {
-    /// The transport for the requests: the context's socket, when one is
-    /// handed over, and HTTP.
-    fn client(&self) -> Client {
-        self.auth
-            .as_ref()
-            .map(AuthContext::client)
-            .unwrap_or_default()
-    }
-
     /// The signed-in admin: `me`, or the context's user.
     fn me<'a>(&'a self, ctx: &'a Context<Self>) -> Option<&'a UserInfo> {
         match &ctx.props().me {
@@ -787,9 +789,9 @@ impl AdminUsers {
         // `notice` is a message id.
         self.busy = true;
         self.message = None;
-        let client = self.client();
+        let service = self.service.clone();
         ctx.link().send_future(async move {
-            Msg::Updated(client.update_user(id, &change).await, notice)
+            Msg::Updated(service.update_user(id, change).await, notice)
         });
     }
 

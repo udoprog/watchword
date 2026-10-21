@@ -9,10 +9,13 @@ use musli_web05::api;
 use musli_web05::web03::prelude::ws;
 use yew::Callback;
 
-use watchword_core::AuthError;
-use watchword_core::musliweb05::{AuthBroadcast, AuthUpdate};
+use watchword_core::musliweb05::{
+    AuthBroadcast, AuthUpdate, CloudflareRequest, DeleteUserRequest, IssueLinkRequest, MeRequest,
+    RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, UserUpdate, UsersRequest,
+};
+use watchword_core::{AuthError, AuthRequest, AuthResponse};
 
-use super::http::Error;
+use super::Error;
 
 /// A socket handed over to the provider, as the context carries it. Clones
 /// share whether the socket is stale.
@@ -117,6 +120,66 @@ impl SocketHandle {
     }
 }
 
+impl SocketHandle {
+    /// Sends `request` over its musli-web endpoint, as
+    /// [`request`](Self::request) does. `None` also for a request with no
+    /// endpoint, such as the cookie operations, which go over HTTP.
+    pub(super) async fn send(&self, request: &AuthRequest) -> Option<Result<AuthResponse, Error>> {
+        let result = match request {
+            AuthRequest::Me => self.request(MeRequest).await?.map(AuthResponse::User),
+            AuthRequest::UpdateAccount(change) => {
+                self.request(change.clone()).await?.map(AuthResponse::User)
+            }
+            AuthRequest::ChangePassword(change) => {
+                self.request(change.clone()).await?.map(AuthResponse::User)
+            }
+            AuthRequest::Users => self.request(UsersRequest).await?.map(AuthResponse::Users),
+            AuthRequest::CreateUser(new) => self
+                .request(new.clone())
+                .await?
+                .map(AuthResponse::CreatedUser),
+            AuthRequest::UpdateUser { id, change } => self
+                .request(UserUpdate {
+                    id: *id,
+                    change: change.clone(),
+                })
+                .await?
+                .map(AuthResponse::User),
+            AuthRequest::DeleteUser { id } => self
+                .request(DeleteUserRequest { id: *id })
+                .await?
+                .map(|()| AuthResponse::Done),
+            AuthRequest::IssueLink { id } => self
+                .request(IssueLinkRequest { id: *id })
+                .await?
+                .map(AuthResponse::Link),
+            AuthRequest::RevokeLink { id } => self
+                .request(RevokeLinkRequest { id: *id })
+                .await?
+                .map(|()| AuthResponse::Done),
+            AuthRequest::SignOutUser { id } => self
+                .request(SignOutUserRequest { id: *id })
+                .await?
+                .map(|()| AuthResponse::Done),
+            AuthRequest::RevokeAccess { id } => self
+                .request(RevokeAccessRequest { id: *id })
+                .await?
+                .map(AuthResponse::User),
+            AuthRequest::Cloudflare => self
+                .request(CloudflareRequest)
+                .await?
+                .map(AuthResponse::Cloudflare),
+            AuthRequest::SetCloudflare(config) => self
+                .request(config.clone())
+                .await?
+                .map(AuthResponse::Cloudflare),
+            _ => return None,
+        };
+
+        Some(result)
+    }
+}
+
 impl PartialEq for SocketHandle {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.inner, &other.inner)
@@ -147,14 +210,10 @@ impl Socket {
     }
 
     /// Listens on `handle` instead, calling `on_update` with each
-    /// [`AuthUpdate`]. Returns whether the socket changed.
-    pub(super) fn set(
-        &mut self,
-        handle: Option<&SocketHandle>,
-        on_update: Callback<AuthUpdate>,
-    ) -> bool {
+    /// [`AuthUpdate`]. The same socket again changes nothing.
+    pub(super) fn set(&mut self, handle: Option<&SocketHandle>, on_update: Callback<AuthUpdate>) {
         if self.handle.as_ref() == handle {
-            return false;
+            return;
         }
 
         *self = match handle {
@@ -164,8 +223,6 @@ impl Socket {
             },
             None => Self::default(),
         };
-
-        true
     }
 }
 

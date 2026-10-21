@@ -11,10 +11,10 @@ use yew::prelude::*;
 use watchword_core::musliweb05::AuthUpdate;
 use watchword_core::{Link, UserEntry, UserId};
 
-use super::client::Client;
+use super::Error;
 use super::context::use_auth;
-use super::http::Error;
 use super::listener::{Listener, Slots};
+use super::service::AuthService;
 
 /// The users list as last known, shared by [`AdminUsers`](super::AdminUsers)
 /// and the app's own components inside the same
@@ -114,7 +114,7 @@ struct Store {
     /// it differs from `generation`.
     loaded: u64,
     subscribers: Slots<Users>,
-    client: Client,
+    service: AuthService,
     check_session: Callback<()>,
 }
 
@@ -125,16 +125,16 @@ impl PartialEq for UsersStore {
 }
 
 impl UsersStore {
-    /// A store that fetches with `client`, and calls `check_session` when a
+    /// A store that fetches with `service`, and calls `check_session` when a
     /// fetch is refused with a 401.
-    pub(super) fn new(client: Client, check_session: Callback<()>) -> Self {
+    pub(super) fn new(service: AuthService, check_session: Callback<()>) -> Self {
         Self {
             inner: Rc::new(RefCell::new(Store {
                 state: Rc::default(),
                 generation: 0,
                 loaded: 0,
                 subscribers: Slots::default(),
-                client,
+                service,
                 check_session,
             })),
         }
@@ -186,18 +186,17 @@ impl UsersStore {
         (self.users(), listener)
     }
 
-    /// Fetches the list with the client the store has then.
-    #[cfg_attr(not(feature = "musliweb05"), allow(dead_code))]
-    pub(super) fn set_client(&self, client: Client) {
-        self.inner.borrow_mut().client = client;
+    /// Fetches the list with `service` from now on.
+    pub(super) fn set_service(&self, service: AuthService) {
+        self.inner.borrow_mut().service = service;
     }
 
     /// Fetches the list, superseding a fetch in flight.
     pub(super) fn load(&self) {
-        let (generation, client) = {
+        let (generation, service) = {
             let mut store = self.inner.borrow_mut();
             store.generation += 1;
-            (store.generation, store.client.clone())
+            (store.generation, store.service.clone())
         };
 
         self.change(|state| state.loading = true);
@@ -205,7 +204,7 @@ impl UsersStore {
         let inner = Rc::downgrade(&self.inner);
 
         yew::platform::spawn_local(async move {
-            let result = client.users().await;
+            let result = service.users().await;
 
             if let Some(inner) = inner.upgrade() {
                 UsersStore { inner }.loaded(generation, result);

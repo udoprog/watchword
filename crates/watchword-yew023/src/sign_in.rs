@@ -6,9 +6,11 @@ use phrasebook02::yew023::use_phrases_with;
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
+use super::Error;
 use super::browser;
-use super::http::{self, Error};
+use super::http;
 use super::l10n;
+use super::service::use_auth_service;
 use watchword_core::phrasebook02::L10N;
 use watchword_core::{AuthConfig, AuthError, LoginRequest, UserInfo};
 
@@ -40,6 +42,7 @@ pub struct SignInProps {
 /// sign-in, is shown and removed from the URL.
 #[function_component]
 pub fn SignIn(props: &SignInProps) -> Html {
+    let service = use_auth_service();
     let phrases = use_phrases_with(&L10N);
     let login = use_state(String::new);
     let password = use_state(String::new);
@@ -76,6 +79,7 @@ pub fn SignIn(props: &SignInProps) -> Html {
         let error = error.clone();
         let on_sign_in = props.on_sign_in.clone();
         let phrases = phrases.clone();
+        let service = service.clone();
 
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
@@ -96,9 +100,10 @@ pub fn SignIn(props: &SignInProps) -> Html {
             let error = error.clone();
             let on_sign_in = on_sign_in.clone();
             let phrases = phrases.clone();
+            let service = service.clone();
 
             spawn_local(async move {
-                match http::login(&request).await {
+                match service.login(request).await {
                     Ok(user) => on_sign_in.emit(user),
                     Err(e) => {
                         error.set(Some(login_error(&phrases, &e, logins)));
@@ -114,6 +119,7 @@ pub fn SignIn(props: &SignInProps) -> Html {
         let error = error.clone();
         let on_sign_in = props.on_sign_in.clone();
         let phrases = phrases.clone();
+        let service = service.clone();
 
         Callback::from(move |_: MouseEvent| {
             if *busy {
@@ -127,9 +133,10 @@ pub fn SignIn(props: &SignInProps) -> Html {
             let error = error.clone();
             let on_sign_in = on_sign_in.clone();
             let phrases = phrases.clone();
+            let service = service.clone();
 
             spawn_local(async move {
-                match http::cloudflare().await {
+                match service.cloudflare_sign_in().await {
                     Ok(user) => on_sign_in.emit(user),
                     Err(e) => {
                         error.set(Some(cloudflare_error(&phrases, &e)));

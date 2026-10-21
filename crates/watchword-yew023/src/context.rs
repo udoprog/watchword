@@ -10,17 +10,18 @@ use yew::prelude::*;
 use watchword_core::musliweb05::AuthUpdate;
 use watchword_core::{AuthConfig, UserInfo};
 
-use super::client::Client;
 use super::listener::Listener;
 #[cfg(feature = "musliweb05")]
 use super::listener::Subscribers;
-#[cfg(feature = "musliweb05")]
-use super::socket::SocketHandle;
 use super::users::{Users, UsersStore};
 
 /// The signed-in user and what the app can do about the session, given by
 /// [`AuthProvider`](super::AuthProvider) to its children. Get it with
 /// [`use_auth`], or with [`AuthSubscription`] in a struct component.
+///
+/// This is the session's state. The requests themselves, the account and
+/// admin operations, are made with the [`AuthService`](super::AuthService),
+/// a context of its own from [`use_auth_service`](super::use_auth_service).
 ///
 /// The provider gives a new context whenever the user or the config
 /// changes, such as when an admin changes the user's role elsewhere and the
@@ -40,9 +41,6 @@ pub struct AuthContext {
     pub(super) refresh: Callback<()>,
     pub(super) set_user: Callback<UserInfo>,
     pub(super) check_session: Callback<()>,
-    /// The app's socket, from [`AuthContext::set_socket`].
-    #[cfg(feature = "musliweb05")]
-    pub(super) socket: Option<SocketHandle>,
     #[cfg(feature = "musliweb05")]
     pub(super) set_socket: Callback<Option<ws::Handle>>,
     /// The users list shared inside the provider.
@@ -104,16 +102,16 @@ impl AuthContext {
     /// [`AdminUsers`](super::AdminUsers) applies the user-list updates in
     /// place.
     ///
-    /// The components also send the account and admin operations, and
-    /// [`refresh`](AuthContext::refresh)'s user, over the socket while it is
-    /// open, and over HTTP while it is not, such as while it reconnects. A
-    /// request the socket fails after sending it is not sent again, and fails
-    /// with [`http::Error::Socket`](super::http::Error::Socket). Signing in
-    /// and out, registering, impersonating, the config and
-    /// [`check_session`](AuthContext::check_session) always use HTTP. After
-    /// impersonating, or stopping it, the socket still speaks for the
-    /// session its upgrade carried, so the components use HTTP until it
-    /// next closes and reconnects with the new session cookie.
+    /// The provider's [`AuthService`](super::AuthService) also sends its
+    /// requests over the socket while it is open, and over HTTP while it is
+    /// not, such as while it reconnects, unless the app gave the provider a
+    /// [`service`](super::AuthProviderProps::service) of its own. A request
+    /// the socket fails after sending it is not sent again, and fails with
+    /// [`Error::Socket`](super::Error::Socket). Signing in and out,
+    /// registering, impersonating, the config and the link info always use
+    /// HTTP. After impersonating, or stopping it, the socket still speaks
+    /// for the session its upgrade carried, so the requests use HTTP until
+    /// it next closes and reconnects with the new session cookie.
     ///
     /// The provider also [checks the session](AuthContext::check_session)
     /// when the socket closes after being open, and every 10 seconds while
@@ -203,15 +201,6 @@ impl AuthContext {
     #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb05")))]
     pub fn on_update(&self, callback: Callback<AuthUpdate>) -> Listener {
         self.updates.subscribe(callback)
-    }
-
-    /// The transport for the account and admin requests: the socket, when
-    /// one is handed over, and HTTP.
-    pub(super) fn client(&self) -> Client {
-        Client {
-            #[cfg(feature = "musliweb05")]
-            socket: self.socket.clone(),
-        }
     }
 }
 

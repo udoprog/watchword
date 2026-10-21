@@ -1,13 +1,16 @@
 use std::string::String;
+use std::string::ToString;
 
 use phrasebook02::Phrases;
 use phrasebook02::yew023::use_phrases_with;
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
+use super::Error;
 use super::browser;
-use super::http::{self, Error};
+use super::http;
 use super::l10n;
+use super::service::use_auth_service;
 use watchword_core::phrasebook02::L10N;
 use watchword_core::{AuthError, RegisterInfo, RegisterRequest, UserInfo, validate_password};
 
@@ -39,6 +42,7 @@ enum Link {
 /// user in.
 #[function_component]
 pub fn Register(props: &RegisterProps) -> Html {
+    let service = use_auth_service();
     let phrases = use_phrases_with(&L10N);
     let link = use_state(|| Link::Loading);
     let password = use_state(String::new);
@@ -49,13 +53,15 @@ pub fn Register(props: &RegisterProps) -> Html {
     {
         let link = link.clone();
         let phrases = phrases.clone();
+        let service = service.clone();
 
         use_effect_with(props.token.clone(), move |token| {
-            let token = token.clone();
+            let token = token.to_string();
+            let service = service.clone();
             link.set(Link::Loading);
 
             spawn_local(async move {
-                link.set(match http::register_info(&token).await {
+                link.set(match service.register_info(token).await {
                     Ok(info) => Link::Valid(info),
                     Err(e) => Link::Invalid(link_error(&phrases, &e)),
                 });
@@ -82,6 +88,7 @@ pub fn Register(props: &RegisterProps) -> Html {
         let error = error.clone();
         let on_register = props.on_register.clone();
         let phrases = phrases.clone();
+        let service = service.clone();
 
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
@@ -112,9 +119,10 @@ pub fn Register(props: &RegisterProps) -> Html {
             let error = error.clone();
             let on_register = on_register.clone();
             let phrases = phrases.clone();
+            let service = service.clone();
 
             spawn_local(async move {
-                match http::register(&token, &request).await {
+                match service.register(token.to_string(), request).await {
                     Ok(user) => on_register.emit(user),
                     Err(e @ Error::Auth(AuthError::NotFound | AuthError::Gone)) => {
                         link.set(Link::Invalid(link_error(&phrases, &e)));

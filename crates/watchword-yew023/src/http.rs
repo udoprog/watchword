@@ -1,4 +1,11 @@
-//! A client for the library's `/api/auth` JSON routes.
+//! The low-level HTTP layer: one function per `/api/auth` JSON route.
+//!
+//! Apps make their requests with the [`AuthService`](super::AuthService)
+//! from [`use_auth_service`](super::use_auth_service), as watchword's own
+//! components do, so they go over the same transport: the app's socket when
+//! one is handed over, or a [`Transport`](super::Transport) the app injects.
+//! These functions always use HTTP; [`HttpTransport`](super::HttpTransport)
+//! sends every request with them, through [`send`].
 //!
 //! Requests go to the page's own origin with same-origin cookies, so the
 //! session cookie set by the server is sent along. The client uses this
@@ -6,15 +13,8 @@
 //!
 //! Each function maps an error status to [`Error::Auth`] when the body is an
 //! [`AuthError`], as every route of watchword's `axum08` feature answers.
-//!
-//! These functions always use HTTP. With the `musliweb05` feature and a socket
-//! handed to [`AuthContext::set_socket`](super::AuthContext), the components
-//! send the account and admin operations over the socket instead while it is
-//! open.
 
-use std::fmt;
 use std::string::String;
-use std::string::ToString;
 use std::vec::Vec;
 
 use gloo_net::http::{Request, RequestBuilder, Response};
@@ -22,59 +22,65 @@ use serde::de::DeserializeOwned;
 use web_sys::RequestCredentials;
 
 use watchword_core::{
-    AuthConfig, AuthError, CloudflareConfig, Link, LoginRequest, NewUser, PasswordChange,
-    RegisterInfo, RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
+    AuthConfig, AuthError, AuthRequest, AuthResponse, CloudflareConfig, Link, LoginRequest,
+    NewUser, PasswordChange, RegisterInfo, RegisterRequest, UserChange, UserEntry, UserId,
+    UserInfo,
 };
 
-/// Why a request to an `/api/auth` route failed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Error {
-    /// The server refused the request with an [`AuthError`].
-    Auth(AuthError),
-    /// The server answered with an unexpected status, such as a 500 or a 502
-    /// from a proxy, without an [`AuthError`] body.
-    Status(u16),
-    /// The server could not be reached, or its answer could not be read.
-    Network(String),
-    /// A request over the app's musli-web socket failed without an
-    /// [`AuthError`]: the server answered with a request error, such as an
-    /// internal failure, or the socket closed before the answer. Only with
-    /// the `musliweb05` feature and a socket handed to
-    /// [`AuthContext::set_socket`](super::AuthContext).
-    Socket(String),
-}
+#[doc(no_inline)]
+pub use super::Error;
 
-impl Error {
-    /// Whether the server says there is no session, or that the credentials
-    /// are wrong.
-    pub fn is_unauthorized(&self) -> bool {
-        matches!(self, Error::Auth(AuthError::Unauthorized))
-    }
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Auth(error) => error.fmt(f),
-            Error::Status(status) => write!(f, "the server answered with HTTP {status}"),
-            Error::Network(error) => write!(f, "could not reach the server: {error}"),
-            Error::Socket(error) => write!(f, "the request over the socket failed: {error}"),
+/// Sends `request` to its route and answers as the route does, the way
+/// [`HttpTransport`](super::HttpTransport) sends every request. An operation
+/// this version does not know, from a newer watchword-core, fails with
+/// [`AuthError::NotFound`].
+pub async fn send(request: AuthRequest) -> Result<AuthResponse, Error> {
+    Ok(match request {
+        AuthRequest::Config => AuthResponse::Config(config().await?),
+        AuthRequest::Me => AuthResponse::User(me().await?),
+        AuthRequest::Login(request) => AuthResponse::User(login(&request).await?),
+        AuthRequest::CloudflareSignIn => AuthResponse::User(cloudflare().await?),
+        AuthRequest::Logout => {
+            logout().await?;
+            AuthResponse::Done
         }
-    }
-}
-
-impl std::error::Error for Error {}
-
-impl From<AuthError> for Error {
-    fn from(error: AuthError) -> Self {
-        Error::Auth(error)
-    }
-}
-
-impl From<gloo_net::Error> for Error {
-    fn from(error: gloo_net::Error) -> Self {
-        Error::Network(error.to_string())
-    }
+        AuthRequest::RegisterInfo { token } => {
+            AuthResponse::RegisterInfo(register_info(&token).await?)
+        }
+        AuthRequest::Register { token, request } => {
+            AuthResponse::User(register(&token, &request).await?)
+        }
+        AuthRequest::ChangePassword(request) => {
+            AuthResponse::User(change_password(&request).await?)
+        }
+        AuthRequest::UpdateAccount(change) => AuthResponse::User(update_account(&change).await?),
+        AuthRequest::Users => AuthResponse::Users(users().await?),
+        AuthRequest::CreateUser(new) => AuthResponse::CreatedUser(create_user(&new).await?),
+        AuthRequest::UpdateUser { id, change } => {
+            AuthResponse::User(update_user(id, &change).await?)
+        }
+        AuthRequest::DeleteUser { id } => {
+            delete_user(id).await?;
+            AuthResponse::Done
+        }
+        AuthRequest::IssueLink { id } => AuthResponse::Link(issue_link(id).await?),
+        AuthRequest::RevokeLink { id } => {
+            revoke_link(id).await?;
+            AuthResponse::Done
+        }
+        AuthRequest::SignOutUser { id } => {
+            sign_out_user(id).await?;
+            AuthResponse::Done
+        }
+        AuthRequest::RevokeAccess { id } => AuthResponse::User(revoke_access(id).await?),
+        AuthRequest::Impersonate { id } => AuthResponse::User(impersonate(id).await?),
+        AuthRequest::StopImpersonating => AuthResponse::User(stop_impersonating().await?),
+        AuthRequest::Cloudflare => AuthResponse::Cloudflare(cloudflare_settings().await?),
+        AuthRequest::SetCloudflare(config) => {
+            AuthResponse::Cloudflare(set_cloudflare_settings(&config).await?)
+        }
+        _ => return Err(Error::Auth(AuthError::NotFound)),
+    })
 }
 
 /// What the sign-in page offers: `GET /api/auth/config`.
@@ -200,21 +206,21 @@ pub async fn sign_out_user(id: UserId) -> Result<(), Error> {
 
 /// Revokes a user's access: their password is cleared, their links are used
 /// up and their sessions end, until they are issued a new link. For admins,
-/// and not on themselves: `POST /api/auth/users/{id}/revoke`.
-pub async fn revoke_access(id: UserId) -> Result<(), Error> {
-    check(post(&user_path(id, "/revoke")).send().await?).await?;
-    Ok(())
+/// and not on themselves: `POST /api/auth/users/{id}/revoke`. The answer is
+/// the user as revoked.
+pub async fn revoke_access(id: UserId) -> Result<UserInfo, Error> {
+    read(post(&user_path(id, "/revoke")).send().await?).await
 }
 
 /// Signs this browser in as another user, for admins when the server enables
 /// impersonation: `POST /api/auth/users/{id}/impersonate`. The session
-/// cookie is replaced; reload the user afterwards, such as with
-/// [`AuthContext::refresh`](super::AuthContext::refresh). The user then has
-/// [`impersonated_by`](UserInfo::impersonated_by) set, and
+/// cookie is replaced, and the answer is the user, with
+/// [`impersonated_by`](UserInfo::impersonated_by) set; reload the user
+/// afterwards, such as with
+/// [`AuthContext::refresh`](super::AuthContext::refresh).
 /// [`stop_impersonating`] returns to the admin.
-pub async fn impersonate(id: UserId) -> Result<(), Error> {
-    check(post(&user_path(id, "/impersonate")).send().await?).await?;
-    Ok(())
+pub async fn impersonate(id: UserId) -> Result<UserInfo, Error> {
+    read(post(&user_path(id, "/impersonate")).send().await?).await
 }
 
 /// Ends the impersonated session this browser holds and signs the admin who

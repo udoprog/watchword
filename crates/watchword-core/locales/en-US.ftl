@@ -56,6 +56,7 @@ watchword-failed-checking-session = The server could not be asked who is signed 
 watchword-cause-status = the server answered with HTTP { $status }
 watchword-cause-network = could not reach the server: { $detail }
 watchword-cause-socket = the request over the socket failed: { $detail }
+watchword-cause-unexpected-response = the answer was not for the request made
 watchword-cause-unauthorized = not signed in
 watchword-cause-forbidden = not allowed
 watchword-cause-not-found = not found

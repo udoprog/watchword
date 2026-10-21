@@ -10,7 +10,7 @@ use std::string::ToString;
 use phrasebook02::{Phrases, args};
 use yew::prelude::*;
 
-use super::http::Error;
+use super::Error;
 use watchword_core::{AuthError, Conflict, Invalid, Role};
 
 /// The message for why a request is invalid.
@@ -49,6 +49,7 @@ pub(super) fn cause(phrases: &Phrases, error: &Error) -> String {
         Error::Socket(detail) => {
             return phrases.msg("watchword-cause-socket", &args!(detail = detail.as_str()));
         }
+        Error::UnexpectedResponse => "watchword-cause-unexpected-response",
         Error::Auth(AuthError::Invalid(reason)) => return invalid(phrases, reason),
         Error::Auth(AuthError::Unauthorized) => "watchword-cause-unauthorized",
         Error::Auth(AuthError::Forbidden) => "watchword-cause-forbidden",

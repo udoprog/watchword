@@ -7,9 +7,10 @@ use phrasebook02::{Phrases, args};
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
+use super::Error;
 use super::context::use_auth;
-use super::http::{self, Error};
 use super::l10n;
+use super::service::use_auth_service;
 use watchword_core::phrasebook02::L10N;
 use watchword_core::{AuthError, UserInfo};
 
@@ -37,13 +38,14 @@ pub struct UserMenuProps {
 /// While an admin impersonates the user ([`UserInfo::impersonated_by`]), a
 /// banner before the menu button says whom they are acting as, with a Stop
 /// impersonating button that signs the admin back in (see
-/// [`http::stop_impersonating`]).
+/// [`AuthService::stop_impersonating`](super::AuthService::stop_impersonating)).
 ///
 /// The menu is a button that opens a list; picking an item closes it. Use it
 /// inside [`AuthProvider`](super::AuthProvider).
 #[function_component]
 pub fn UserMenu(props: &UserMenuProps) -> Html {
     let auth = use_auth();
+    let service = use_auth_service();
     let phrases = use_phrases_with(&L10N);
     let open = use_state(|| false);
     let stopping = use_state(|| false);
@@ -71,6 +73,7 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
 
     let on_stop = {
         let auth = auth.clone();
+        let service = service.clone();
         let stopping = stopping.clone();
         let stop_error = stop_error.clone();
         let done = props.on_stop_impersonating.clone();
@@ -85,15 +88,17 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
             stop_error.set(None);
 
             let auth = auth.clone();
+            let service = service.clone();
             let stopping = stopping.clone();
             let stop_error = stop_error.clone();
             let done = done.clone();
             let phrases = phrases.clone();
 
             spawn_local(async move {
-                match http::stop_impersonating().await {
+                // The provider's transport stops using a socket that speaks
+                // for the session this replaced.
+                match service.stop_impersonating().await {
                     Ok(admin) => {
-                        auth.client().session_replaced();
                         auth.set_user(admin);
                         done.emit(());
                     }

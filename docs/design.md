@@ -743,9 +743,42 @@ before `L10N` so its messages win. Arguments are placed by the message
 (`Delete { $name }?`), and where the components style an argument (the name in
 `<strong>`, the host in `<code>`), they wrap whatever the translation puts in
 its place. Tests run `phrasebook::check::catalog` on `L10N` and check that the
-ids the code names and the ids the catalog defines are the same set. They talk to the
-server through `watchword::yew023::http`, which uses gloo-net with same-origin
-cookies, so the library does not depend on the app's gloo version.
+ids the code names and the ids the catalog defines are the same set.
+
+The components make every request with the provider's `AuthService`
+(decision 30), the same public service an app's components use:
+
+- `Transport` is the seam: one method, `send(&self, AuthRequest) ->
+  TransportFuture<'_>`, a boxed local future of `Result<AuthResponse,
+  Error>`, so it works as `Rc<dyn Transport>` in wasm. The requests whose
+  `AuthRequest::cookie()` is set must go over HTTP in a browser; a test
+  transport instead keeps the session from `SessionCookie::Set` and drops it
+  on `Clear`.
+- `HttpTransport` sends each request to its route with `http::send`. The
+  `http` module stays public as the low-level layer: one function per
+  route (gloo-net with same-origin cookies, so the library does not depend
+  on the app's gloo version), the Google URLs, which are navigations rather
+  than requests, and `send`.
+- `AuthService` (clone, equal by its transport) holds an `Rc<dyn
+  Transport>` and has one `async` method per operation, which builds the
+  `AuthRequest` and takes the expected `AuthResponse` variant apart; any
+  other answer is `Error::UnexpectedResponse`. The operations are
+  watchword's, so a new one is a new method and a new `AuthRequest`
+  variant, which a transport forwarding requests carries unchanged.
+  `AuthService::new(transport)` builds one; `Default` is over
+  `HttpTransport`.
+- `Error` (formerly `http::Error`, still re-exported there) is
+  `#[non_exhaustive]`, since app transports construct it.
+- `use_auth_service()` reads the `AuthService` context, which
+  `<AuthProvider>` provides around everything it renders, the sign-in and
+  registration pages included; outside a provider it is a service over
+  HTTP, so `<SignIn>` and `<Register>` still work alone. It is a context of
+  its own, apart from `AuthContext`, so a component that only shows the
+  user does not render again when the service changes, and the provider no
+  longer gives a new `AuthContext` when the socket is handed over.
+- Without the `service` prop the provider's service is over its own
+  default transport: the socket from `set_socket` while open and not stale,
+  HTTP otherwise (2.7).
 
 - `<AuthProvider>` is the gate.
   - It fetches `/api/auth/config` and `/api/auth/me`.
@@ -754,8 +787,13 @@ cookies, so the library does not depend on the app's gloo version.
   - It shows `<SignIn>` when signed out, and `<Register>` on `/register/{token}`.
     Otherwise it renders its children with an `AuthContext`.
   - Props: `title` (the app's name), `signed_out_notice`, which overrides
-    the "session has ended" message `watchword-session-ended`, and
-    `sign_in_path`, the page `RequireSession` redirects to.
+    the "session has ended" message `watchword-session-ended`,
+    `sign_in_path`, the page `RequireSession` redirects to, and `service`,
+    an `AuthService` over the app's own transport, which the provider makes
+    its own requests with (config, me, logout, `check_session()`) and gives
+    to everything it renders. With an app's service a socket handed over
+    is still followed for broadcasts and the session checks, but carries no
+    requests. Changing the prop refetches the shared users list.
   - Signing in returns to the URL's `?next=` before the children render,
     so the app's router starts there. Only a same-origin path is followed:
     it must start with a single `/` and hold no `\` or control character
@@ -769,7 +807,7 @@ cookies, so the library does not depend on the app's gloo version.
 - `use_auth() -> AuthContext` gives `user: Rc<UserInfo>`, `config`,
   `is_admin()`, `sign_out()`, `refresh()`, `set_user(UserInfo)` and
   `check_session()`.
-  - `check_session()` asks `GET /api/auth/me` whether the session is still
+  - `check_session()` asks `Me` (`GET /api/auth/me`) whether the session is still
     live. A 401 there shows `<SignIn>` with the signed-out notice, so a user
     whose session ended elsewhere finds out instead of facing a dead page.
     With a socket from `set_socket` the provider calls it itself when the
@@ -815,7 +853,7 @@ cookies, so the library does not depend on the app's gloo version.
 - `<UserMenu on_account on_admin on_stop_impersonating>` shows the user's name,
   Account, Users (for admins only) and Sign out. While an admin impersonates
   the user it also shows a banner, "Impersonating {user} as {admin}.", with a
-  Stop impersonating button that calls `http::stop_impersonating`, sets the
+  Stop impersonating button that calls `AuthService::stop_impersonating`, sets the
   admin as the user and calls `on_stop_impersonating` (optional).
 - `<AdminUsers>` covers:
   - the user list, filtered and paged by `query: UsersQuery` (`page_size`,
@@ -1116,10 +1154,11 @@ let auth = use_auth();                      // or ctx.link().context::<AuthConte
 auth.set_socket(Some(service.handle().clone()));   // a musli_web::web03::Handle
 ```
 
-From then on `AuthContext` sends the operations of the band through the
-socket while its state is open, and over HTTP otherwise, so a request made
-while the socket reconnects still works. `refresh()` uses `Me`.
-`<AccountPanel>` and `<AdminUsers>` take their client from the context, so an
+From then on the provider's default transport (2.6) sends the operations of
+the band through the socket while its state is open, and over HTTP
+otherwise, so a request made while the socket reconnects still works.
+`refresh()` and `check_session()` use `Me`. The components, and the app's
+own through `use_auth_service()`, take the service from its context, so an
 app passes no new props whether it hands its own components the handle as a
 prop or through a `ContextProvider`. With a socket, `<AuthProvider>` listens
 for `AuthBroadcast`: `Me` replaces the context's user, and the shared users
@@ -1127,9 +1166,9 @@ list (2.6), which `<AdminUsers>` shows, applies
 `UserCreated`/`UserChanged`/`UserDeleted` in place, so its `refresh` prop is
 no longer needed (it stays for HTTP-only apps). On `Resync` the provider
 replaces the user as for `Me` and the list is fetched again. Every update is
-then passed to the app's `on_update` listeners. `http::Error`
-gains a variant for a socket request error; a refusal over the socket is
-`http::Error::Auth`, as over HTTP.
+then passed to the app's `on_update` listeners. `Error`
+has a variant for a socket request error; a refusal over the socket is
+`Error::Auth`, as over HTTP.
 
 As built: watchword-yew023 has a `musliweb05` feature, which watchword's
 `musliweb05` turns on with `yew023`. `set_socket` with the handle already set
@@ -1161,23 +1200,28 @@ user with a live link. A password reset through a link
 changes nothing a broadcast shows, so that link's expiry stays shown until the
 list is next fetched.
 
-As built, the requests: the components take a crate-private client from the
-context, which sends each operation of the band over the socket with
-musli-web's `Handle::call` and falls back to HTTP only when the error says
-the request was never sent (`is_not_connected`: the socket is not open), so
-nothing reaches the server twice. A refusal is decoded from the typed error
-into `http::Error::Auth`. A request the socket fails otherwise after sending
-it, such as when the socket closes before the answer or the server fails it
-with an internal error, fails with `http::Error::Socket`. The public `http` functions stay HTTP-only. Admin
-`RevokeAccess` answers with the user over the socket and with nothing over
-HTTP; the client drops the user, as the component did not use it.
+As built, the requests: the provider's default transport maps each
+`AuthRequest` of the band onto its endpoint and sends it over the socket
+with musli-web's `Handle::call`, building the `AuthResponse` from the
+endpoint's own response type (`AuthResponse` has no `Decode`). It falls
+back to HTTP only when the error says the request was never sent
+(`is_not_connected`: the socket is not open), so nothing reaches the server
+twice; requests with no endpoint (those with a `cookie()`, the config, the
+link info) go over HTTP. A refusal is decoded from the typed error into
+`Error::Auth`. A request the socket fails otherwise after sending it, such
+as when the socket closes before the answer or the server fails it with an
+internal error, fails with `Error::Socket`. The public `http` functions
+stay HTTP-only. `RevokeAccess` and `Impersonate` answer with the user over
+both transports; `<AdminUsers>` drops it, as before.
 
 Impersonating does not end the admin's session, and the socket's server-side
 `Connection` keeps the session its upgrade carried. So after
 `POST .../impersonate` or `/impersonate/stop` replaces the cookie, an open
 socket still speaks for the earlier session: `Me` over it would answer the
-admin, and its `AuthUpdate::Me` would put the admin back. The components
-that make those two requests mark the socket stale, and while it is stale
+admin, and its `AuthUpdate::Me` would put the admin back. The default
+transport marks the socket stale after a request whose `cookie()` is
+`CookieChange::Replace` succeeds over HTTP, whichever component (or app
+code) made it, and while it is stale
 the requests go over HTTP and `<AuthProvider>` ignores its `Me`. It stops
 being stale when it next closes: its reconnect upgrades with the new
 cookie. An app that keeps its socket open across impersonation therefore
@@ -1187,7 +1231,7 @@ changes. musli-web reconnects cleanly with `Service::close` and then
 the stale mark, and `open` upgrades again with the current cookie, keeping
 the same `Handle`, so nothing is handed over again. `examples/app` does
 this from `<AdminUsers>`'s `on_impersonate` and `<UserMenu>`'s
-`on_stop_impersonating`, which both run after the components marked the
+`on_stop_impersonating`, which both run after the transport marked the
 socket stale.
 
 The example's wiring, as a reference: a shared `api` crate with the app's
@@ -1210,7 +1254,7 @@ no musli-web macros, so it needs no alias.
 | Operation | Why it cannot use the socket |
 |---|---|
 | `GET /api/auth/config`, the first `GET /api/auth/me` | `<AuthProvider>` needs them to decide between the sign-in page and the app, before any socket exists; the upgrade requires a session |
-| `check_session()` (`GET /api/auth/me`) | it runs because the socket closed or does not open |
+| `check_session()` (`GET /api/auth/me`) | it runs because the socket closed or does not open, so the default transport finds it closed and uses HTTP; an app's own call while the socket is open asks `Me` over it, which reads the session again for each request |
 | `POST /api/auth/login`, `/logout`, `/cloudflare` | they set or clear the `HttpOnly` session cookie, which only an HTTP response can do; there is no socket before sign-in |
 | Cloudflare Access | the credentials are the Access JWT and headers on an HTTP request, checked when signing in (and by `config` for `AuthConfig::cloudflare`) |
 | `GET`/`POST /api/auth/register/{token}` | the user is signed out; registering sets the cookie |
@@ -1572,3 +1616,42 @@ once the release is on crates.io.
     enums. `Login` without the caller's address is refused (and logged)
     rather than throttled under a shared placeholder; the HTTP route keeps
     answering a missing connect-info with its 500, as before.
+30. **An injectable transport under a public `AuthService`, in a context of
+    its own.** watchword's components sent their requests through a
+    crate-private client that preferred the app's socket, while an app's own
+    components could only call the public `http` functions: an app's
+    account page then behaved differently from watchword's (transport, the
+    stale socket after impersonating), and nothing could be swapped in for
+    tests. Now there is one public service, `AuthService`, with an `async`
+    method per operation, over a small `Transport` trait that carries an
+    `AuthRequest` and returns its `AuthResponse` (decision 29). The trait
+    has one method and no knowledge of the operations, so watchword adds
+    operations to the service without breaking implementors; it returns a
+    boxed `'_` local future, so it is object safe, needs no `Send` (wasm has
+    one thread) and may borrow the transport. Cookie operations are told
+    apart by `AuthRequest::cookie()` rather than a second trait method, the
+    same marker the server's adapters use. The provider's default transport
+    is the old behaviour (socket while open and fresh, HTTP otherwise), and
+    it now marks the socket stale itself after a cookie-replacing request,
+    instead of each component that makes one; the provider makes its own
+    requests (config, me, logout, the session check) with the service too,
+    so a test transport drives the whole gate.
+    The service is injected with a `service: Option<AuthService>` prop
+    rather than a bare transport: props must be `PartialEq`, which an
+    `Rc<dyn Transport>` is not, and `AuthService::new(transport)` is the one
+    expression an app writes either way. A default transport the app could
+    wrap is not public: wrapping it would also need the socket plumbing,
+    and nobody has asked; `HttpTransport` is public for wrapping. The
+    service is its own context because `AuthContext` is state that
+    components render from: keeping the transport (and the socket) out of
+    it means handing over a socket or changing the transport renders
+    nothing that only shows the user, and `AuthContext` keeps only the
+    session's actions (`sign_out`, `refresh`, `set_user`, `check_session`,
+    `set_socket`). `use_auth_service()` falls back to HTTP outside a
+    provider rather than panicking, since `<SignIn>` and `<Register>` are
+    public and can be used alone. The end-to-end tests run the service over
+    a transport that calls `Auth::dispatch` on a `MemoryStore` (in the root
+    crate, which can depend on both sides); rendering the components
+    themselves in those tests would need yew's `ssr` feature or a
+    wasm-bindgen-test browser, and SSR runs no effects or futures, so the
+    component tests stay with their pure functions.

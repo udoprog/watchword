@@ -210,6 +210,9 @@ pub use watchword_core::phrasebook02;
 #[doc(inline)]
 pub use watchword_yew023 as yew023;
 
+#[cfg(all(test, feature = "yew023", feature = "server"))]
+mod yew023_tests;
+
 pub use self::types::{
     Access, AuthConfig, Conflict, MIN_PASSWORD_LEN, Method, Role, UserId, is_same_origin_path,
 };

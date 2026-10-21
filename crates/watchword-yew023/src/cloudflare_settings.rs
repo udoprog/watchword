@@ -5,10 +5,11 @@ use phrasebook02::{Args, Phrases, args};
 use yew::platform::spawn_local;
 use yew::prelude::*;
 
+use super::Error;
 use super::browser;
 use super::context::use_auth;
-use super::http::Error;
 use super::l10n::{self, error_message};
+use super::service::use_auth_service;
 use watchword_core::phrasebook02::L10N;
 use watchword_core::{AuthError, CloudflareConfig};
 
@@ -63,6 +64,7 @@ enum Message {
 #[function_component]
 pub fn AdminCloudflare(props: &AdminCloudflareProps) -> Html {
     let auth = use_auth();
+    let service = use_auth_service();
     let phrases = use_phrases_with(&L10N);
     let loaded = use_state(|| Loaded::Loading);
     let saving = use_state(|| false);
@@ -70,12 +72,13 @@ pub fn AdminCloudflare(props: &AdminCloudflareProps) -> Html {
 
     {
         let auth = auth.clone();
+        let service = service.clone();
         let phrases = phrases.clone();
         let loaded = loaded.clone();
 
         use_effect_with((), move |()| {
             spawn_local(async move {
-                match auth.client().cloudflare_settings().await {
+                match service.cloudflare_settings().await {
                     Ok(settings) => loaded.set(Loaded::Settings(settings)),
                     Err(error) => {
                         let text = failure(&phrases, &error, "watchword-failed-loading-cloudflare");
@@ -92,6 +95,7 @@ pub fn AdminCloudflare(props: &AdminCloudflareProps) -> Html {
 
     let on_change = {
         let auth = auth.clone();
+        let service = service.clone();
         let phrases = phrases.clone();
         let loaded = loaded.clone();
         let saving = saving.clone();
@@ -113,6 +117,7 @@ pub fn AdminCloudflare(props: &AdminCloudflareProps) -> Html {
             message.set(None);
 
             let auth = auth.clone();
+            let service = service.clone();
             let phrases = phrases.clone();
             let loaded = loaded.clone();
             let saving = saving.clone();
@@ -120,7 +125,7 @@ pub fn AdminCloudflare(props: &AdminCloudflareProps) -> Html {
             let on_saved = on_saved.clone();
 
             spawn_local(async move {
-                match auth.client().set_cloudflare_settings(&settings).await {
+                match service.set_cloudflare_settings(settings).await {
                     Ok(stored) => {
                         loaded.set(Loaded::Settings(stored.clone()));
                         message.set(Some(Message::Notice(l10n::text(
@@ -205,7 +210,7 @@ pub struct CloudflareSettingsProps {
     pub value: CloudflareConfig,
     /// Called with the changed settings on each change: a toggle, or a text
     /// field once it is left. The app saves them, such as with
-    /// [`http::set_cloudflare_settings`](super::http::set_cloudflare_settings)
+    /// [`AuthService::set_cloudflare_settings`](super::AuthService::set_cloudflare_settings)
     /// (which [`AdminCloudflare`] does for it), and passes them back as
     /// `value`.
     pub on_change: Callback<CloudflareConfig>,
