@@ -4,9 +4,9 @@ use musli_web05::api::DecodeBody;
 use musli_web05::ws::{self, Incoming, Outgoing};
 
 use super::{
-    AuthUpdate, CloudflareRequest, DeleteUserRequest, IssueLinkRequest, MeRequest, Request,
-    RequestError, RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, Updates, UserUpdate,
-    UsersRequest,
+    AuthUpdate, CloudflareRequest, DeleteUserRequest, GoogleRequest, IssueLinkRequest, MeRequest,
+    Request, RequestError, RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, Updates,
+    UserUpdate, UsersRequest,
 };
 use crate::Auth;
 use crate::axum08::SignedIn;
@@ -306,7 +306,8 @@ impl Connection {
     /// unless the user is an admin now, and the operations enforce the rest
     /// of their rules
     /// themselves. Without the `cloudflare` feature, the Cloudflare settings
-    /// endpoints refuse an admin with [`AuthError::NotFound`].
+    /// endpoints refuse an admin with [`AuthError::NotFound`], and so do the
+    /// Google settings endpoints without the `google` feature.
     ///
     /// The response is the endpoint's value. A refused request fails with a
     /// [`RequestError`] that musli-web sends as the typed [`AuthError`], the
@@ -472,6 +473,11 @@ pub(super) fn decode(request: Request, body: &mut impl ReadBody) -> Option<AuthR
             AuthRequest::Cloudflare
         }
         Request::SetCloudflare => AuthRequest::SetCloudflare(body.read()?),
+        Request::Google => {
+            let GoogleRequest = body.read()?;
+            AuthRequest::Google
+        }
+        Request::SetGoogle => AuthRequest::SetGoogle(body.read()?),
         Request::Unknown(_) => return None,
     };
 

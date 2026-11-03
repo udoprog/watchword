@@ -453,3 +453,74 @@ async fn signing_in_with_google_returns_to_next() {
     // A state that was never handed out has no `next`.
     fails_with(&app, &[("code", &code), ("state", "forged")], "auth-failed").await;
 }
+
+/// An admin sets the client at runtime through `/api/auth/google/settings`,
+/// which never returns the secret, and signing in follows it at once; a
+/// regular user is refused, and so is changing a fixed client.
+#[tokio::test]
+async fn settings_routes_set_the_client_at_runtime() {
+    let public_url = Url::parse("https://app.example").unwrap();
+    let config = GoogleConfig::new("client", "secret", &public_url).unwrap();
+    let google = FakeGoogle::start(&config).await.unwrap();
+
+    let runtime = Auth::builder(MemoryStore::new(), generate_session_key())
+        .google_public_url(public_url)
+        .google_endpoints(google.endpoints())
+        .build();
+    let app = router(&runtime);
+    let admin = admin(&runtime, &app).await;
+    let (_, regular) = regular(&app, &admin, "erin").await;
+    let uri = "/api/auth/google/settings";
+
+    let off = call(&app, Method::GET, uri, Some(&admin), None).await;
+    assert_eq!(off.status, StatusCode::OK, "{}", off.body);
+    assert_eq!(
+        off.body,
+        json!({ "enabled": false, "client_id": "", "has_secret": false, "fixed": false })
+    );
+    let config = call(&app, Method::GET, "/api/auth/config", None, None).await;
+    assert_eq!(config.body["google"], json!(false));
+
+    let body = json!({ "enabled": true, "client_id": "client", "client_secret": "secret" });
+
+    for (method, body) in [(Method::GET, None), (Method::PUT, Some(body.clone()))] {
+        let refused = call(&app, method, uri, Some(&regular), body).await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN);
+    }
+
+    let saved = call(&app, Method::PUT, uri, Some(&admin), Some(body)).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    assert_eq!(
+        saved.body,
+        json!({ "enabled": true, "client_id": "client", "has_secret": true, "fixed": false })
+    );
+    assert!(!saved.body.to_string().contains("\"secret\""));
+
+    let config = call(&app, Method::GET, "/api/auth/config", None, None).await;
+    assert_eq!(config.body["google"], json!(true));
+
+    let token = invite(&app, &admin, "new@example.com").await;
+    let url = start(&app, &format!("/api/auth/google/register/{token}"), None).await;
+    signed_in_as(&app, &google, &url, account("sub:new", "new@example.com")).await;
+
+    let (fixed, _google) = google_auth().await;
+    let app = router(&fixed);
+    let admin = super::admin(&fixed, &app).await;
+    let shown = call(&app, Method::GET, uri, Some(&admin), None).await;
+    assert_eq!(shown.body["fixed"], json!(true));
+    let refused = call(
+        &app,
+        Method::PUT,
+        uri,
+        Some(&admin),
+        Some(json!({ "enabled": false, "client_id": "other" })),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+
+    let plain = auth();
+    let app = router(&plain);
+    let admin = super::admin(&plain, &app).await;
+    let missing = call(&app, Method::GET, uri, Some(&admin), None).await;
+    assert_eq!(missing.status, StatusCode::NOT_FOUND);
+}

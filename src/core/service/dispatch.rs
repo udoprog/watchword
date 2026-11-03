@@ -141,7 +141,9 @@ impl Auth {
     /// apply for the user to be signed in (or out) as answered.
     ///
     /// Without the `cloudflare` feature, the Cloudflare requests are refused
-    /// with [`AuthError::NotFound`], after the same checks as with it.
+    /// with [`AuthError::NotFound`], after the same checks as with it, and
+    /// so are the Google settings requests without the `google` feature or
+    /// when Google sign-in may not be configured (see `Auth::google`).
     /// [`AuthRequest::Login`] needs the caller's
     /// [`address`](Caller::address) and is refused with
     /// [`AuthError::Forbidden`], logged as an error, without one.
@@ -274,6 +276,16 @@ impl Auth {
                         .await?,
                 ))
             }
+            AuthRequest::Google => {
+                self.caller_admin(caller).await?;
+                Dispatched::new(AuthResponse::Google(self.google_settings().await?))
+            }
+            AuthRequest::SetGoogle(update) => {
+                let (admin, session) = self.caller_admin(caller).await?;
+                Dispatched::new(AuthResponse::Google(
+                    self.set_google_settings(&admin, &session, update).await?,
+                ))
+            }
             // Unreachable while watchword-core is pinned to this version: an
             // operation is added to both at once.
             _ => return Err(AuthError::NotFound.into()),
@@ -383,6 +395,36 @@ impl Auth {
         _: &Session,
         _: crate::types::CloudflareConfig,
     ) -> Result<crate::types::CloudflareConfig> {
+        Err(AuthError::NotFound.into())
+    }
+
+    #[cfg(feature = "google")]
+    async fn google_settings(&self) -> Result<crate::types::GoogleSettings> {
+        Ok(self.google().await?.ok_or(AuthError::NotFound)?)
+    }
+
+    #[cfg(not(feature = "google"))]
+    async fn google_settings(&self) -> Result<crate::types::GoogleSettings> {
+        Err(AuthError::NotFound.into())
+    }
+
+    #[cfg(feature = "google")]
+    async fn set_google_settings(
+        &self,
+        admin: &User,
+        session: &Session,
+        update: crate::types::GoogleSettingsUpdate,
+    ) -> Result<crate::types::GoogleSettings> {
+        self.set_google(admin, session, update).await
+    }
+
+    #[cfg(not(feature = "google"))]
+    async fn set_google_settings(
+        &self,
+        _: &User,
+        _: &Session,
+        _: crate::types::GoogleSettingsUpdate,
+    ) -> Result<crate::types::GoogleSettings> {
         Err(AuthError::NotFound.into())
     }
 }

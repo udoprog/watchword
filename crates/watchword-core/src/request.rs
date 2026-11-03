@@ -5,8 +5,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::{
-    AuthConfig, CloudflareConfig, CreatedUser, Link, LoginRequest, NewUser, PasswordChange,
-    RegisterInfo, RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
+    AuthConfig, CloudflareConfig, CreatedUser, GoogleSettings, GoogleSettingsUpdate, Link,
+    LoginRequest, NewUser, PasswordChange, RegisterInfo, RegisterRequest, UserChange, UserEntry,
+    UserId, UserInfo,
 };
 
 /// One operation of watchword's service, as the server's `Auth::dispatch`
@@ -124,6 +125,12 @@ pub enum AuthRequest {
     /// Stores and applies the Cloudflare Access settings. Admins. `PUT
     /// /api/auth/cloudflare`, the musli-web endpoint `SetCloudflare`.
     SetCloudflare(CloudflareConfig),
+    /// The Google sign-in settings. Admins. `GET /api/auth/google/settings`,
+    /// the musli-web endpoint `Google`.
+    Google,
+    /// Stores and applies the Google sign-in settings. Admins. `PUT
+    /// /api/auth/google/settings`, the musli-web endpoint `SetGoogle`.
+    SetGoogle(GoogleSettingsUpdate),
 }
 
 impl AuthRequest {
@@ -158,7 +165,9 @@ impl AuthRequest {
             | AuthRequest::SignOutUser { .. }
             | AuthRequest::RevokeAccess { .. }
             | AuthRequest::Cloudflare
-            | AuthRequest::SetCloudflare(..) => None,
+            | AuthRequest::SetCloudflare(..)
+            | AuthRequest::Google
+            | AuthRequest::SetGoogle(..) => None,
         }
     }
 }
@@ -203,6 +212,10 @@ pub enum AuthResponse {
     /// [`Cloudflare`](AuthRequest::Cloudflare) and
     /// [`SetCloudflare`](AuthRequest::SetCloudflare).
     Cloudflare(CloudflareConfig),
+    /// The Google sign-in settings, the answer to
+    /// [`Google`](AuthRequest::Google) and
+    /// [`SetGoogle`](AuthRequest::SetGoogle).
+    Google(GoogleSettings),
     /// Done, with nothing to answer: HTTP's 204, musli-web's `()`.
     Done,
 }
@@ -215,7 +228,8 @@ mod musli {
 
     use super::AuthResponse;
     use crate::{
-        AuthConfig, CloudflareConfig, CreatedUser, Link, RegisterInfo, UserEntry, UserInfo,
+        AuthConfig, CloudflareConfig, CreatedUser, GoogleSettings, Link, RegisterInfo, UserEntry,
+        UserInfo,
     };
 
     /// Encodes as the value the variant carries, `()` for
@@ -233,6 +247,7 @@ mod musli {
         Link: Encode<M>,
         RegisterInfo: Encode<M>,
         CloudflareConfig: Encode<M>,
+        GoogleSettings: Encode<M>,
         (): Encode<M>,
     {
         type Encode = Self;
@@ -249,6 +264,7 @@ mod musli {
                 AuthResponse::Link(value) => value.encode(encoder),
                 AuthResponse::RegisterInfo(value) => value.encode(encoder),
                 AuthResponse::Cloudflare(value) => value.encode(encoder),
+                AuthResponse::Google(value) => value.encode(encoder),
                 AuthResponse::Done => ().encode(encoder),
             }
         }

@@ -23,16 +23,16 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 use super::super::{
-    CloudflareRequest, DeleteUserRequest, IssueLinkRequest, MeRequest, RevokeAccessRequest,
-    RevokeLinkRequest, SignOutUserRequest, UserUpdate, UsersRequest,
+    CloudflareRequest, DeleteUserRequest, GoogleRequest, IssueLinkRequest, MeRequest,
+    RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, UserUpdate, UsersRequest,
 };
 use super::{PASSWORD, auth, pending, root, user};
 use crate::axum08::SignedIn;
 use crate::musliweb05::{Connection, RequestError};
 use crate::store::StoreError;
 use crate::types::{
-    AuthError, CloudflareConfig, Conflict, Invalid, NewUser, PasswordChange, Role, UserChange,
-    UserEntry, UserId, UserInfo,
+    AuthError, CloudflareConfig, Conflict, GoogleSettingsUpdate, Invalid, NewUser, PasswordChange,
+    Role, UserChange, UserEntry, UserId, UserInfo,
 };
 use crate::{Auth, AuthEvent};
 
@@ -374,7 +374,7 @@ impl Drop for Client {
 fn routes_watchwords_endpoints() {
     type Or = ws::Or<AloneHandler, Connection>;
 
-    for id in 32000..=32012 {
+    for id in 32000..=32014 {
         let id = api::MessageId::new(id).unwrap();
         assert!(
             matches!(app::Request::from_id(id), app::Request::Auth(..)),
@@ -386,7 +386,7 @@ fn routes_watchwords_endpoints() {
         );
     }
 
-    for id in [1, 500, 31999, 32013, 32254, 32255, 32256] {
+    for id in [1, 500, 31999, 32015, 32254, 32255, 32256] {
         let id = api::MessageId::new(id).unwrap();
         assert!(
             !matches!(app::Request::from_id(id), app::Request::Auth(..)),
@@ -632,6 +632,60 @@ async fn cloudflare_settings_are_for_admins() {
         let not_found = Some(AuthError::NotFound);
         assert_eq!(admin.refused(CloudflareRequest).await, not_found);
         assert_eq!(admin.refused(settings).await, not_found);
+    }
+}
+
+/// An admin reads and saves the Google sign-in settings over the socket, as
+/// over HTTP, never seeing the secret; a regular user is refused both.
+/// Without the `google` feature there are no settings, as there is no route.
+#[tokio::test]
+async fn google_settings_are_for_admins() {
+    #[cfg(feature = "google")]
+    let auth = Auth::builder(
+        crate::store::MemoryStore::new(),
+        crate::core::generate_session_key(),
+    )
+    .google_public_url(crate::google::Url::parse("https://app.example").unwrap())
+    .build();
+    #[cfg(not(feature = "google"))]
+    let auth = auth();
+    let root = root(&auth).await;
+    let erin = user(&auth, &root, "erin", Role::Regular).await;
+    let server = Server::new(&auth).await;
+    let admin = server.client(&root).await;
+    let regular = server.client(&erin).await;
+
+    let update = GoogleSettingsUpdate {
+        enabled: true,
+        client_id: "client".to_owned(),
+        client_secret: Some("secret".to_owned()),
+    };
+
+    let forbidden = Some(AuthError::Forbidden);
+    assert_eq!(regular.refused(GoogleRequest).await, forbidden);
+    assert_eq!(regular.refused(update.clone()).await, forbidden);
+
+    #[cfg(feature = "google")]
+    {
+        use crate::types::GoogleSettings;
+
+        let stored: GoogleSettings = admin.send(GoogleRequest).await.unwrap();
+        assert_eq!(stored, GoogleSettings::default());
+
+        let saved: GoogleSettings = admin.send(update).await.unwrap();
+        assert!(saved.enabled && saved.has_secret && !saved.fixed);
+        assert_eq!(auth.google().await.unwrap(), Some(saved.clone()));
+        assert!(auth.offers_google().await.unwrap());
+
+        let stored: GoogleSettings = admin.send(GoogleRequest).await.unwrap();
+        assert_eq!(stored, saved);
+    }
+
+    #[cfg(not(feature = "google"))]
+    {
+        let not_found = Some(AuthError::NotFound);
+        assert_eq!(admin.refused(GoogleRequest).await, not_found);
+        assert_eq!(admin.refused(update).await, not_found);
     }
 }
 

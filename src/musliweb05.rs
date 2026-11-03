@@ -43,6 +43,8 @@
 //! | [`RevokeAccess`] | 32010 | [`RevokeAccessRequest`] | [`UserInfo`] |
 //! | [`Cloudflare`] | 32011 | [`CloudflareRequest`] | [`CloudflareConfig`] |
 //! | [`SetCloudflare`] | 32012 | [`CloudflareConfig`] | [`CloudflareConfig`] |
+//! | [`Google`] | 32013 | [`GoogleRequest`] | [`GoogleSettings`](crate::types::GoogleSettings) |
+//! | [`SetGoogle`] | 32014 | [`GoogleSettingsUpdate`](crate::types::GoogleSettingsUpdate) | [`GoogleSettings`](crate::types::GoogleSettings) |
 //!
 //! [`AuthBroadcast`] (32100) carries [`AuthUpdate`]s.
 //!

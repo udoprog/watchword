@@ -48,6 +48,8 @@ use crate::types::{
 /// | `GET /api/auth/google` | anyone | redirect to Google to sign in, coming back to `?next=` if it is a [same-origin path](crate::is_same_origin_path); 404 unless Google is configured (feature `google`) |
 /// | `GET /api/auth/google/register/{token}` | anyone | redirect to Google to register with the link; 404 unknown, 410 used or expired |
 /// | `GET /api/auth/google/link` | signed in | redirect to Google to switch to it |
+/// | `GET /api/auth/google/settings` | admin, feature `google` | the [`GoogleSettings`](crate::types::GoogleSettings) of [`Auth::google`], without the secret; 404 when Google may not be configured |
+/// | `PUT /api/auth/google/settings` | admin, feature `google` | [`GoogleSettingsUpdate`](crate::types::GoogleSettingsUpdate) → the settings as stored by [`Auth::set_google`]; 403 when the client is fixed |
 /// | `GET /api/auth/google/redirect` | Google | cookie + redirect to the sign-in's `next` or `/`, or to `/?error=auth-failed` or `/?error=user-not-found` (with `&next=` when the sign-in had one) |
 ///
 /// `{id}` is the decimal [`UserId`]. Errors are an [`AuthError`] body with
@@ -98,7 +100,12 @@ where
     // Feature `google`: `GET /api/auth/google`, `/google/register/{token}`,
     // `/google/link` and the callback; see `super::google`.
     #[cfg(feature = "google")]
-    let router = router.merge(super::google::routes());
+    let router = router
+        .route(
+            "/api/auth/google/settings",
+            axum08::routing::get(google_settings).put(set_google_settings),
+        )
+        .merge(super::google::routes());
 
     router
 }
@@ -233,6 +240,20 @@ async fn set_cloudflare_settings(
     Body(config): Body<crate::types::CloudflareConfig>,
 ) -> Result<Response, Error> {
     answer(&auth, signed_in(&admin), AuthRequest::SetCloudflare(config)).await
+}
+
+#[cfg(feature = "google")]
+async fn google_settings(State(auth): State<Auth>, Admin(admin): Admin) -> Result<Response, Error> {
+    answer(&auth, signed_in(&admin), AuthRequest::Google).await
+}
+
+#[cfg(feature = "google")]
+async fn set_google_settings(
+    State(auth): State<Auth>,
+    Admin(admin): Admin,
+    Body(update): Body<crate::types::GoogleSettingsUpdate>,
+) -> Result<Response, Error> {
+    answer(&auth, signed_in(&admin), AuthRequest::SetGoogle(update)).await
 }
 
 async fn me(State(auth): State<Auth>, user: SignedIn) -> Result<Response, Error> {

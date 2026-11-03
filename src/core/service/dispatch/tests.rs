@@ -112,6 +112,8 @@ async fn admin_requests_need_an_admin() {
             change: UserChange::default(),
         },
         AuthRequest::Cloudflare,
+        AuthRequest::Google,
+        AuthRequest::SetGoogle(Default::default()),
     ] {
         assert_eq!(refusal(&auth, caller, request).await, AuthError::Forbidden);
     }

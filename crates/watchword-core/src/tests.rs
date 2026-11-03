@@ -56,6 +56,24 @@ fn cloudflare_missing_fields_are_safe() {
     assert_eq!(config, CloudflareConfig::default());
 }
 
+/// An update without a secret keeps the stored one, and its `Debug` never
+/// shows the secret.
+#[test]
+fn google_update_without_secret() {
+    let update: GoogleSettingsUpdate = serde_json::from_value(json!({
+        "enabled": true,
+        "client_id": "id",
+    }))
+    .unwrap();
+    assert_eq!(update.client_secret, None);
+
+    let update = GoogleSettingsUpdate {
+        client_secret: Some("hunter2".to_owned()),
+        ..update
+    };
+    assert!(!alloc::format!("{update:?}").contains("hunter2"));
+}
+
 #[test]
 fn names_round_trip() {
     for role in [Role::Admin, Role::Regular] {
@@ -462,7 +480,7 @@ mod musliweb05 {
     /// meaning.
     #[test]
     fn ids_are_pinned() {
-        let ids: [(MessageId, u16); 14] = [
+        let ids: [(MessageId, u16); 16] = [
             (Me::ID, 32000),
             (UpdateAccount::ID, 32001),
             (ChangePassword::ID, 32002),
@@ -476,6 +494,8 @@ mod musliweb05 {
             (RevokeAccess::ID, 32010),
             (Cloudflare::ID, 32011),
             (SetCloudflare::ID, 32012),
+            (Google::ID, 32013),
+            (SetGoogle::ID, 32014),
             (AuthBroadcast::ID, 32100),
         ];
 
@@ -530,6 +550,18 @@ mod musliweb05 {
             audience: "aud".into(),
             trust_email_header: true,
             verify_jwt: false,
+        }));
+        round_trip(GoogleRequest);
+        round_trip(GoogleSettingsUpdate {
+            enabled: true,
+            client_id: "id".into(),
+            client_secret: Some("secret".into()),
+        });
+        round_trip(Ok::<_, AuthError>(GoogleSettings {
+            enabled: true,
+            client_id: "id".into(),
+            has_secret: true,
+            fixed: false,
         }));
 
         round_trip(Ok::<_, AuthError>(user()));

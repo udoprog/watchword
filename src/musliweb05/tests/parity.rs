@@ -19,12 +19,14 @@ use tower::ServiceExt;
 
 use super::super::connection::{ReadBody, decode};
 use super::super::{
-    CloudflareRequest, DeleteUserRequest, FIRST_ID, IssueLinkRequest, LAST_ID, MeRequest, Request,
-    RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, UserUpdate, UsersRequest,
+    CloudflareRequest, DeleteUserRequest, FIRST_ID, GoogleRequest, IssueLinkRequest, LAST_ID,
+    MeRequest, Request, RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, UserUpdate,
+    UsersRequest,
 };
 use super::auth;
 use crate::types::{
-    AuthRequest, CloudflareConfig, NewUser, PasswordChange, Role, UserChange, UserId,
+    AuthRequest, CloudflareConfig, GoogleSettingsUpdate, NewUser, PasswordChange, Role, UserChange,
+    UserId,
 };
 
 /// A body of every request type of watchword's list, each read at most once.
@@ -61,6 +63,8 @@ impl Bodies {
             Box::new(SignOutUserRequest { id }),
             Box::new(RevokeAccessRequest { id }),
             Box::new(CloudflareConfig::default()),
+            Box::new(GoogleRequest),
+            Box::new(GoogleSettingsUpdate::default()),
         ])
     }
 }
@@ -111,6 +115,12 @@ fn route(request: &AuthRequest) -> (Method, String, Option<Value>) {
         AuthRequest::SetCloudflare(config) => {
             (Method::PUT, "/api/auth/cloudflare".to_owned(), json(config))
         }
+        AuthRequest::Google => (Method::GET, "/api/auth/google/settings".to_owned(), None),
+        AuthRequest::SetGoogle(update) => (
+            Method::PUT,
+            "/api/auth/google/settings".to_owned(),
+            json(update),
+        ),
         request => panic!("no HTTP route known here for {request:?}"),
     }
 }
@@ -163,6 +173,13 @@ async fn every_socket_endpoint_has_an_http_route() {
         );
 
         if cloudflare && !cfg!(feature = "cloudflare") {
+            assert_eq!(status, StatusCode::NOT_FOUND, "{id:?}: {uri}");
+            continue;
+        }
+
+        let google = matches!(request, AuthRequest::Google | AuthRequest::SetGoogle(..));
+
+        if google && !cfg!(feature = "google") {
             assert_eq!(status, StatusCode::NOT_FOUND, "{id:?}: {uri}");
             continue;
         }

@@ -121,6 +121,8 @@
 //! | [`RevokeAccess`] | 32010 | [`RevokeAccessRequest`] | [`UserInfo`] |
 //! | [`Cloudflare`] | 32011 | [`CloudflareRequest`] | [`CloudflareConfig`] |
 //! | [`SetCloudflare`] | 32012 | [`CloudflareConfig`] | [`CloudflareConfig`] |
+//! | [`Google`] | 32013 | [`GoogleRequest`] | [`GoogleSettings`] |
+//! | [`SetGoogle`] | 32014 | [`GoogleSettingsUpdate`] | [`GoogleSettings`] |
 //!
 //! [`AuthBroadcast`] (32100) carries [`AuthUpdate`]s.
 //!
@@ -133,8 +135,8 @@ use musli_core02::{Decode, Encode};
 #[cfg(doc)]
 use crate::AuthError;
 use crate::{
-    CloudflareConfig, CreatedUser, Link, NewUser, PasswordChange, UserChange, UserEntry, UserId,
-    UserInfo,
+    CloudflareConfig, CreatedUser, GoogleSettings, GoogleSettingsUpdate, Link, NewUser,
+    PasswordChange, UserChange, UserEntry, UserId, UserInfo,
 };
 
 /// The first id of the band watchword owns.
@@ -285,6 +287,26 @@ musli_web05::api::define! {
         type Response<'de> = CloudflareConfig;
     }
 
+    /// The Google sign-in settings, without the client secret. Admins only.
+    /// Like `GET /api/auth/google/settings`.
+    #[musli(id = 32013)]
+    pub type Google;
+
+    impl Endpoint for Google {
+        impl Request for GoogleRequest;
+        type Response<'de> = GoogleSettings;
+    }
+
+    /// Stores and applies the Google sign-in settings, answering with them
+    /// as [`Google`] does. Admins only. Like `PUT /api/auth/google/settings`.
+    #[musli(id = 32014)]
+    pub type SetGoogle;
+
+    impl Endpoint for SetGoogle {
+        impl Request for GoogleSettingsUpdate;
+        type Response<'de> = GoogleSettings;
+    }
+
     /// The live auth changes a connection may see, as [`AuthUpdate`]s.
     #[musli(id = 32100)]
     pub type AuthBroadcast;
@@ -328,6 +350,11 @@ pub struct UsersRequest;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
 #[musli(crate = musli_core02)]
 pub struct CloudflareRequest;
+
+/// The request of [`Google`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
+#[musli(crate = musli_core02)]
+pub struct GoogleRequest;
 
 /// The request of [`UpdateUser`]: the change to make to the user `id`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
