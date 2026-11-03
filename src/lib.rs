@@ -222,9 +222,9 @@ pub use self::types::{
 #[cfg(feature = "alloc")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 pub use self::types::{
-    AuthError, CloudflareConfig, CreatedUser, Impersonator, Invalid, Link, LoginRequest, NewUser,
-    PasswordChange, RegisterInfo, RegisterRequest, UserChange, UserEntry, UserInfo,
-    normalize_email, validate_password,
+    AuthError, CloudflareConfig, CreatedUser, GoogleSettings, GoogleSettingsUpdate, Impersonator,
+    Invalid, Link, LoginRequest, NewUser, PasswordChange, RegisterInfo, RegisterRequest,
+    UserChange, UserEntry, UserInfo, normalize_email, validate_password,
 };
 
 #[cfg(feature = "server")]

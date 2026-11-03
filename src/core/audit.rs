@@ -6,6 +6,8 @@ use jiff::Timestamp;
 use crate::store::{Session, User};
 #[cfg(feature = "cloudflare")]
 use crate::types::CloudflareConfig;
+#[cfg(feature = "google")]
+use crate::types::GoogleSettings;
 use crate::types::{UserId, UserInfo};
 
 /// Who performed an operation.
@@ -192,6 +194,22 @@ pub enum AuditEvent {
         /// The settings after, as stored.
         after: CloudflareConfig,
     },
+    /// An admin changed the Google sign-in settings, with
+    /// [`set_google`](super::Auth::set_google). Not sent when they are
+    /// saved unchanged. It acts on no user, and never carries the secret.
+    #[cfg(feature = "google")]
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "google")))]
+    GoogleChanged {
+        /// The admin.
+        actor: Actor,
+        /// The settings before, as [`google`](super::Auth::google) returned
+        /// them.
+        before: GoogleSettings,
+        /// The settings after.
+        after: GoogleSettings,
+        /// The client secret changed.
+        secret_changed: bool,
+    },
 }
 
 impl AuditEvent {
@@ -210,6 +228,8 @@ impl AuditEvent {
             | Self::CredentialChanged { actor, .. } => *actor,
             #[cfg(feature = "cloudflare")]
             Self::CloudflareChanged { actor, .. } => *actor,
+            #[cfg(feature = "google")]
+            Self::GoogleChanged { actor, .. } => *actor,
             Self::ImpersonationStarted { admin, .. } | Self::ImpersonationStopped { admin, .. } => {
                 Actor::user(*admin)
             }
@@ -233,6 +253,8 @@ impl AuditEvent {
             | Self::ImpersonationStopped { user, .. } => Some(*user),
             #[cfg(feature = "cloudflare")]
             Self::CloudflareChanged { .. } => None,
+            #[cfg(feature = "google")]
+            Self::GoogleChanged { .. } => None,
         }
     }
 }

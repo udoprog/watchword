@@ -2,7 +2,10 @@
 //!
 //! This is the OAuth authorization-code flow. Configure it with a
 //! [`GoogleConfig::new`], built from the app's public URL, passed to
-//! [`AuthBuilder::google`](crate::AuthBuilder::google); the `axum08` feature
+//! [`AuthBuilder::google`](crate::AuthBuilder::google), or let an admin set
+//! the client at runtime with
+//! [`AuthBuilder::google_public_url`](crate::AuthBuilder::google_public_url)
+//! and [`Auth::set_google`](crate::Auth::set_google); the `axum08` feature
 //! serves its routes:
 //!
 //! - `GET /api/auth/google` starts signing in, and `?next=` names the page
@@ -47,6 +50,8 @@ use crate::types::UserId;
     doc(cfg(all(feature = "axum08", feature = "test-util")))
 )]
 pub mod fake;
+
+pub(crate) mod runtime;
 
 /// The path the callback is served at by the `axum08` routes, which the
 /// [`redirect_url`](GoogleConfig::redirect_url) must have.
@@ -322,6 +327,10 @@ impl Provider {
             http: reqwest::Client::new(),
             pending: Mutex::new(PendingStates::new(PENDING_TTL, MAX_PENDING)),
         }
+    }
+
+    pub(crate) fn config(&self) -> &GoogleConfig {
+        &self.config
     }
 
     /// Starts `flow`, returning the URL that sends the browser to Google.

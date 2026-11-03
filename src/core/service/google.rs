@@ -9,21 +9,38 @@
 
 use std::borrow::ToOwned;
 use std::string::String;
+use std::sync::Arc;
 
 use jiff::Timestamp;
 
-use super::{Auth, AuthBuilder, Error, Result};
+use super::{Actor, AuditEvent, Auth, AuthBuilder, Error, Result, require_admin};
+use crate::google::runtime::Google;
 use crate::google::{Callback, Flow, GoogleConfig, Provider, Url};
 use crate::is_same_origin_path;
 use crate::store::{Session, User};
-use crate::types::AuthError;
+use crate::types::{AuthError, GoogleSettings, GoogleSettingsUpdate};
 
 impl AuthBuilder {
     /// The Google OAuth client to sign in with, or `None` to offer no
     /// Google sign-in. The default is `None`.
+    ///
+    /// A client given here is fixed: it wins over any stored with
+    /// [`Auth::set_google`], which refuses to change it, and
+    /// [`Auth::google`] reports it as [`fixed`](GoogleSettings::fixed).
     #[cfg_attr(watchword_docsrs, doc(cfg(feature = "google")))]
     pub fn google(mut self, config: Option<GoogleConfig>) -> Self {
         self.google = config;
+        self
+    }
+
+    /// Lets an admin set the Google OAuth client at runtime with
+    /// [`Auth::set_google`], which keeps it in the store. Google redirects
+    /// back under `public_url`, the URL the app is served at, as for
+    /// [`GoogleConfig::new`]. Google sign-in is off until a client is set.
+    /// Ignored when [`google`](Self::google) is given a client.
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "google")))]
+    pub fn google_public_url(mut self, public_url: Url) -> Self {
+        self.google_public_url = Some(public_url);
         self
     }
 
@@ -73,16 +90,85 @@ impl GoogleFailure {
 }
 
 impl Auth {
-    fn google_provider(&self) -> Result<&Provider> {
-        Ok(self.inner.google.as_ref().ok_or(AuthError::NotFound)?)
+    /// The Google sign-in settings, or `None` when Google sign-in is neither
+    /// given to [`AuthBuilder::google`] nor may be set at runtime (see
+    /// [`AuthBuilder::google_public_url`]). The client secret is never
+    /// returned, only whether one is set.
+    ///
+    /// Errors only when the store fails.
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "google")))]
+    pub async fn google(&self) -> Result<Option<GoogleSettings>> {
+        let Some(google) = &self.inner.google else {
+            return Ok(None);
+        };
+
+        Ok(Some(google.settings(self.store()).await?))
+    }
+
+    /// Stores the Google sign-in settings, under the store's `google`
+    /// setting, and applies them at once. Returns them as
+    /// [`google`](Auth::google) does. A missing or empty secret keeps the
+    /// stored one. Settings that are enabled but lack a client id or secret
+    /// leave Google sign-in off, with a warning logged.
+    ///
+    /// Changing the client ends the Google sign-ins in progress, which have
+    /// to start again.
+    ///
+    /// Sends [`AuditEvent::GoogleChanged`] when the settings or the secret
+    /// changed, naming an admin impersonating `actor` through `session`.
+    ///
+    /// Admins only: [`AuthError::Forbidden`] unless `actor` is an active
+    /// admin, and also when the client is fixed with
+    /// [`AuthBuilder::google`]. [`AuthError::NotFound`] when Google sign-in
+    /// may not be set at runtime.
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "google")))]
+    pub async fn set_google(
+        &self,
+        actor: &User,
+        session: &Session,
+        update: GoogleSettingsUpdate,
+    ) -> Result<GoogleSettings> {
+        require_admin(actor)?;
+
+        let runtime = match &self.inner.google {
+            Some(Google::Runtime(runtime)) => runtime,
+            Some(Google::Fixed(_)) => return Err(AuthError::Forbidden.into()),
+            None => return Err(AuthError::NotFound.into()),
+        };
+
+        let (before, after, secret_changed) = runtime.save(self.store(), update).await?;
+        tracing::info!(user = %actor.id, "Google sign-in settings saved");
+
+        if before != after || secret_changed {
+            self.audit(AuditEvent::GoogleChanged {
+                actor: Actor::of(actor, session),
+                before,
+                after: after.clone(),
+                secret_changed,
+            });
+        }
+
+        Ok(after)
+    }
+
+    /// The client to sign in with now, or `None` when Google sign-in is off.
+    pub(crate) async fn google_provider(&self) -> Result<Option<Arc<Provider>>> {
+        match &self.inner.google {
+            Some(google) => Ok(google.provider(self.store()).await?),
+            None => Ok(None),
+        }
+    }
+
+    async fn google_client(&self) -> Result<Arc<Provider>> {
+        Ok(self.google_provider().await?.ok_or(AuthError::NotFound)?)
     }
 
     /// Starts signing in with Google, returning where to send the browser.
     /// Once signed in, the browser comes back to `next` when it is a path on
     /// this origin (see [`is_same_origin_path`]); any other `next` is
     /// ignored. [`AuthError::NotFound`] when Google is not configured.
-    pub(crate) fn google_sign_in(&self, next: Option<&str>) -> Result<Url> {
-        let provider = self.google_provider()?;
+    pub(crate) async fn google_sign_in(&self, next: Option<&str>) -> Result<Url> {
+        let provider = self.google_client().await?;
         let next = next.filter(|next| is_same_origin_path(next)).map(location);
         Ok(provider.start(Flow::SignIn { next }))
     }
@@ -91,7 +177,7 @@ impl Auth {
     /// `token` and Google. Errors as [`register_info`](Auth::register_info)
     /// does, and with [`AuthError::NotFound`] when Google is not configured.
     pub(crate) async fn google_register(&self, token: &str) -> Result<Url> {
-        let provider = self.google_provider()?;
+        let provider = self.google_client().await?;
         self.usable_token(token, Timestamp::now()).await?;
 
         Ok(provider.start(Flow::Register {
@@ -102,8 +188,8 @@ impl Auth {
     /// Starts switching the `user` signed in with `session` to Google.
     /// Refused for a user who is not active, such as one being impersonated
     /// while pending.
-    pub(crate) fn google_link(&self, user: &User, session: &Session) -> Result<Url> {
-        let provider = self.google_provider()?;
+    pub(crate) async fn google_link(&self, user: &User, session: &Session) -> Result<Url> {
+        let provider = self.google_client().await?;
 
         if user.access != crate::types::Access::Active {
             return Err(AuthError::Forbidden.into());
@@ -125,12 +211,25 @@ impl Auth {
     /// callback cannot see: the `SameSite=Strict` cookie is not sent on
     /// the redirect from Google.
     pub(crate) async fn google_callback(&self, callback: &Callback) -> GoogleReturn {
-        let Some(provider) = self.inner.google.as_ref() else {
-            tracing::warn!("Google sign-in: a callback arrived, but Google is not configured");
-            return GoogleReturn {
-                next: None,
-                result: Err(GoogleFailure::AuthFailed),
-            };
+        let provider = match self.google_provider().await {
+            Ok(Some(provider)) => provider,
+            Ok(None) => {
+                tracing::warn!("Google sign-in: a callback arrived, but Google is not configured");
+                return GoogleReturn {
+                    next: None,
+                    result: Err(GoogleFailure::AuthFailed),
+                };
+            }
+            Err(error) => {
+                tracing::error!(
+                    error = &error as &dyn std::error::Error,
+                    "Google sign-in failed"
+                );
+                return GoogleReturn {
+                    next: None,
+                    result: Err(GoogleFailure::AuthFailed),
+                };
+            }
         };
 
         // Taken first, so the state is used up whatever Google answered, and
@@ -145,7 +244,7 @@ impl Auth {
             _ => None,
         };
 
-        let result = self.complete_google(provider, callback, flow).await;
+        let result = self.complete_google(&provider, callback, flow).await;
         GoogleReturn { next, result }
     }
 
@@ -259,3 +358,6 @@ fn location(next: &str) -> String {
 
     out
 }
+
+#[cfg(test)]
+mod tests;

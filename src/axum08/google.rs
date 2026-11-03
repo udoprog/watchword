@@ -45,7 +45,7 @@ async fn sign_in(
     // A malformed query is as good as none.
     let query = query.map(|Query(query)| query).unwrap_or_default();
     Ok(Redirect::to(
-        auth.google_sign_in(query.next.as_deref())?.as_str(),
+        auth.google_sign_in(query.next.as_deref()).await?.as_str(),
     ))
 }
 
@@ -57,7 +57,9 @@ async fn link(
     State(auth): State<Auth>,
     SignedIn { user, session }: SignedIn,
 ) -> Result<Redirect, Error> {
-    Ok(Redirect::to(auth.google_link(&user, &session)?.as_str()))
+    Ok(Redirect::to(
+        auth.google_link(&user, &session).await?.as_str(),
+    ))
 }
 
 async fn callback(

@@ -154,7 +154,7 @@ impl Auth {
         let dispatched = match request {
             AuthRequest::Config => Dispatched::new(AuthResponse::Config(crate::AuthConfig {
                 password: true,
-                google: self.offers_google(),
+                google: self.offers_google().await?,
                 cloudflare: self.cloudflare_available_for(caller).await?,
                 logins: self.uses_logins(),
             })),

@@ -588,6 +588,56 @@ impl Default for CloudflareConfig {
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
+/// The Google sign-in settings as an admin's settings page shows them. The
+/// client secret is never included, only whether one is set.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
+pub struct GoogleSettings {
+    /// Signing in with Google is enabled.
+    pub enabled: bool,
+    /// The OAuth client id.
+    pub client_id: String,
+    /// A client secret is set.
+    pub has_secret: bool,
+    /// The app fixed the client when it started, so these settings are
+    /// read-only.
+    pub fixed: bool,
+}
+
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
+/// The Google sign-in settings an admin saves.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
+pub struct GoogleSettingsUpdate {
+    /// Signing in with Google is enabled.
+    pub enabled: bool,
+    /// The OAuth client id.
+    pub client_id: String,
+    /// A new client secret; `None` or an empty one keeps the stored secret.
+    pub client_secret: Option<String>,
+}
+
+#[cfg(feature = "alloc")]
+impl fmt::Debug for GoogleSettingsUpdate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GoogleSettingsUpdate")
+            .field("enabled", &self.enabled)
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// The error of an `/api/auth` route, sent as the JSON body of its 4xx
 /// response, such as `{"error":"conflict","detail":"email"}` or
 /// `{"error":"invalid","detail":{"reason":"password_too_short","min":8}}`.

@@ -286,6 +286,8 @@ pub struct AuthBuilder {
     #[cfg(feature = "google")]
     google: Option<crate::google::GoogleConfig>,
     #[cfg(feature = "google")]
+    google_public_url: Option<crate::google::Url>,
+    #[cfg(feature = "google")]
     google_endpoints: crate::google::Endpoints,
 }
 
@@ -416,9 +418,17 @@ impl AuthBuilder {
                 #[cfg(feature = "cloudflare")]
                 cloudflare: crate::cloudflare::Provider::new(self.cloudflare),
                 #[cfg(feature = "google")]
-                google: self
-                    .google
-                    .map(|config| crate::google::Provider::new(config, self.google_endpoints)),
+                google: match (self.google, self.google_public_url) {
+                    (Some(config), _) => Some(crate::google::runtime::Google::fixed(
+                        config,
+                        self.google_endpoints,
+                    )),
+                    (None, Some(url)) => Some(crate::google::runtime::Google::runtime(
+                        url,
+                        self.google_endpoints,
+                    )),
+                    (None, None) => None,
+                },
                 #[cfg(feature = "axum08")]
                 live: crate::axum08::LiveCache::default(),
             }),
@@ -479,9 +489,10 @@ struct Inner {
     /// The Cloudflare Access settings and their log-once warnings.
     #[cfg(feature = "cloudflare")]
     cloudflare: crate::cloudflare::Provider,
-    /// The Google OAuth client and its pending flows, when configured.
+    /// The Google OAuth client and its pending flows, when Google sign-in
+    /// is offered or may be configured at runtime.
     #[cfg(feature = "google")]
-    google: Option<crate::google::Provider>,
+    google: Option<crate::google::runtime::Google>,
     /// Recently confirmed live sessions, for the `LiveSession` extractor.
     #[cfg(feature = "axum08")]
     live: crate::axum08::LiveCache,
@@ -508,6 +519,8 @@ impl Auth {
             cloudflare: None,
             #[cfg(feature = "google")]
             google: None,
+            #[cfg(feature = "google")]
+            google_public_url: None,
             #[cfg(feature = "google")]
             google_endpoints: crate::google::Endpoints::default(),
         }
@@ -551,17 +564,20 @@ impl Auth {
         self.inner.logins
     }
 
-    /// Whether Google sign-in is configured; see `AuthBuilder::google`
-    /// (feature `google`). This is [`AuthConfig::google`](crate::AuthConfig::google).
-    pub fn offers_google(&self) -> bool {
+    /// Whether Google sign-in is on, as fixed with `AuthBuilder::google` or
+    /// set with `Auth::set_google` (feature `google`). This is
+    /// [`AuthConfig::google`](crate::AuthConfig::google).
+    ///
+    /// Errors only when the store fails.
+    pub async fn offers_google(&self) -> Result<bool> {
         #[cfg(feature = "google")]
         {
-            self.inner.google.is_some()
+            Ok(self.google_provider().await?.is_some())
         }
 
         #[cfg(not(feature = "google"))]
         {
-            false
+            Ok(false)
         }
     }
 
@@ -870,7 +886,7 @@ impl Auth {
         Ok(RegisterInfo {
             login: user.login,
             email: user.email,
-            google: self.offers_google(),
+            google: self.offers_google().await?,
         })
     }
 

@@ -471,12 +471,12 @@ pub(crate) trait DynStore: Send + Sync + 'static {
         session: &'a Session,
         now: Timestamp,
     ) -> BoxFuture<'a, bool>;
-    // Used by the Cloudflare Access settings, which `Auth` stores. Named
+    // Used by the Cloudflare Access and Google settings, which `Auth` stores. Named
     // apart from `Store::config_get` and `config_set`, which a test with
     // both traits in scope would otherwise find twice.
-    #[cfg_attr(not(feature = "cloudflare"), allow(dead_code))]
+    #[cfg_attr(not(any(feature = "cloudflare", feature = "google")), allow(dead_code))]
     fn setting<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<String>>;
-    #[cfg_attr(not(feature = "cloudflare"), allow(dead_code))]
+    #[cfg_attr(not(any(feature = "cloudflare", feature = "google")), allow(dead_code))]
     fn set_setting<'a>(&'a self, key: &'a str, value: &'a str) -> BoxFuture<'a, ()>;
 }
 
