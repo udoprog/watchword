@@ -1,6 +1,6 @@
 [package]
 name = "watchword"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2024"
 rust-version = "1.95"
@@ -43,7 +43,7 @@ phrasebookcatalog01 = ["watchword-core/phrasebookcatalog01"]
 yew023 = ["std", "phrasebookcatalog01", "dep:watchword-yew023"]
 
 [dependencies]
-watchword-core = { path = "crates/watchword-core", version = "=0.3.0", default-features = false }
+watchword-core = { path = "crates/watchword-core", version = "=0.4.0", default-features = false }
 jiff = { version = "0.2.37", default-features = false, features = ["serde"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
 thiserror = { version = "2.0.18", default-features = false }
@@ -68,7 +68,7 @@ axum08 = { package = "axum", version = "0.8.9", default-features = false, featur
 
 musli-web05 = { package = "musli-web", version = "0.5.0", default-features = false, optional = true }
 
-watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.3.0", default-features = false, optional = true }
+watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.4.0", default-features = false, optional = true }
 
 [dev-dependencies]
 axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["tokio", "http1", "query", "macros"] }
