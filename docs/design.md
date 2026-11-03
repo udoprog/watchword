@@ -251,7 +251,8 @@ let auth = Auth::builder_from_store(store).await? // key from the store's `sessi
     .logins(true)                               // accept login names, not only emails
     .trusted_proxies(&trusted_proxies)
     .cloudflare(cloudflare_config)              // feature `cloudflare`; Option, used while the store has none
-    .google(google_config)                      // feature `google`; Option
+    .google(google_config)                      // feature `google`; Option; fixed, wins over the store
+    .google_public_url(public_url)              // feature `google`; lets an admin set the client at runtime
     .impersonation(true)
     .prune_every(Some(Duration::from_secs(3600)))  // run `prune` now and hourly; default None
     .audit(|event: &AuditEvent| { /* send to the app's audit log */ })  // repeatable
@@ -259,6 +260,9 @@ let auth = Auth::builder_from_store(store).await? // key from the store's `sessi
 
 auth.cloudflare().await?;                      // -> Option<CloudflareConfig>, as stored or else as built
 auth.set_cloudflare(&admin, &session, config).await?;  // -> CloudflareConfig as stored; admin; stores and applies
+auth.google().await?;                          // -> Option<GoogleSettings>, no secret; None when not configurable
+auth.set_google(&admin, &session, update).await?;  // -> GoogleSettings; admin; Forbidden when fixed
+auth.offers_google().await?;                   // -> bool, AuthConfig::google; async, may read the store
 auth.bootstrap_admin(&BootstrapAdmin::new(name).public_url(public_url)).await?;  // -> Bootstrap
 auth.recovery_link(name).await?;                // -> Link, for the app's own CLI; no actor
 auth.import_user(&new_user).await?;             // -> User, pending, no link; for imports; no actor
@@ -396,9 +400,10 @@ pub enum AuditEvent {                     // #[non_exhaustive]; sent after the c
     ImpersonationStarted { admin: UserId, user: UserId },
     ImpersonationStopped { admin: UserId, user: UserId },
     CloudflareChanged { actor, before: Option<CloudflareConfig>, after: CloudflareConfig }, // feature `cloudflare`; set_cloudflare, not when unchanged
+    GoogleChanged { actor, before: GoogleSettings, after: GoogleSettings, secret_changed: bool }, // feature `google`; set_google, not when unchanged; never the secret
 }
 AuditEvent::actor() -> Actor              // the admin, for impersonation
-AuditEvent::user() -> Option<UserId>      // the user acted on; None for CloudflareChanged
+AuditEvent::user() -> Option<UserId>      // the user acted on; None for CloudflareChanged and GoogleChanged
 ```
 
 Sign-ins, sign-outs and reads send none.
@@ -602,6 +607,27 @@ new tests arrive in minor releases. The example is a cargo example with
   path cannot be set wrong. The fields stay public for a callback reached some
   other way (a proxy stripping a prefix), where the provider only warns when
   the path is not `REDIRECT_PATH`.
+  The client is either fixed or set at runtime (decision 32). One given to
+  `AuthBuilder::google(Some(config))` is fixed: it wins over anything
+  stored, `Auth::google()` reports it with `fixed: true` so a settings page
+  shows it read-only, and `set_google` refuses with `Forbidden`.
+  `AuthBuilder::google_public_url(url)` instead lets an admin set the client
+  id and secret with `Auth::set_google(actor, session, GoogleSettingsUpdate
+  { enabled, client_id, client_secret })`, kept as JSON under the store's
+  `google` setting and read once, when first needed; the redirect URL still
+  comes from the app's public URL. A missing or empty `client_secret` keeps
+  the stored one, and nothing clears it: disabling Google stops its use.
+  `GoogleSettings { enabled, client_id, has_secret, fixed }` is what is read
+  back, never the secret, and `AuditEvent::GoogleChanged` carries it before
+  and after, with `secret_changed` for a rotation. Settings that are enabled
+  but lack an id or secret are stored and leave Google off with a warning; a
+  stored value that does not parse is logged as an error and leaves it off.
+  A changed client replaces the provider, and the flows pending on the old
+  one with it: a sign-in in progress fails like an expired one and starts
+  again (a code issued to one client cannot be exchanged by another anyway).
+  Saving the same settings keeps them. Because the settings may live in the
+  store, `Auth::offers_google()` is `async` and returns a `Result`.
+
   It is reached only through the routes (2.5); the callback redirects to the
   sign-in's `next` (below), or `/`, on success, or to `/?error=auth-failed`
   or `/?error=user-not-found` on failure, with `&next=` after it when the
@@ -715,6 +741,8 @@ the app is served with `into_make_service_with_connect_info::<SocketAddr>()`.
 | `GET /api/auth/cloudflare` | admin, feature `cloudflare` | `CloudflareConfig` as stored, or its default when there is none |
 | `PUT /api/auth/cloudflare` | admin, feature `cloudflare` | `CloudflareConfig` → `CloudflareConfig` as stored; applies it |
 | `GET /api/auth/google`, `/google/register/{token}`, `/google/link` | anyone / anyone / signed in | redirect to Google; the first takes `?next=`, a same-origin path to come back to; 404 unless Google is configured |
+| `GET /api/auth/google/settings` | admin, feature `google` | `GoogleSettings`, without the secret; 404 when Google can be neither fixed nor set |
+| `PUT /api/auth/google/settings` | admin, feature `google` | `GoogleSettingsUpdate` → `GoogleSettings`; applies it; 403 when the client is fixed |
 | `GET /api/auth/google/redirect` (`watchword::google::REDIRECT_PATH`; `redirect_url` must use this path, a different one is logged as a warning) | Google | callback; cookie + redirect to the sign-in's `next` or `/`, or `/?error=user-not-found` / `/?error=auth-failed` (`&next=` kept) |
 | `POST /api/auth/logout` | anyone | 204, deletes the session, clears the cookie |
 | `GET /api/auth/register/{token}` | anyone | `RegisterInfo`; 404 unknown, 410 used or expired |
@@ -776,7 +804,9 @@ The components make every request with the provider's `AuthService`
   watchword's, so a new one is a new method and a new `AuthRequest`
   variant, which a transport forwarding requests carries unchanged.
   `AuthService::new(transport)` builds one; `Default` is over
-  `HttpTransport`.
+  `HttpTransport`. `cloudflare_settings`/`set_cloudflare_settings` and
+  `google_settings`/`set_google_settings` (also as `http::` functions) are
+  the admin settings calls; Google has no settings component.
 - `Error` (formerly `http::Error`, still re-exported there) is
   `#[non_exhaustive]`, since app transports construct it.
 - `use_auth_service()` reads the `AuthService` context, which
@@ -1006,6 +1036,8 @@ musli_web05::api::define! {
     #[musli(id = 32010)] pub type RevokeAccess;  // RevokeAccessRequest { id } -> UserInfo; admin
     #[musli(id = 32011)] pub type Cloudflare;    // CloudflareRequest -> CloudflareConfig; admin
     #[musli(id = 32012)] pub type SetCloudflare; // CloudflareConfig -> CloudflareConfig; admin
+    #[musli(id = 32013)] pub type Google;        // GoogleRequest -> GoogleSettings; admin
+    #[musli(id = 32014)] pub type SetGoogle;     // GoogleSettingsUpdate -> GoogleSettings; admin
     #[musli(id = 32100)] pub type AuthBroadcast; // event AuthUpdate
 }
 
@@ -1019,9 +1051,12 @@ pub enum AuthUpdate {
 ```
 
 `Cloudflare` and `SetCloudflare` were added after the first eleven, taking the
-next free ids; the ones before kept theirs. A server without the `cloudflare`
-feature answers an admin's request for them with `AuthError::NotFound`, as it
-has no route for them.
+next free ids; the ones before kept theirs, and `Google` and `SetGoogle`
+followed them the same way. A server without the `cloudflare` feature
+answers an admin's request for the Cloudflare ones with
+`AuthError::NotFound`, as it has no route for them, and one without
+`google` (or that can neither fix nor set a Google client) answers so for
+the Google ones.
 
 The request bodies are small structs in the module (`MeRequest`,
 `UsersRequest`, `CloudflareRequest`, `UserUpdate { id, change }`, and a `{ id }` struct per
@@ -1725,3 +1760,20 @@ once the release is on crates.io.
     classes rather than built-in icons, since every app brings its own icon
     set; the slot is called with the action, so one callback serves Delete,
     Revoke access and the Yes that confirms either.
+32. **An admin may set the Google client at runtime, unless the app fixed
+    it.** Apps wanted Google sign-in configurable from their own settings
+    page, as Cloudflare Access is (decision 26), without rebuilding `Auth`.
+    Unlike Cloudflare, where saved settings win over the builder's, a client
+    given to `AuthBuilder::google` is fixed and wins, and `set_google`
+    refuses it: an app's command-line or environment settings override the
+    UI, and an app that passed a client before keeps exactly that behaviour.
+    Runtime settings are opted into with `AuthBuilder::google_public_url`,
+    since the redirect URL is the app's to know; only the id and secret are
+    stored. The secret goes to the store and to Google and nowhere else: not
+    to the browser, which sees `has_secret`, not to the audit event, which
+    says `secret_changed`, and not to the logs. Replacing the client drops
+    its pending flows rather than keeping them for the old one, which is
+    simpler and correct, since Google ties a code to the client it was
+    issued for. `offers_google` became `async`, a breaking change accepted
+    before the release, because whether Google is on now depends on the
+    store.
