@@ -10,8 +10,9 @@ use musli_web05::web03::prelude::ws;
 use yew::Callback;
 
 use watchword_core::musliweb05::{
-    AuthBroadcast, AuthUpdate, CloudflareRequest, DeleteUserRequest, IssueLinkRequest, MeRequest,
-    RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, UserUpdate, UsersRequest,
+    AuthBroadcast, AuthUpdate, CloudflareRequest, DeleteUserRequest, GoogleRequest,
+    IssueLinkRequest, MeRequest, RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest,
+    UserUpdate, UsersRequest,
 };
 use watchword_core::{AuthError, AuthRequest, AuthResponse};
 
@@ -173,6 +174,11 @@ impl SocketHandle {
                 .request(config.clone())
                 .await?
                 .map(AuthResponse::Cloudflare),
+            AuthRequest::Google => self.request(GoogleRequest).await?.map(AuthResponse::Google),
+            AuthRequest::SetGoogle(update) => self
+                .request(update.clone())
+                .await?
+                .map(AuthResponse::Google),
             _ => return None,
         };
 

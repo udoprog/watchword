@@ -22,9 +22,9 @@ use serde::de::DeserializeOwned;
 use web_sys::RequestCredentials;
 
 use watchword_core::{
-    AuthConfig, AuthError, AuthRequest, AuthResponse, CloudflareConfig, Link, LoginRequest,
-    NewUser, PasswordChange, RegisterInfo, RegisterRequest, UserChange, UserEntry, UserId,
-    UserInfo,
+    AuthConfig, AuthError, AuthRequest, AuthResponse, CloudflareConfig, GoogleSettings,
+    GoogleSettingsUpdate, Link, LoginRequest, NewUser, PasswordChange, RegisterInfo,
+    RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
 };
 
 #[doc(no_inline)]
@@ -79,6 +79,8 @@ pub async fn send(request: AuthRequest) -> Result<AuthResponse, Error> {
         AuthRequest::SetCloudflare(config) => {
             AuthResponse::Cloudflare(set_cloudflare_settings(&config).await?)
         }
+        AuthRequest::Google => AuthResponse::Google(google_settings().await?),
+        AuthRequest::SetGoogle(update) => AuthResponse::Google(set_google_settings(&update).await?),
         _ => return Err(Error::Auth(AuthError::NotFound)),
     })
 }
@@ -245,6 +247,26 @@ pub async fn cloudflare_settings() -> Result<CloudflareConfig, Error> {
 /// the team domain and audience trimmed.
 pub async fn set_cloudflare_settings(config: &CloudflareConfig) -> Result<CloudflareConfig, Error> {
     read(put("/api/auth/cloudflare").json(config)?.send().await?).await
+}
+
+/// The Google sign-in settings, without the client secret, for admins:
+/// `GET /api/auth/google/settings`. Fails with [`AuthError::NotFound`] when
+/// the server cannot configure Google sign-in.
+pub async fn google_settings() -> Result<GoogleSettings, Error> {
+    read(get("/api/auth/google/settings").send().await?).await
+}
+
+/// Stores and applies the Google sign-in settings, for admins:
+/// `PUT /api/auth/google/settings`. Without a secret the stored one is kept.
+/// Fails with [`AuthError::Forbidden`] when the server fixed the client.
+pub async fn set_google_settings(update: &GoogleSettingsUpdate) -> Result<GoogleSettings, Error> {
+    read(
+        put("/api/auth/google/settings")
+            .json(update)?
+            .send()
+            .await?,
+    )
+    .await
 }
 
 fn user_path(id: UserId, rest: &str) -> String {

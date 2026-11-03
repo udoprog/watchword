@@ -8,9 +8,9 @@ use std::vec::Vec;
 use yew::prelude::*;
 
 use watchword_core::{
-    AuthConfig, AuthRequest, AuthResponse, CloudflareConfig, CreatedUser, Link, LoginRequest,
-    NewUser, PasswordChange, RegisterInfo, RegisterRequest, UserChange, UserEntry, UserId,
-    UserInfo,
+    AuthConfig, AuthRequest, AuthResponse, CloudflareConfig, CreatedUser, GoogleSettings,
+    GoogleSettingsUpdate, Link, LoginRequest, NewUser, PasswordChange, RegisterInfo,
+    RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
 };
 
 use super::Error;
@@ -263,6 +263,30 @@ impl AuthService {
             self,
             AuthRequest::SetCloudflare(config),
             AuthResponse::Cloudflare(config) => config
+        )
+    }
+
+    /// The Google sign-in settings, without the client secret, for admins.
+    /// Fails with
+    /// [`AuthError::NotFound`](watchword_core::AuthError::NotFound) when the
+    /// server cannot configure Google sign-in. `GET
+    /// /api/auth/google/settings`.
+    pub async fn google_settings(&self) -> Result<GoogleSettings, Error> {
+        call!(self, AuthRequest::Google, AuthResponse::Google(settings) => settings)
+    }
+
+    /// Stores and applies the Google sign-in settings, for admins; without a
+    /// secret the stored one is kept. Fails with
+    /// [`AuthError::Forbidden`](watchword_core::AuthError::Forbidden) when
+    /// the server fixed the client. `PUT /api/auth/google/settings`.
+    pub async fn set_google_settings(
+        &self,
+        update: GoogleSettingsUpdate,
+    ) -> Result<GoogleSettings, Error> {
+        call!(
+            self,
+            AuthRequest::SetGoogle(update),
+            AuthResponse::Google(settings) => settings
         )
     }
 }
