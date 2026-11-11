@@ -29,14 +29,14 @@ rustdoc-args = ["--cfg", "watchword_docsrs"]
 
 [features]
 default = ["std"]
-std = ["alloc", "watchword-core/std", "watchword-yew023?/std", "serde/std", "jiff/std", "thiserror/std", "musli-web05?/std"]
-alloc = ["watchword-core/alloc", "serde/alloc", "jiff/alloc", "musli-web05?/alloc"]
+std = ["alloc", "watchword-core/std", "watchword-yew023?/std", "serde/std", "jiff/std", "thiserror/std", "musli-web06?/std"]
+alloc = ["watchword-core/alloc", "serde/alloc", "jiff/alloc", "musli-web06?/alloc"]
 musli02 = ["watchword-core/musli02"]
-musliweb05 = ["alloc", "musli02", "watchword-core/musliweb05", "dep:musli-web05", "watchword-yew023?/musliweb05"]
+musliweb06 = ["alloc", "musli02", "watchword-core/musliweb06", "dep:musli-web06", "watchword-yew023?/musliweb06"]
 server = ["std", "dep:base64", "dep:bcrypt", "dep:cookie", "dep:hmac", "dep:http", "dep:rand", "dep:sha2", "dep:tokio", "tokio/macros", "dep:tracing"]
 cloudflare = ["server", "dep:aws-lc-rs", "dep:reqwest", "dep:serde_json"]
 google = ["server", "dep:reqwest", "dep:serde_json", "dep:url", "dep:lru", "axum08?/query"]
-axum08 = ["server", "dep:axum08", "watchword-core/axum08", "musli-web05?/ws"]
+axum08 = ["server", "dep:axum08", "watchword-core/axum08", "musli-web06?/ws"]
 sqll015 = ["watchword-core/sqll015"]
 test-util = ["server", "axum08?/http1"]
 phrasebookcatalog01 = ["watchword-core/phrasebookcatalog01"]
@@ -66,13 +66,13 @@ lru = { version = "0.18.5", optional = true }
 
 axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["tokio"], optional = true }
 
-musli-web05 = { package = "musli-web", version = "0.5.0", default-features = false, optional = true }
+musli-web06 = { package = "musli-web", version = "0.6.0", default-features = false, optional = true }
 
 watchword-yew023 = { path = "crates/watchword-yew023", version = "=0.4.0", default-features = false, optional = true }
 
 [dev-dependencies]
 axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["tokio", "http1", "query", "macros"] }
-musli-web05 = { package = "musli-web", version = "0.5.0", default-features = false, features = ["axum08", "tungstenite030"] }
+musli-web06 = { package = "musli-web", version = "0.6.0", default-features = false, features = ["axum08", "tungstenite030"] }
 musli = "0.2.0"
 serde_json = "1.0.151"
 sqll = { version = "0.15.0", features = ["bundled"] }

@@ -1,7 +1,7 @@
 //! [`Transport`]: how the [`AuthService`](super::AuthService)'s requests
 //! reach the server.
 
-#[cfg(feature = "musliweb05")]
+#[cfg(feature = "musliweb06")]
 use core::cell::RefCell;
 use core::future::Future;
 use core::pin::Pin;
@@ -11,7 +11,7 @@ use watchword_core::{AuthRequest, AuthResponse};
 
 use super::Error;
 use super::http;
-#[cfg(feature = "musliweb05")]
+#[cfg(feature = "musliweb06")]
 use super::socket::SocketHandle;
 
 /// The future a [`Transport`] answers with. It need not be `Send`, since the
@@ -91,13 +91,13 @@ impl Transport for HttpTransport {
 /// info), goes over HTTP.
 #[derive(Default)]
 pub(super) struct DefaultTransport {
-    #[cfg(feature = "musliweb05")]
+    #[cfg(feature = "musliweb06")]
     socket: RefCell<Option<SocketHandle>>,
 }
 
 impl DefaultTransport {
     /// Sends the requests over `socket` from now on.
-    #[cfg(feature = "musliweb05")]
+    #[cfg(feature = "musliweb06")]
     pub(super) fn set_socket(&self, socket: Option<SocketHandle>) {
         *self.socket.borrow_mut() = socket;
     }
@@ -105,11 +105,11 @@ impl DefaultTransport {
 
 impl Transport for DefaultTransport {
     fn send(&self, request: AuthRequest) -> TransportFuture<'_> {
-        #[cfg(feature = "musliweb05")]
+        #[cfg(feature = "musliweb06")]
         let socket = self.socket.borrow().clone();
 
         Box::pin(async move {
-            #[cfg(feature = "musliweb05")]
+            #[cfg(feature = "musliweb06")]
             if let Some(socket) = &socket
                 && request.cookie().is_none()
                 && let Some(result) = socket.send(&request).await

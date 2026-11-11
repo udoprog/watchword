@@ -1,5 +1,5 @@
 //! watchword's account and user-management operations, and its live updates,
-//! as [musli-web] 0.5 API types, so an app can carry them on the musli-web
+//! as [musli-web] 0.6 API types, so an app can carry them on the musli-web
 //! WebSocket it already has.
 //!
 //! The endpoints and [`AuthBroadcast`] form a `define!` list of their own.
@@ -20,30 +20,30 @@
 //! # Including watchword's list
 //!
 //! The main way is to include watchword's list in the app's own, with
-//! `include watchword_core::musliweb05 as Auth;` (or `watchword::musliweb05`
+//! `include watchword_core::musliweb06 as Auth;` (or `watchword::musliweb06`
 //! from a crate that already depends on `watchword`):
 //!
 //! - The client gets watchword's endpoints through the app's own list type,
 //!   so one socket handle sends both, and watchword-yew023's components
 //!   follow [`AuthBroadcast`] on that same socket.
-//! - The app's `Request` gets an `Auth(musliweb05::Request)` variant, so its
+//! - The app's `Request` gets an `Auth(musliweb06::Request)` variant, so its
 //!   handler's exhaustive `match` does not compile until it forwards that
-//!   variant (to `watchword::musliweb05::Connection::handle`).
+//!   variant (to `watchword::musliweb06::Connection::handle`).
 //! - musli-web checks that no id of the app's list is also one of the
 //!   included list's in plain `const` items, so a clash fails `cargo check`.
 //!
 //! ```
 //! use musli_core02::{Decode, Encode};
-//! use musli_web05::api::Id;
-//! use watchword_core::musliweb05::{self as auth, Me};
+//! use musli_web06::api::Id;
+//! use watchword_core::musliweb06::{self as auth, Me};
 //!
 //! #[derive(Encode, Decode)]
 //! #[musli(crate = musli_core02)]
 //! pub struct StatusRequest;
 //!
-//! musli_web05::api::define! {
+//! musli_web06::api::define! {
 //!     // Only needed since the dependency is renamed, as it is here.
-//!     #![musli(crate = musli_web05)]
+//!     #![musli(crate = musli_web06)]
 //!
 //!     pub type Status;
 //!
@@ -53,7 +53,7 @@
 //!     }
 //!
 //!     /// watchword's endpoints and broadcast.
-//!     include watchword_core::musliweb05 as Auth;
+//!     include watchword_core::musliweb06 as Auth;
 //! }
 //!
 //! assert_eq!(Request::from_id(Me::ID), Request::Auth(auth::Request::Me));
@@ -73,8 +73,8 @@
 //! are disjoint, and a clash fails `cargo check` too:
 //!
 //! ```
-//! use musli_web05::api::Id;
-//! use watchword_core::musliweb05 as auth;
+//! use musli_web06::api::Id;
+//! use watchword_core::musliweb06 as auth;
 //!
 //! mod api {
 //!     use musli_core02::{Decode, Encode};
@@ -83,8 +83,8 @@
 //!     #[musli(crate = musli_core02)]
 //!     pub struct StatusRequest;
 //!
-//!     musli_web05::api::define! {
-//!         #![musli(crate = musli_web05)]
+//!     musli_web06::api::define! {
+//!         #![musli(crate = musli_web06)]
 //!
 //!         pub type Status;
 //!
@@ -102,7 +102,7 @@
 //! };
 //! ```
 //!
-//! [`IdSet`]: musli_web05::api::IdSet
+//! [`IdSet`]: musli_web06::api::IdSet
 //!
 //! # Endpoints
 //!
@@ -150,12 +150,12 @@ pub const LAST_ID: u16 = 32255;
 
 /// Whether `id` is in the band of ids watchword owns, [`FIRST_ID`] to
 /// [`LAST_ID`].
-pub fn is_watchword_id(id: musli_web05::api::MessageId) -> bool {
+pub fn is_watchword_id(id: musli_web06::api::MessageId) -> bool {
     (FIRST_ID..=LAST_ID).contains(&id.get())
 }
 
-musli_web05::api::define! {
-    #![musli(crate = musli_web05)]
+musli_web06::api::define! {
+    #![musli(crate = musli_web06)]
 
     /// The signed-in user, with [`UserInfo::impersonated_by`] set when an
     /// admin is acting as them. Like `GET /api/auth/me`.

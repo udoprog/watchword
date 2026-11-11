@@ -37,7 +37,7 @@ macro_rules! call {
 /// use it behave the same as watchword's: by default the requests go over
 /// the app's socket once it is handed over with
 /// [`AuthContext::set_socket`](super::AuthContext::set_socket) (feature
-/// `musliweb05`), and over HTTP otherwise, while a transport given with the
+/// `musliweb06`), and over HTTP otherwise, while a transport given with the
 /// provider's [`service`](super::AuthProviderProps::service) prop carries
 /// them all, such as a test's.
 ///

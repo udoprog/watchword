@@ -5,11 +5,11 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::string::ToString;
 
-use musli_web05::api;
-use musli_web05::web03::prelude::ws;
+use musli_web06::api;
+use musli_web06::web03::prelude::ws;
 use yew::Callback;
 
-use watchword_core::musliweb05::{
+use watchword_core::musliweb06::{
     AuthBroadcast, AuthUpdate, CloudflareRequest, DeleteUserRequest, GoogleRequest,
     IssueLinkRequest, MeRequest, RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest,
     UserUpdate, UsersRequest,
@@ -222,10 +222,10 @@ mod tests {
     use std::pin::pin;
     use std::task::{Context, Poll, Waker};
 
-    use musli_web05::web03::prelude::ws;
+    use musli_web06::web03::prelude::ws;
     use yew::Callback;
 
-    use watchword_core::musliweb05::MeRequest;
+    use watchword_core::musliweb06::MeRequest;
 
     use super::{Error, SocketHandle, request_error};
 

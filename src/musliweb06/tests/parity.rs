@@ -13,7 +13,7 @@ use std::vec::Vec;
 
 use axum08::body::Body;
 use axum08::http::{Method, Request as HttpRequest, StatusCode, header};
-use musli_web05::api::{DecodeBody, Id as _, MessageId};
+use musli_web06::api::{DecodeBody, Id as _, MessageId};
 use serde_json::Value;
 use tower::ServiceExt;
 

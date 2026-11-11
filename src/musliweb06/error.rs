@@ -1,6 +1,6 @@
 use core::fmt;
 
-use musli_web05::ws::{self, ErrorPayload, ResponseError};
+use musli_web06::ws::{self, ErrorPayload, ResponseError};
 
 use crate::core::Error;
 use crate::store::StoreError;

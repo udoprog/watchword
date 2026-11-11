@@ -7,8 +7,8 @@ use std::vec::Vec;
 
 use yew::prelude::*;
 
-#[cfg(feature = "musliweb05")]
-use watchword_core::musliweb05::AuthUpdate;
+#[cfg(feature = "musliweb06")]
+use watchword_core::musliweb06::AuthUpdate;
 use watchword_core::{Link, UserEntry, UserId};
 
 use super::Error;
@@ -31,7 +31,7 @@ use super::service::AuthService;
 /// is kept current: by what [`AdminUsers`](super::AdminUsers) changes, and,
 /// with a socket handed to
 /// [`AuthContext::set_socket`](super::AuthContext::set_socket) (feature
-/// `musliweb05`), by the server's `AuthBroadcast`, fetching it again when a
+/// `musliweb06`), by the server's `AuthBroadcast`, fetching it again when a
 /// broadcast cannot say enough, such as after `Resync`. Without a socket, an
 /// app that learns of a change made elsewhere calls
 /// [`reload`](Users::reload). It is also fetched again, or dropped, when the
@@ -264,7 +264,7 @@ impl UsersStore {
     /// Applies an update from the server to the list, fetching it again when
     /// the update cannot say enough. A list still loading comes with the
     /// change; a failed one is fetched again by [`Users::reload`].
-    #[cfg(feature = "musliweb05")]
+    #[cfg(feature = "musliweb06")]
     pub(super) fn apply(&self, update: AuthUpdate) {
         // The provider's.
         if matches!(update, AuthUpdate::Me(..)) {
@@ -354,7 +354,7 @@ impl UsersStore {
 /// sign-in method changed (registering and revoking access use up the
 /// links), any change to a user not in the list, and updates the server
 /// missed (`Resync`).
-#[cfg(feature = "musliweb05")]
+#[cfg(feature = "musliweb06")]
 pub(super) fn apply_update(users: &mut Vec<UserEntry>, update: AuthUpdate) -> bool {
     match update {
         // The provider's.

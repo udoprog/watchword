@@ -183,7 +183,7 @@ pub enum CookieChange {
 ///
 /// Like the request, this is plumbing: each transport answers with the
 /// value a variant carries, as that route or endpoint has always answered.
-/// With the `axum08` feature it is an `IntoResponse`, and with `musliweb05`
+/// With the `axum08` feature it is an `IntoResponse`, and with `musliweb06`
 /// it encodes as the value it carries, the response of the musli-web
 /// endpoint for its request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,7 +216,7 @@ pub enum AuthResponse {
     Done,
 }
 
-#[cfg(feature = "musliweb05")]
+#[cfg(feature = "musliweb06")]
 mod musli {
     use alloc::vec::Vec;
 
@@ -232,7 +232,7 @@ mod musli {
     /// [`Done`](AuthResponse::Done): the response of the musli-web endpoint
     /// that answers the request. There is no `Decode`; a client decodes the
     /// endpoint's own response type.
-    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb05")))]
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb06")))]
     impl<M> Encode<M> for AuthResponse
     where
         M: 'static,

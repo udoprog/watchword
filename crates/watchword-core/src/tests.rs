@@ -469,12 +469,12 @@ fn musli_round_trip() {
     }
 }
 
-#[cfg(feature = "musliweb05")]
-mod musliweb05 {
-    use musli_web05::api::{Id, MessageId};
+#[cfg(feature = "musliweb06")]
+mod musliweb06 {
+    use musli_web06::api::{Id, MessageId};
 
     use super::*;
-    use crate::musliweb05::*;
+    use crate::musliweb06::*;
 
     /// The ids are part of the wire format: a released id never changes
     /// meaning.

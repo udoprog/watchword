@@ -23,7 +23,7 @@ pub enum Error {
     /// A request over the app's musli-web socket failed without an
     /// [`AuthError`]: the server answered with a request error, such as an
     /// internal failure, or the socket closed before the answer. Only with
-    /// the `musliweb05` feature and a socket handed to
+    /// the `musliweb06` feature and a socket handed to
     /// [`AuthContext::set_socket`](super::AuthContext).
     Socket(String),
     /// The transport answered a request with the

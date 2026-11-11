@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use musli_web05::api::DecodeBody;
-use musli_web05::ws::{self, Incoming, Outgoing};
+use musli_web06::api::DecodeBody;
+use musli_web06::ws::{self, Incoming, Outgoing};
 
 use super::{
     AuthUpdate, CloudflareRequest, DeleteUserRequest, GoogleRequest, IssueLinkRequest, MeRequest,
@@ -24,7 +24,7 @@ use crate::types::{Access, AuthError, AuthRequest, UserId};
 ///
 /// ```no_run
 /// # async fn ws(auth: watchword::Auth, signed_in: watchword::axum08::SignedIn) {
-/// use watchword::musliweb05::{AuthUpdate, Connection};
+/// use watchword::musliweb06::{AuthUpdate, Connection};
 ///
 /// let conn = Connection::new(auth.clone(), &signed_in);
 /// let mut updates = conn.updates();
@@ -55,7 +55,7 @@ use crate::types::{Access, AuthError, AuthRequest, UserId};
 ///
 /// Cloning a `Connection` is cheap, so it sits beside the app's own handler.
 /// The main way to use it is from an app whose `define!` list includes
-/// watchword's (`include watchword::musliweb05 as Auth;`), which passes that
+/// watchword's (`include watchword::musliweb06 as Auth;`), which passes that
 /// variant's requests to [`handle`](Connection::handle). The client then gets
 /// watchword's endpoints through the app's list type, so one socket handle
 /// sends both, and the exhaustive `match` below does not compile until it
@@ -65,18 +65,18 @@ use crate::types::{Access, AuthError, AuthRequest, UserId};
 /// # mod api {
 /// #     #[derive(musli::Encode, musli::Decode)]
 /// #     pub struct StatusRequest;
-/// #     musli_web05::api::define! {
-/// #         #![musli(crate = musli_web05)]
+/// #     musli_web06::api::define! {
+/// #         #![musli(crate = musli_web06)]
 /// #         pub type Status;
 /// #         impl Endpoint for Status {
 /// #             impl Request for StatusRequest;
 /// #             type Response<'de> = u32;
 /// #         }
-/// #         include watchword::musliweb05 as Auth;
+/// #         include watchword::musliweb06 as Auth;
 /// #     }
 /// # }
-/// use musli_web05::ws;
-/// use watchword::musliweb05::{Connection, RequestError};
+/// use musli_web06::ws;
+/// use watchword::musliweb06::{Connection, RequestError};
 ///
 /// #[derive(Clone)]
 /// struct Handler {
@@ -109,7 +109,7 @@ use crate::types::{Access, AuthError, AuthRequest, UserId};
 /// through [`ws::Handler::or`], routing each request by the list that knows
 /// its id. `Or` refuses lists that share an id, but being generic that check
 /// only runs once a binary is built, so `cargo check` misses it; a `const`
-/// assertion on the lists' [`IdSet`](musli_web05::api::IdSet)s catches it
+/// assertion on the lists' [`IdSet`](musli_web06::api::IdSet)s catches it
 /// earlier. watchword's band, 32000–32255, is a convention, so this matters
 /// for an app that pins ids of its own:
 ///
@@ -117,8 +117,8 @@ use crate::types::{Access, AuthError, AuthRequest, UserId};
 /// # mod api {
 /// #     #[derive(musli::Encode, musli::Decode)]
 /// #     pub struct StatusRequest;
-/// #     musli_web05::api::define! {
-/// #         #![musli(crate = musli_web05)]
+/// #     musli_web06::api::define! {
+/// #         #![musli(crate = musli_web06)]
 /// #         pub type Status;
 /// #         impl Endpoint for Status {
 /// #             impl Request for StatusRequest;
@@ -128,23 +128,23 @@ use crate::types::{Access, AuthError, AuthRequest, UserId};
 /// # }
 /// # #[derive(Clone)]
 /// # struct AppHandler;
-/// # impl musli_web05::ws::Handler for AppHandler {
+/// # impl musli_web06::ws::Handler for AppHandler {
 /// #     type Id = api::Request;
 /// #     type Response = bool;
-/// #     async fn handle(&self, _: Self::Id, _: &mut musli_web05::ws::Incoming<'_>, _: &mut musli_web05::ws::Outgoing<'_>) -> bool { false }
+/// #     async fn handle(&self, _: Self::Id, _: &mut musli_web06::ws::Incoming<'_>, _: &mut musli_web06::ws::Outgoing<'_>) -> bool { false }
 /// # }
-/// use musli_web05::api::Id;
-/// use watchword::musliweb05 as auth;
+/// use musli_web06::api::Id;
+/// use watchword::musliweb06 as auth;
 ///
 /// const _: () = {
 ///     assert!(api::Request::IDS.is_disjoint(&auth::Request::IDS));
 ///     assert!(api::Event::IDS.is_disjoint(&auth::Event::IDS));
 /// };
 ///
-/// # async fn run(socket: axum08::extract::ws::WebSocket, conn: watchword::musliweb05::Connection) -> Result<(), musli_web05::ws::Error> {
-/// use musli_web05::ws::Handler;
+/// # async fn run(socket: axum08::extract::ws::WebSocket, conn: watchword::musliweb06::Connection) -> Result<(), musli_web06::ws::Error> {
+/// use musli_web06::ws::Handler;
 ///
-/// let mut server = musli_web05::axum08::server(socket, AppHandler.or(conn))
+/// let mut server = musli_web06::axum08::server(socket, AppHandler.or(conn))
 ///     .connect()
 ///     .await?;
 ///
@@ -163,9 +163,9 @@ use crate::types::{Access, AuthError, AuthRequest, UserId};
 /// sees:
 ///
 /// ```no_run
-/// use musli_web05::ws;
+/// use musli_web06::ws;
 /// use watchword::core::Error;
-/// use watchword::musliweb05::{Connection, RequestError};
+/// use watchword::musliweb06::{Connection, RequestError};
 ///
 /// async fn stats(conn: &Connection, outgoing: &mut ws::Outgoing<'_>) -> Result<bool, RequestError> {
 ///     let admin = match conn.require_admin().await {

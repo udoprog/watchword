@@ -24,8 +24,8 @@
 //!
 //! A dependency that is not yet 1.0 and appears in the API is named after its
 //! version: its feature (and module, if it has one) is `axum08` for axum
-//! 0.8, `sqll015` for sqll 0.15, `musli02` for musli 0.2, `musliweb05` for
-//! musli-web 0.5, `phrasebookcatalog01` for phrasebook-catalog 0.1 and
+//! 0.8, `sqll015` for sqll 0.15, `musli02` for musli 0.2, `musliweb06` for
+//! musli-web 0.6, `phrasebookcatalog01` for phrasebook-catalog 0.1 and
 //! `yew023` for yew 0.23. A later version is added beside it, so a watchword
 //! upgrade never forces an app onto a new axum, sqll, musli, musli-web,
 //! phrasebook-catalog or yew,
@@ -37,7 +37,7 @@
 //! | `alloc` | [`types`] | the wire types (`UserInfo`, `LoginRequest`, `CreatedUser`, ...), `AuthError` and its `Invalid` reasons, `validate_password`, `normalize_email` |
 //! | `std` *(default)* | | `alloc`, and the standard library for the dependencies that have it |
 //! | `musli02` | | musli 0.2 `Encode`/`Decode` on the types |
-//! | `musliweb05` | [`musliweb05`] | for musli-web 0.5: the account, user-management, Cloudflare Access and Google settings endpoints and the `AuthBroadcast` of live auth changes, as API types an app carries on its own musli-web WebSocket, with their ids pinned in 32000–32255; with `axum08`, `Connection`, which answers those endpoints on one socket and turns `AuthEvent`s into the updates it may see; with `yew023`, `AuthContext::set_socket`, through which the components follow those broadcasts (implies `alloc` and `musli02`) |
+//! | `musliweb06` | [`musliweb06`] | for musli-web 0.6: the account, user-management, Cloudflare Access and Google settings endpoints and the `AuthBroadcast` of live auth changes, as API types an app carries on its own musli-web WebSocket, with their ids pinned in 32000–32255; with `axum08`, `Connection`, which answers those endpoints on one socket and turns `AuthEvent`s into the updates it may see; with `yew023`, `AuthContext::set_socket`, through which the components follow those broadcasts (implies `alloc` and `musli02`) |
 //! | `server` | [`core`], [`store`] | bcrypt password hashing with `dummy_hash` timing, session ids and link tokens, HMAC-signed session cookies; the `Auth` service (sign-in, registration links, user management, sign-in throttle, `AuthEvent`s and actor-attributed `AuditEvent`s, bootstrap admin) and `Auth::guard` for WebSocket sessions; the `Store` trait and `MemoryStore` (implies `std`) |
 //! | `cloudflare` | [`cloudflare`] | Cloudflare Access JWT verification with a pluggable `KeyFetcher`; `Auth::cloudflare` and `Auth::set_cloudflare`, which keep the settings in the store; with `axum08`, admin routes for them (implies `server`) |
 //! | `google` | [`google`] | Google OAuth: `GoogleConfig::new` for `AuthBuilder::google`, or a client an admin sets at runtime with `Auth::set_google`, kept in the store; with `axum08`, `routes()` serves its start, registration, account-switch and callback routes and admin routes for the settings (implies `server`) |
@@ -55,8 +55,8 @@
 //! ## Using it
 //!
 //! Add it from crates.io with the features each crate needs. An app whose
-//! frontend talks to its server over a [musli-web] 0.5 WebSocket, as the
-//! [example app](#example-app) does, takes `musliweb05` on both sides: the
+//! frontend talks to its server over a [musli-web] 0.6 WebSocket, as the
+//! [example app](#example-app) does, takes `musliweb06` on both sides: the
 //! server answers the components' requests and sends them live updates on
 //! that socket, and the frontend hands the socket to the components. An app
 //! that uses only HTTP leaves it out of both.
@@ -64,7 +64,7 @@
 //! ```toml
 //! # The server crate.
 //! [dependencies]
-//! watchword = { version = "0.3", features = ["axum08", "cloudflare", "google", "musliweb05"] }
+//! watchword = { version = "0.3", features = ["axum08", "cloudflare", "google", "musliweb06"] }
 //!
 //! [dev-dependencies]
 //! watchword = { version = "0.3", features = ["test-util"] }
@@ -73,7 +73,7 @@
 //! ```toml
 //! # The frontend crate, built for wasm32-unknown-unknown.
 //! [dependencies]
-//! watchword = { version = "0.3", features = ["yew023", "musliweb05"] }
+//! watchword = { version = "0.3", features = ["yew023", "musliweb06"] }
 //! ```
 //!
 //! Take only the sign-in methods the app offers: `cloudflare` and `google`
@@ -117,7 +117,7 @@
 //! [`examples/app`] is an axum server and a Yew frontend wired up with all three
 //! sign-in methods, `MemoryStore` and a musli-web WebSocket held open for the
 //! session, which carries the components' account and admin requests and live
-//! updates beside the app's own API (`musliweb05`): a reference for apps taking
+//! updates beside the app's own API (`musliweb06`): a reference for apps taking
 //! the library, and a way to try the components by hand. It is its own cargo
 //! workspace, so it adds nothing to the library's builds or lockfile.
 //!
@@ -149,7 +149,7 @@
 //! [`examples/sqll-store`]: https://github.com/udoprog/watchword/tree/main/examples/sqll-store
 //! [`google::fake`]: https://docs.rs/watchword/latest/watchword/google/fake/index.html
 //! [`google`]: https://docs.rs/watchword/latest/watchword/google/index.html
-//! [`musliweb05`]: https://docs.rs/watchword/latest/watchword/musliweb05/index.html
+//! [`musliweb06`]: https://docs.rs/watchword/latest/watchword/musliweb06/index.html
 //! [`phrasebookcatalog01`]: https://docs.rs/watchword/latest/watchword/phrasebookcatalog01/index.html
 //! [`store_suite!`]: https://docs.rs/watchword/latest/watchword/macro.store_suite.html
 //! [`store`]: https://docs.rs/watchword/latest/watchword/store/index.html
@@ -178,9 +178,9 @@ extern crate std;
 #[doc(inline)]
 pub use watchword_core as types;
 
-#[cfg(feature = "musliweb05")]
-#[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb05")))]
-pub mod musliweb05;
+#[cfg(feature = "musliweb06")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb06")))]
+pub mod musliweb06;
 
 #[cfg(feature = "server")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "server")))]

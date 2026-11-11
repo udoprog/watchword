@@ -55,7 +55,7 @@ enum Message {
 /// without Cloudflare Access is reported as such.
 ///
 /// Use it inside [`AuthProvider`](super::AuthProvider), for an admin. With
-/// the `musliweb05` feature and a socket handed to
+/// the `musliweb06` feature and a socket handed to
 /// [`AuthContext::set_socket`](super::AuthContext::set_socket), its requests
 /// go over the socket while it is open.
 ///

@@ -603,11 +603,11 @@ fn replacing_the_user_keeps_the_impersonation() {
     assert_eq!(replace_user(&current, admin.clone()), admin);
 }
 
-#[cfg(feature = "musliweb05")]
+#[cfg(feature = "musliweb06")]
 #[test]
 fn broadcasts_apply_to_the_users_list() {
     use super::users::apply_update;
-    use watchword_core::musliweb05::AuthUpdate;
+    use watchword_core::musliweb06::AuthUpdate;
 
     let expires = Timestamp::UNIX_EPOCH;
 

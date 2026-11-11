@@ -1,10 +1,10 @@
 //! watchword's account and user-management operations, and its live updates,
-//! as [musli-web] 0.5 API types, so an app can carry them on the musli-web
+//! as [musli-web] 0.6 API types, so an app can carry them on the musli-web
 //! WebSocket it already has.
 //!
 //! The endpoints and [`AuthBroadcast`] form a `define!` list of their own.
 //! The main way to carry them is to include that list in the app's own
-//! (`include watchword::musliweb05 as Auth;`, or `watchword_core::musliweb05`
+//! (`include watchword::musliweb06 as Auth;`, or `watchword_core::musliweb06`
 //! from a wasm-safe `api` crate): the client gets watchword's endpoints
 //! through the app's list type, so one socket handle sends both, the app's
 //! exhaustive `match` on its `Request` does not compile until it forwards
@@ -14,7 +14,7 @@
 //! `ws::Handler::or` instead, and asserts in a `const` item that the two
 //! lists' `IdSet`s are disjoint, since `Or`'s own check only runs once a
 //! binary is built; both are shown in [watchword_core's
-//! docs](watchword_core::musliweb05).
+//! docs](watchword_core::musliweb06).
 //!
 //! watchword pins each of its types to an id in 32000–32255 ([`FIRST_ID`] to
 //! [`LAST_ID`]). A released id never changes meaning. The band is a
@@ -48,9 +48,9 @@
 //!
 //! [`AuthBroadcast`] (32100) carries [`AuthUpdate`]s.
 //!
-//! The types are those of `watchword_core::musliweb05`, which an app's
+//! The types are those of `watchword_core::musliweb06`, which an app's
 //! wasm-safe `api` crate can use. With `axum08` as well, the server side is
-//! here too: a `Connection` (`musliweb05` and `axum08`) answers the
+//! here too: a `Connection` (`musliweb06` and `axum08`) answers the
 //! endpoints' requests on one socket, running the same operations as the HTTP
 //! routes, called from the app's handler (its `handle`, in the arm of the
 //! included list) or, without the include, combined with it as a
@@ -89,7 +89,7 @@
 //! [musli-web]: https://docs.rs/musli-web
 
 #[doc(inline)]
-pub use watchword_core::musliweb05::*;
+pub use watchword_core::musliweb06::*;
 
 #[cfg(feature = "axum08")]
 mod connection;

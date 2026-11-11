@@ -4,7 +4,7 @@
 //! watchword's band (32000–32255). The list includes watchword's endpoints
 //! and `AuthBroadcast` as `Auth`, so one socket carries both and musli-web
 //! checks at compile time that no id is used twice. The server passes the
-//! `Request::Auth` requests to `watchword::musliweb05::Connection::handle`.
+//! `Request::Auth` requests to `watchword::musliweb06::Connection::handle`.
 
 use musli::{Decode, Encode};
 
@@ -33,5 +33,5 @@ musli_web::api::define! {
 
     /// watchword's account and user-management endpoints and its
     /// `AuthBroadcast`.
-    include watchword_core::musliweb05 as Auth;
+    include watchword_core::musliweb06 as Auth;
 }

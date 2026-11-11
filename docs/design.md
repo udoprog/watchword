@@ -1094,8 +1094,8 @@ impl, the accessors `signed_in`, `require_admin`, `user_id` and `session_id`, an
 following the broadcasts and sending their requests over the socket
 (`AuthContext::set_socket`). `examples/app` is wired this way and is the
 reference for an app. Decisions 13, 16–20 and 23 record why it is shaped this
-way. Not built yet: the move from musli-web 0.5 to 0.6 and `accept`, which
-wait on musli-web 0.6's negotiate headers (decision 33).*
+way. The move to musli-web 0.6 is built, against its unreleased crate. Not
+built yet: `accept`, on 0.6's negotiate headers (decision 33).*
 
 An app whose frontend already talks to its server over a musli-web WebSocket
 can carry watchword's account and user-management operations, and its live

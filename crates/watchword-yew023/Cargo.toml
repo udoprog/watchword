@@ -22,9 +22,9 @@ rustdoc-args = ["--cfg", "watchword_docsrs"]
 
 [features]
 default = ["std"]
-std = ["alloc", "watchword-core/std", "watchword-core/phrasebookcatalog01", "serde/std", "jiff/std", "musli-web05?/std"]
+std = ["alloc", "watchword-core/std", "watchword-core/phrasebookcatalog01", "serde/std", "jiff/std", "musli-web06?/std"]
 alloc = ["watchword-core/alloc", "serde/alloc", "jiff/alloc"]
-musliweb05 = ["std", "dep:musli-web05", "watchword-core/musliweb05"]
+musliweb06 = ["std", "dep:musli-web06", "watchword-core/musliweb06"]
 
 [dependencies]
 watchword-core = { path = "../watchword-core", version = "=0.4.0", default-features = false }
@@ -35,7 +35,7 @@ jiff = { version = "0.2.37", default-features = false, features = ["js"] }
 serde = { version = "1.0.229", default-features = false }
 wasm-bindgen-futures = "0.4.56"
 phrasebook02 = { package = "phrasebook", version = "0.2.0", features = ["yew023"] }
-musli-web05 = { package = "musli-web", version = "0.5.0", default-features = false, features = ["web03"], optional = true }
+musli-web06 = { package = "musli-web", version = "0.6.0", default-features = false, features = ["web03"], optional = true }
 web-sys = { version = "0.3.83", features = ["AbortController", "AbortSignal", "Blob", "Clipboard", "Document", "Element", "Headers", "History", "HtmlAnchorElement", "HtmlElement", "HtmlInputElement", "HtmlSelectElement", "Location", "MutationObserver", "MutationObserverInit", "MutationRecord", "Navigator", "Node", "NodeList", "Request", "RequestCredentials", "Response", "Storage", "Url", "Window", "console"] }
 
 [dev-dependencies]

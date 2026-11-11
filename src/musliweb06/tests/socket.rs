@@ -15,10 +15,10 @@ use axum08::extract::State;
 use axum08::extract::ws::WebSocketUpgrade;
 use axum08::response::Response;
 use axum08::routing::any;
-use musli_web05::api::{self, Endpoint, Id};
-use musli_web05::client::{self, Handle};
-use musli_web05::ws::Handler as _;
-use musli_web05::{tungstenite030, ws};
+use musli_web06::api::{self, Endpoint, Id};
+use musli_web06::client::{self, Handle};
+use musli_web06::ws::Handler as _;
+use musli_web06::{tungstenite030, ws};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
@@ -28,7 +28,7 @@ use super::super::{
 };
 use super::{PASSWORD, auth, pending, root, user};
 use crate::axum08::SignedIn;
-use crate::musliweb05::{Connection, RequestError};
+use crate::musliweb06::{Connection, RequestError};
 use crate::store::StoreError;
 use crate::types::{
     AuthError, CloudflareConfig, Conflict, GoogleSettingsUpdate, Invalid, NewUser, PasswordChange,
@@ -60,8 +60,8 @@ mod app {
     #[derive(Debug, Encode, Decode)]
     pub struct RefusedRequest;
 
-    musli_web05::api::define! {
-        #![musli(crate = musli_web05)]
+    musli_web06::api::define! {
+        #![musli(crate = musli_web06)]
 
         pub type Ping;
 
@@ -87,7 +87,7 @@ mod app {
         }
 
         /// watchword's endpoints and broadcast.
-        include crate::musliweb05 as Auth;
+        include crate::musliweb06 as Auth;
     }
 }
 
@@ -104,8 +104,8 @@ mod stray {
     #[derive(Debug, Encode, Decode)]
     pub struct MalformedRequest;
 
-    musli_web05::api::define! {
-        #![musli(crate = musli_web05)]
+    musli_web06::api::define! {
+        #![musli(crate = musli_web06)]
 
         /// Neither the app's nor watchword's.
         #[musli(id = 500)]
@@ -188,8 +188,8 @@ mod alone {
     #[derive(Debug, Encode, Decode)]
     pub struct PingRequest;
 
-    musli_web05::api::define! {
-        #![musli(crate = musli_web05)]
+    musli_web06::api::define! {
+        #![musli(crate = musli_web06)]
 
         pub type Ping;
 
@@ -235,7 +235,7 @@ async fn upgrade(ws: WebSocketUpgrade, State(auth): State<Auth>, signed_in: Sign
     let conn = Connection::new(auth, &signed_in);
 
     ws.on_upgrade(move |socket| async move {
-        let server = musli_web05::axum08::server(socket, Handler { conn });
+        let server = musli_web06::axum08::server(socket, Handler { conn });
 
         if let Ok(mut server) = server.connect().await {
             _ = server.run().await;
@@ -251,7 +251,7 @@ async fn upgrade_or(
     let conn = Connection::new(auth, &signed_in);
 
     ws.on_upgrade(move |socket| async move {
-        let server = musli_web05::axum08::server(socket, AloneHandler.or(conn));
+        let server = musli_web06::axum08::server(socket, AloneHandler.or(conn));
 
         if let Ok(mut server) = server.connect().await {
             _ = server.run().await;

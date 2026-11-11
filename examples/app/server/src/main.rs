@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use auth::axum08::SignedIn;
-use auth::musliweb05::{Connection, RequestError};
+use auth::musliweb06::{Connection, RequestError};
 use auth::{Auth, BootstrapAdmin, CloudflareConfig, GoogleConfig, MemoryStore};
 use axum::Router;
 use axum::extract::ws::{WebSocket, WebSocketUpgrade};
@@ -328,7 +328,7 @@ async fn badge(user: SignedIn) -> impl IntoResponse {
 /// after which the frontend's `AuthProvider` checks the session and shows the
 /// sign-in page.
 ///
-/// [`Updates::next`]: auth::musliweb05::Updates::next
+/// [`Updates::next`]: auth::musliweb06::Updates::next
 async fn ws(State(state): State<AppState>, user: SignedIn, upgrade: WebSocketUpgrade) -> Response {
     let conn = Connection::new(state.auth.clone(), &user);
     upgrade.on_upgrade(move |socket| session_socket(state, conn, socket))

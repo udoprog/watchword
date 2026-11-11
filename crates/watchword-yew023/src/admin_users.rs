@@ -65,7 +65,7 @@ pub struct AdminUsersProps {
     /// Bump it to fetch the users again, such as when the app learns of a
     /// change made elsewhere; the same as [`Users::reload`]. Not needed once
     /// the app hands its musli-web socket to [`AuthContext::set_socket`]
-    /// (feature `musliweb05`): the list then follows the server's broadcasts
+    /// (feature `musliweb06`): the list then follows the server's broadcasts
     /// itself.
     #[prop_or_default]
     pub refresh: u64,
@@ -360,7 +360,7 @@ impl Confirming {
 /// them again, and sees the changes made here. Outside a provider it keeps a
 /// list of its own.
 ///
-/// With the `musliweb05` feature and a socket handed to
+/// With the `musliweb06` feature and a socket handed to
 /// [`AuthContext::set_socket`], the list follows the server's
 /// `AuthBroadcast`: users created, changed or deleted elsewhere, such as by
 /// another admin, change in the list in place. A broadcast does not carry
