@@ -9,14 +9,72 @@ use musli_web06::api;
 use musli_web06::web03::prelude::ws;
 use yew::Callback;
 
+use watchword_core::PAGE_SESSION_HEADER;
 use watchword_core::musliweb06::{
     AuthBroadcast, AuthUpdate, CloudflareRequest, DeleteUserRequest, GoogleRequest,
-    IssueLinkRequest, MeRequest, RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest,
-    UserUpdate, UsersRequest,
+    IssueLinkRequest, MeRequest, RevokeAccessRequest, RevokeLinkRequest, SESSION_ENDED,
+    SignOutUserRequest, UserUpdate, UsersRequest,
 };
 use watchword_core::{AuthError, AuthRequest, AuthResponse};
 
 use super::Error;
+use super::browser;
+
+/// The connection metadata of the app's musli-web socket, for its
+/// `ServiceBuilder::metadata`, which calls it on every connect and
+/// reconnect: in a page an admin opened to impersonate someone, the page
+/// session as [`PAGE_SESSION_HEADER`], so the socket speaks for that session
+/// rather than the admin's cookie; nothing elsewhere.
+///
+/// ```ignore
+/// let service = ws::connect(ws::Connect::location("ws"))
+///     .metadata(watchword_yew023::socket_metadata)
+///     .build();
+/// ```
+pub fn socket_metadata(metadata: &mut api::Metadata) {
+    insert_page_session(metadata, browser::page_session().as_deref());
+}
+
+/// Inserts `page_session`, if any, into `metadata`.
+pub(super) fn insert_page_session(metadata: &mut api::Metadata, page_session: Option<&str>) {
+    if let Some(page_session) = page_session {
+        metadata.insert(PAGE_SESSION_HEADER, page_session);
+    }
+}
+
+/// What the provider follows of a socket's state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SocketState {
+    Open,
+    /// Closed, connecting or refused for any reason but [`SESSION_ENDED`].
+    Closed,
+    /// Refused with [`SESSION_ENDED`]: the session the socket stated has
+    /// ended. musli-web does not reconnect it.
+    SessionEnded,
+}
+
+impl SocketState {
+    pub(super) fn from_state(state: &ws::State) -> Self {
+        match state {
+            ws::State::Open => Self::Open,
+            ws::State::Refused(refused) => Self::from_refused(refused.code()),
+            _ => Self::Closed,
+        }
+    }
+
+    /// The state of a socket refused with `code`.
+    pub(super) fn from_refused(code: u16) -> Self {
+        if code == SESSION_ENDED {
+            Self::SessionEnded
+        } else {
+            Self::Closed
+        }
+    }
+
+    pub(super) fn is_open(self) -> bool {
+        self == Self::Open
+    }
+}
 
 /// A socket handed over to the provider, as the context carries it.
 #[derive(Clone)]
@@ -26,40 +84,47 @@ pub(super) struct SocketHandle {
 
 struct Inner {
     handle: ws::Handle,
-    open: Rc<Cell<bool>>,
+    state: Rc<Cell<SocketState>>,
     _state: ws::StateListener,
 }
 
 impl SocketHandle {
-    /// Follows `handle`'s state, calling `on_state` with whether it is open
-    /// each time that changes.
-    pub(super) fn new(handle: ws::Handle, on_state: Callback<bool>) -> Self {
-        let open = Rc::new(Cell::new(false));
+    /// Follows `handle`'s state, calling `on_state` each time its
+    /// [`SocketState`] changes.
+    pub(super) fn new(handle: ws::Handle, on_state: Callback<SocketState>) -> Self {
+        let current = Rc::new(Cell::new(SocketState::Closed));
 
         let (state, listener) = handle.on_state_change({
-            let open = open.clone();
+            let current = current.clone();
 
             move |state: ws::State| {
-                if open.replace(state.is_open()) != state.is_open() {
-                    on_state.emit(state.is_open());
+                let state = SocketState::from_state(&state);
+
+                if current.replace(state) != state {
+                    on_state.emit(state);
                 }
             }
         });
 
-        open.set(state.is_open());
+        current.set(SocketState::from_state(&state));
 
         Self {
             inner: Rc::new(Inner {
                 handle,
-                open,
+                state: current,
                 _state: listener,
             }),
         }
     }
 
+    /// The socket's state.
+    pub(super) fn state(&self) -> SocketState {
+        self.inner.state.get()
+    }
+
     /// Whether the socket is open.
     pub(super) fn is_open(&self) -> bool {
-        self.inner.open.get()
+        self.state().is_open()
     }
 
     /// The app's handle.
@@ -227,7 +292,10 @@ mod tests {
 
     use watchword_core::musliweb06::MeRequest;
 
-    use super::{Error, SocketHandle, request_error};
+    use watchword_core::PAGE_SESSION_HEADER;
+    use watchword_core::musliweb06::SESSION_ENDED;
+
+    use super::{Error, SocketHandle, SocketState, insert_page_session, request_error};
 
     fn poll<F: Future>(future: F) -> Poll<F::Output> {
         pin!(future).poll(&mut Context::from_waker(Waker::noop()))
@@ -245,6 +313,39 @@ mod tests {
     fn socket_without_service_is_closed() {
         let socket = SocketHandle::new(ws::Handle::default(), Callback::noop());
         assert!(!socket.is_open());
+    }
+
+    #[test]
+    fn metadata_carries_the_page_session() {
+        let mut metadata = ws::Metadata::new();
+        insert_page_session(&mut metadata, Some("credential"));
+        assert_eq!(metadata.get(PAGE_SESSION_HEADER), Some("credential"));
+        assert_eq!(metadata.len(), 1);
+    }
+
+    #[test]
+    fn metadata_without_a_page_session_is_empty() {
+        let mut metadata = ws::Metadata::new();
+        insert_page_session(&mut metadata, None);
+        assert!(metadata.is_empty());
+
+        // Off the browser there is no page session.
+        super::socket_metadata(&mut metadata);
+        assert!(metadata.is_empty());
+    }
+
+    #[test]
+    fn only_session_ended_ends_the_session() {
+        assert_eq!(
+            SocketState::from_refused(SESSION_ENDED),
+            SocketState::SessionEnded
+        );
+        assert_eq!(SocketState::from_refused(4000), SocketState::Closed);
+        assert_eq!(SocketState::from_state(&ws::State::Open), SocketState::Open);
+        assert_eq!(
+            SocketState::from_state(&ws::State::Closed),
+            SocketState::Closed
+        );
     }
 
     #[test]

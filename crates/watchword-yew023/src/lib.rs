@@ -35,7 +35,7 @@
 //! |---|---|
 //! | `std` *(default)* | everything here |
 //! | `alloc` | nothing yet beyond watchword-core's `alloc` |
-//! | `musliweb06` | `std` + [`AuthContext::set_socket`]: the components follow a [musli-web] 0.6 socket's broadcasts and send their requests over it; [`AuthContext::on_update`] and `use_auth_update` pass the broadcasts on to the app |
+//! | `musliweb06` | `std` + [`AuthContext::set_socket`] and [`socket_metadata`]: the components follow a [musli-web] 0.6 socket's broadcasts and send their requests over it; [`AuthContext::on_update`] and `use_auth_update` pass the broadcasts on to the app |
 //!
 //! <br>
 //!
@@ -279,13 +279,21 @@
 //!
 //! With the `musliweb06` feature (watchword's `musliweb06` and `yew023`
 //! together), an app that talks to its server over a [musli-web] 0.6
-//! WebSocket hands its handle to the context once the socket is open inside
-//! [`AuthProvider`]:
+//! WebSocket builds it inside [`AuthProvider`] with [`socket_metadata`] as
+//! its connection metadata, and hands its handle to the context:
 //!
 //! ```ignore
+//! let service = ws::connect(ws::Connect::location("ws"))
+//!     .metadata(watchword_yew023::socket_metadata)
+//!     .build();
+//!
 //! let auth = use_auth();
 //! auth.set_socket(Some(service.handle().clone()));
 //! ```
+//!
+//! In a page an admin opened to impersonate someone, the metadata states the
+//! page's session, so the socket speaks for it rather than for the admin's
+//! cookie; the server's `Connection::accept` settles that before any request.
 //!
 //! The components then follow the server's `AuthBroadcast`: the context's
 //! user is replaced when it changes elsewhere, and the shared [`Users`]
@@ -298,7 +306,10 @@
 //! signing in and out, registration and impersonation always use HTTP. When
 //! the socket closes, and every 10 seconds while it stays closed,
 //! the provider checks the session over HTTP, so a session that ended, whose
-//! upgrade the server now refuses, shows the sign-in page.
+//! upgrade the server now refuses, shows the sign-in page. A socket the
+//! server refuses with `SESSION_ENDED` ends an impersonated page as a 401
+//! does, with "Impersonation has ended." and Close; elsewhere it is checked
+//! as a closed one.
 //!
 //! <br>
 //!
@@ -437,6 +448,7 @@
 //! [`use_auth`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth.html
 //! [`use_is_admin`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_is_admin.html
 //! [`use_users`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_users.html
+//! [`socket_metadata`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.socket_metadata.html
 //! [`UserMenu`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.UserMenu.html
 //! [ftl]: https://github.com/udoprog/watchword/blob/main/crates/watchword-core/locales/en-US.ftl
 //! [`Users`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.Users.html
@@ -523,6 +535,10 @@ pub use self::context::{AuthContext, AuthSubscription, use_auth, use_is_admin};
 #[cfg(feature = "musliweb06")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb06")))]
 pub use self::context::use_auth_update;
+
+#[cfg(feature = "musliweb06")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "musliweb06")))]
+pub use self::socket::socket_metadata;
 
 #[cfg(feature = "std")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]

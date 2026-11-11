@@ -112,17 +112,19 @@ impl AuthContext {
     /// the socket fails after sending it is not sent again, and fails with
     /// [`Error::Socket`](super::Error::Socket). Signing in and out,
     /// registering, impersonating, the config and the link info always use
-    /// HTTP. After impersonating, or stopping it, the socket still speaks
-    /// for the session its upgrade carried, so the requests use HTTP until
-    /// it next closes and reconnects with the new session cookie.
+    /// HTTP. Build the socket with [`socket_metadata`](super::socket_metadata)
+    /// so that in a page an admin opened to impersonate someone it speaks for
+    /// that page's session.
     ///
     /// The provider also [checks the session](AuthContext::check_session)
     /// when the socket closes after being open, and every 10 seconds while
     /// it stays closed, including when it is handed over closed. Browsers do
     /// not say why a WebSocket upgrade failed, so an upgrade refused because
     /// the session ended only shows as a socket that closes or does not
-    /// open; a 401 from the check then shows the sign-in page. The app needs
-    /// no state listener of its own for this, and should take the socket
+    /// open; a 401 from the check then shows the sign-in page. A socket the
+    /// server refuses at negotiation with `SESSION_ENDED` ends an
+    /// impersonated page at once, as a 401 does, and elsewhere is checked as
+    /// a closed one. The app needs no state listener of its own for this, and should take the socket
     /// back with `None` if it drops it while signed in, since a dropped
     /// socket stays closed.
     ///

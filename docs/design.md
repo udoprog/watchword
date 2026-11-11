@@ -865,9 +865,10 @@ The components make every request with the provider's `AuthService`
     admin's view, while its static images, wherever trunk puts them, load
     as usual. The request itself may already have gone out with the cookie
     (a `GET` whose answer is dropped). CSS `url()`s are not watched.
-  - `socket_headers()` gives the connection metadata for the app's musli-web
-    socket: `watchword-session` while the page has a page session, none
-    otherwise (2.7).
+  - `socket_metadata(&mut ws::Metadata)` is the app's musli-web socket's
+    metadata closure, passed as `.metadata(socket_metadata)`: it inserts
+    `watchword-session` while the page has a page session, read on each
+    connect and reconnect, and nothing otherwise (2.7).
 - `MediaUrl` loads what the browser would otherwise fetch by itself, and
   is used unconditionally. Outside an impersonated page it is the URL
   itself, at once, so normal pages keep streaming, range requests and the
@@ -1095,8 +1096,8 @@ following the broadcasts and sending their requests over the socket
 (`AuthContext::set_socket`). `examples/app` is wired this way and is the
 reference for an app. Decisions 13, 16–20 and 23 record why it is shaped this
 way. The move to musli-web 0.6 is built, against its unreleased crate, and so
-is `accept`, on 0.6's connection metadata (decision 33). Not built yet: the
-frontend's side of it, `socket_headers` and the refused socket in the page.*
+is `accept`, on 0.6's connection metadata (decision 33), and the
+frontend's side of it, `socket_metadata` and the refused socket in the page.*
 
 An app whose frontend already talks to its server over a musli-web WebSocket
 can carry watchword's account and user-management operations, and its live
@@ -1464,10 +1465,16 @@ transports; `<AdminUsers>` drops it, as before.
 No cookie changes hands when impersonating, so no socket speaks for a
 session other than its page's: the admin's page keeps its own, and the
 impersonated page opens its own. The app builds its web03 `Service` with
-musli-web's metadata closure set to `socket_headers` (2.6), which the
-provider can answer before it renders the children that build it. A
-refusal with `SESSION_ENDED` ends the impersonation in the page as a 401
-does; in a page without a page session the provider checks the session.
+musli-web's metadata closure set to `socket_metadata` (2.6), which reads
+the page session from `sessionStorage` on each connect, so it needs
+nothing from the provider. The provider follows the socket's state through
+the `on_state_change` listener it already holds on the handle from
+`set_socket`: a `State::Refused` with `SESSION_ENDED` ends the
+impersonation in the page as a 401 does (the page session is dropped and
+"Impersonation has ended." shows with Close); in a page without a page
+session it checks the session, as for a closed socket, and keeps checking
+every 10 seconds while the socket stays refused, since musli-web does not
+reconnect a refused socket. The app forwards nothing.
 
 The example's wiring, as a reference: a shared `api` crate with the app's
 own `define!` list (implicit ids), which includes watchword's list as
@@ -1477,7 +1484,7 @@ passes `Auth(request)` to `conn.handle`. It takes `conn.updates()` first,
 negotiates through `updates.unless_ended`, and its connection loop selects
 over `server.run()` and `updates.next()`, broadcasting each update and
 dropping the server, which closes the socket, once `next` gives `None`. The frontend builds the web03
-`Service` once inside `<AuthProvider>`, hands its handle over with
+`Service` once inside `<AuthProvider>`, with `.metadata(socket_metadata)`, hands its handle over with
 `set_socket`, which then checks the session whenever the socket closes;
 musli-web reconnects by itself while the session lives.
 
@@ -2032,10 +2039,10 @@ once the release is on crates.io.
     watchword-yew023: `AuthService::impersonate -> PageSession`,
     `impersonate_in_new_page`, `Error::PageBlocked`,
     `stop_impersonating -> ()`,
-    `socket_headers`, `MediaUrl`, `use_media_url`, `download`, and the
+    `socket_metadata`, `MediaUrl`, `use_media_url`, `download`, and the
     props `private_media` (`<AuthProvider>`) and `impersonate_path`
     (`<AdminUsers>`). An app: moves to musli-web 0.6 and `musliweb06`,
-    passes `socket_headers` to its socket and calls `conn.accept` in its
+    passes `socket_metadata` to its socket's `ServiceBuilder::metadata` and calls `conn.accept` in its
     `Handler::connect` (or uses the `Connection` as a handler, which does); loads its `<img>`, `<audio>` and downloads of
     signed-in routes through `MediaUrl`/`download`, and sets
     `private_media` if its signed-in media are not all under `/api/`;

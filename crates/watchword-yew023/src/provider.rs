@@ -20,7 +20,7 @@ use super::register::Register;
 use super::service::AuthService;
 use super::sign_in::SignIn;
 #[cfg(feature = "musliweb06")]
-use super::socket::{Socket, SocketHandle};
+use super::socket::{Socket, SocketHandle, SocketState};
 use super::transport::{DefaultTransport, Transport};
 use super::users::UsersStore;
 #[cfg(feature = "musliweb06")]
@@ -149,7 +149,7 @@ pub struct AuthProvider {
     #[cfg(feature = "musliweb06")]
     on_update: Callback<AuthUpdate>,
     #[cfg(feature = "musliweb06")]
-    on_socket_state: Callback<bool>,
+    on_socket_state: Callback<SocketState>,
     /// Counts the socket's changes, so that a [`Msg::SocketClosed`] from
     /// before the latest one is ignored.
     #[cfg(feature = "musliweb06")]
@@ -205,9 +205,9 @@ pub enum Msg {
     SetSocket(Option<ws::Handle>),
     #[cfg(feature = "musliweb06")]
     Update(AuthUpdate),
-    /// The socket opened (`true`) or closed (`false`).
+    /// The socket's state changed.
     #[cfg(feature = "musliweb06")]
-    SocketState(bool),
+    SocketState(SocketState),
     /// The socket has stayed closed for [`CLOSED_SOCKET_CHECK`] since the
     /// [`socket_watch`](AuthProvider::socket_watch) this carries.
     #[cfg(feature = "musliweb06")]
@@ -398,13 +398,15 @@ impl Component for AuthProvider {
                 self.socket.set(handle.as_ref(), self.on_update.clone());
                 self.transport.set_socket(handle.clone());
 
-                // A socket handed over closed may be refused already. The
-                // session was just checked to show the app, so the first
-                // check waits.
                 self.socket_watch += 1;
 
-                if handle.as_ref().is_some_and(|handle| !handle.is_open()) {
-                    self.watch_closed_socket(ctx);
+                match handle.as_ref().map(SocketHandle::state) {
+                    Some(SocketState::SessionEnded) => return self.socket_session_ended(ctx),
+                    // A socket handed over closed may be refused already. The
+                    // session was just checked to show the app, so the first
+                    // check waits.
+                    Some(SocketState::Closed) => self.watch_closed_socket(ctx),
+                    Some(SocketState::Open) | None => {}
                 }
 
                 // Nothing shown depends on the socket: the transport has it,
@@ -412,22 +414,26 @@ impl Component for AuthProvider {
                 return false;
             }
             #[cfg(feature = "musliweb06")]
-            Msg::SocketState(open) => {
+            Msg::SocketState(state) => {
                 // Only the current socket's changes count.
                 if !matches!(self.state, State::SignedIn(..))
-                    || self.socket.handle().map(SocketHandle::is_open) != Some(open)
+                    || self.socket.handle().map(SocketHandle::state) != Some(state)
                 {
                     return false;
                 }
 
                 self.socket_watch += 1;
 
-                // Closing after being open: the session may have ended, such
-                // as by being revoked. While it stays closed, its reconnects
-                // may be refused for the same reason.
-                if !open {
-                    self.check_session(ctx);
-                    self.watch_closed_socket(ctx);
+                match state {
+                    SocketState::Open => {}
+                    // Closing after being open: the session may have ended,
+                    // such as by being revoked. While it stays closed, its
+                    // reconnects may be refused for the same reason.
+                    SocketState::Closed => {
+                        self.check_session(ctx);
+                        self.watch_closed_socket(ctx);
+                    }
+                    SocketState::SessionEnded => return self.socket_session_ended(ctx),
                 }
 
                 return false;
@@ -635,6 +641,23 @@ impl AuthProvider {
 
         ctx.link()
             .send_future(async move { Msg::Checked(service.me().await) });
+    }
+
+    /// The server refused the socket with `SESSION_ENDED`. In an
+    /// impersonated page its page session is over, as a 401 says: the page
+    /// ends. Elsewhere the session is checked, as when the socket closes,
+    /// and again while it stays refused, since musli-web does not reconnect
+    /// it.
+    #[cfg(feature = "musliweb06")]
+    fn socket_session_ended(&mut self, ctx: &Context<Self>) -> bool {
+        if self.impersonated_page {
+            self.state = self.signed_out(true);
+            return true;
+        }
+
+        self.check_session(ctx);
+        self.watch_closed_socket(ctx);
+        false
     }
 
     /// Sends [`Msg::SocketClosed`] after [`CLOSED_SOCKET_CHECK`], for the
