@@ -9,9 +9,12 @@ use std::cell::RefCell;
 use std::net::{IpAddr, Ipv4Addr};
 use std::string::{String, ToString};
 
+use http::{HeaderMap, HeaderValue, header};
+
 use crate::core::{Caller, SessionCookie};
 use crate::types::{
-    AuthError, AuthRequest, AuthResponse, LoginRequest, NewUser, PasswordChange, Role, UserChange,
+    AuthError, AuthRequest, AuthResponse, LoginRequest, NewUser, PAGE_SESSION_HEADER,
+    PasswordChange, Role, UserChange,
 };
 use crate::yew023::{AuthService, Error, Transport, TransportFuture};
 use crate::{Auth, MemoryStore, generate_session_key};
@@ -19,21 +22,34 @@ use crate::{Auth, MemoryStore, generate_session_key};
 const PASSWORD: &str = "password1";
 
 /// Dispatches each request on the server as this browser, keeping the
-/// session its cookie would hold.
+/// session its cookie would hold, and after impersonating, the page
+/// credential an impersonated page would send beside it.
 struct Dispatch {
     auth: Auth,
     session: RefCell<Option<String>>,
+    page: RefCell<Option<String>>,
 }
 
 impl Transport for Dispatch {
     fn send(&self, request: AuthRequest) -> TransportFuture<'_> {
         Box::pin(async move {
-            let session = self.session.borrow().clone();
-            let mut caller = Caller::new().address(IpAddr::V4(Ipv4Addr::LOCALHOST));
+            let mut headers = HeaderMap::new();
 
-            if let Some(session) = &session {
-                caller = caller.session(session);
+            if let Some(session) = &*self.session.borrow() {
+                headers.insert(header::COOKIE, self.auth.cookie_header(session));
             }
+
+            if let Some(page) = &*self.page.borrow() {
+                headers.insert(PAGE_SESSION_HEADER, HeaderValue::from_str(page).unwrap());
+            }
+
+            let ends_page = matches!(
+                request,
+                AuthRequest::StopImpersonating | AuthRequest::Logout
+            );
+            let caller = Caller::new()
+                .headers(&headers)
+                .address(IpAddr::V4(Ipv4Addr::LOCALHOST));
 
             let dispatched = match self.auth.dispatch(&caller, request).await {
                 Ok(dispatched) => dispatched,
@@ -49,6 +65,12 @@ impl Transport for Dispatch {
                 Some(SessionCookie::Set(session)) => *self.session.borrow_mut() = Some(session.id),
                 Some(SessionCookie::Clear) => *self.session.borrow_mut() = None,
                 None => {}
+            }
+
+            if let AuthResponse::PageSession(page) = &dispatched.response {
+                *self.page.borrow_mut() = Some(page.credential.clone());
+            } else if ends_page {
+                *self.page.borrow_mut() = None;
             }
 
             Ok(dispatched.response)
@@ -74,6 +96,7 @@ async fn setup() -> AuthService {
     AuthService::new(Dispatch {
         auth,
         session: RefCell::new(None),
+        page: RefCell::new(None),
     })
 }
 
@@ -171,14 +194,14 @@ async fn admin_operations_and_impersonation() {
 
     service.sign_out_user(bob.id).await.unwrap();
 
-    // Impersonating replaces the session, which the transport keeps.
+    // Impersonating answers a page session, which the transport keeps.
     let acting = service.impersonate(bob.id).await.unwrap();
-    assert_eq!(acting.id, bob.id);
+    assert_eq!(acting.user.id, bob.id);
     let me = service.me().await.unwrap();
     assert_eq!(me.id, bob.id);
     assert!(me.impersonated_by.is_some());
 
-    assert_eq!(service.stop_impersonating().await.unwrap().id, root.id);
+    service.stop_impersonating().await.unwrap();
     assert_eq!(service.me().await.unwrap().id, root.id);
 
     service.delete_user(carol).await.unwrap();

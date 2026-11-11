@@ -7,8 +7,6 @@ use core::future::Future;
 use core::pin::Pin;
 use std::boxed::Box;
 
-#[cfg(feature = "musliweb05")]
-use watchword_core::CookieChange;
 use watchword_core::{AuthRequest, AuthResponse};
 
 use super::Error;
@@ -34,11 +32,11 @@ pub type TransportFuture<'a> = Pin<Box<dyn Future<Output = Result<AuthResponse, 
 /// # The session cookie
 ///
 /// The requests whose [`AuthRequest::cookie`] is set (signing in and out,
-/// registering, impersonating and stopping it) set, replace or clear the
-/// `HttpOnly` session cookie, which only an HTTP response can do: a browser
-/// transport sends them over HTTP, such as with [`http::send`]. A transport
-/// that keeps a session of its own, such as a test's, takes the new session
-/// from the server's answer to these, and forgets it on
+/// and registering) set or clear the `HttpOnly` session cookie, which only
+/// an HTTP response can do: a browser transport sends them over HTTP, such
+/// as with [`http::send`]. A transport that keeps a session of its own, such
+/// as a test's, takes the new session from the server's answer to these,
+/// and forgets it on
 /// [`CookieChange::Clear`](watchword_core::CookieChange::Clear).
 ///
 /// # Errors
@@ -90,10 +88,7 @@ impl Transport for HttpTransport {
 ///
 /// A request the socket did not send, such as while it reconnects, or one
 /// with no endpoint on it (the cookie operations, the config and link
-/// info), goes over HTTP. After a request that
-/// [replaced](CookieChange::Replace) the cookie, the socket still speaks for
-/// the session its upgrade carried, so it is marked stale and requests go
-/// over HTTP until it reconnects.
+/// info), goes over HTTP.
 #[derive(Default)]
 pub(super) struct DefaultTransport {
     #[cfg(feature = "musliweb05")]
@@ -115,20 +110,10 @@ impl Transport for DefaultTransport {
 
         Box::pin(async move {
             #[cfg(feature = "musliweb05")]
-            if let Some(socket) = &socket {
-                if request.cookie().is_none()
-                    && let Some(result) = socket.send(&request).await
-                {
-                    return result;
-                }
-
-                let replaces = request.cookie() == Some(CookieChange::Replace);
-                let result = http::send(request).await;
-
-                if replaces && result.is_ok() {
-                    socket.mark_stale();
-                }
-
+            if let Some(socket) = &socket
+                && request.cookie().is_none()
+                && let Some(result) = socket.send(&request).await
+            {
                 return result;
             }
 

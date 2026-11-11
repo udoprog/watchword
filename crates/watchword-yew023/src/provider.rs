@@ -402,22 +402,12 @@ impl Component for AuthProvider {
                     return false;
                 }
 
-                // A stale socket's user is the session's before impersonating
-                // or stopping it, not this browser's.
-                let stale = self.socket.handle().is_some_and(SocketHandle::is_stale);
-
                 // `Resync`, after the server missed updates, carries the user
                 // as `Me` does. `Me` is set as the server answers `Me`,
                 // impersonation marker included, so it replaces the user as
                 // it is.
                 let user = match &update {
-                    AuthUpdate::Me(user) | AuthUpdate::Resync(user) => {
-                        if stale {
-                            return false;
-                        }
-
-                        Some(user.clone())
-                    }
+                    AuthUpdate::Me(user) | AuthUpdate::Resync(user) => Some(user.clone()),
                     _ => None,
                 };
 

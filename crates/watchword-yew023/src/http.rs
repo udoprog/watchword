@@ -23,7 +23,7 @@ use web_sys::RequestCredentials;
 
 use watchword_core::{
     AuthConfig, AuthError, AuthRequest, AuthResponse, CloudflareConfig, GoogleSettings,
-    GoogleSettingsUpdate, Link, LoginRequest, NewUser, PasswordChange, RegisterInfo,
+    GoogleSettingsUpdate, Link, LoginRequest, NewUser, PageSession, PasswordChange, RegisterInfo,
     RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
 };
 
@@ -73,8 +73,11 @@ pub async fn send(request: AuthRequest) -> Result<AuthResponse, Error> {
             AuthResponse::Done
         }
         AuthRequest::RevokeAccess { id } => AuthResponse::User(revoke_access(id).await?),
-        AuthRequest::Impersonate { id } => AuthResponse::User(impersonate(id).await?),
-        AuthRequest::StopImpersonating => AuthResponse::User(stop_impersonating().await?),
+        AuthRequest::Impersonate { id } => AuthResponse::PageSession(impersonate(id).await?),
+        AuthRequest::StopImpersonating => {
+            stop_impersonating().await?;
+            AuthResponse::Done
+        }
         AuthRequest::Cloudflare => AuthResponse::Cloudflare(cloudflare_settings().await?),
         AuthRequest::SetCloudflare(config) => {
             AuthResponse::Cloudflare(set_cloudflare_settings(&config).await?)
@@ -214,24 +217,22 @@ pub async fn revoke_access(id: UserId) -> Result<UserInfo, Error> {
     read(post(&user_path(id, "/revoke")).send().await?).await
 }
 
-/// Signs this browser in as another user, for admins when the server enables
-/// impersonation: `POST /api/auth/users/{id}/impersonate`. The session
-/// cookie is replaced, and the answer is the user, with
-/// [`impersonated_by`](UserInfo::impersonated_by) set; reload the user
-/// afterwards, such as with
-/// [`AuthContext::refresh`](super::AuthContext::refresh).
-/// [`stop_impersonating`] returns to the admin.
-pub async fn impersonate(id: UserId) -> Result<UserInfo, Error> {
+/// Creates a session as another user for one page, for admins when the
+/// server enables impersonation: `POST /api/auth/users/{id}/impersonate`.
+/// The session cookie stays the admin's; the answer is the page's
+/// credential and the user, with
+/// [`impersonated_by`](UserInfo::impersonated_by) set.
+pub async fn impersonate(id: UserId) -> Result<PageSession, Error> {
     read(post(&user_path(id, "/impersonate")).send().await?).await
 }
 
-/// Ends the impersonated session this browser holds and signs the admin who
-/// started it back in: `POST /api/auth/impersonate/stop`. The session cookie
-/// is replaced, and the answer is the admin. Refused with
-/// [`AuthError::Forbidden`] when the session is not impersonated, or the
-/// admin is no longer an active admin.
-pub async fn stop_impersonating() -> Result<UserInfo, Error> {
-    read(post("/api/auth/impersonate/stop").send().await?).await
+/// Ends the page's impersonated session, and nothing else: `POST
+/// /api/auth/impersonate/stop`. Refused with [`AuthError::Forbidden`] when
+/// the session is not impersonated, or the admin is no longer an active
+/// admin.
+pub async fn stop_impersonating() -> Result<(), Error> {
+    check(post("/api/auth/impersonate/stop").send().await?).await?;
+    Ok(())
 }
 
 /// The Cloudflare Access settings, or their default when the server has

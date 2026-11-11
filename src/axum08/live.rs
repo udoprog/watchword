@@ -123,8 +123,9 @@ impl Auth {
             return Ok(None);
         };
 
+        // The cookie never carries an impersonated session.
         let Some(page) = page else {
-            return Ok(Some(cookie));
+            return Ok(impersonator.is_none().then_some(cookie));
         };
 
         let Some(page) = page else {

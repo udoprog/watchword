@@ -95,11 +95,9 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
             let phrases = phrases.clone();
 
             spawn_local(async move {
-                // The provider's transport stops using a socket that speaks
-                // for the session this replaced.
                 match service.stop_impersonating().await {
-                    Ok(admin) => {
-                        auth.set_user(admin);
+                    Ok(()) => {
+                        auth.check_session();
                         done.emit(());
                     }
                     Err(error) => {

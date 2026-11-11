@@ -858,8 +858,6 @@ impl Component for AdminUsers {
                         Action::RevokeLink => service.revoke_link(id).await,
                         Action::SignOut => service.sign_out_user(id).await,
                         Action::RevokeAccess => service.revoke_access(id).await.map(drop),
-                        // The provider's transport stops using a socket that
-                        // speaks for the session this replaced.
                         Action::Impersonate => service.impersonate(id).await.map(drop),
                         Action::Delete => service.delete_user(id).await,
                     };

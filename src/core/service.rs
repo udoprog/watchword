@@ -731,7 +731,9 @@ impl Auth {
                 return Ok(None);
             };
 
-            return self.session(&id).await;
+            // The cookie never carries an impersonated session.
+            let signed_in = self.session(&id).await?;
+            return Ok(signed_in.filter(|(_, session)| session.impersonator.is_none()));
         };
 
         let Some(page) = page else {

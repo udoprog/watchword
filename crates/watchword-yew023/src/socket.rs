@@ -18,8 +18,7 @@ use watchword_core::{AuthError, AuthRequest, AuthResponse};
 
 use super::Error;
 
-/// A socket handed over to the provider, as the context carries it. Clones
-/// share whether the socket is stale.
+/// A socket handed over to the provider, as the context carries it.
 #[derive(Clone)]
 pub(super) struct SocketHandle {
     inner: Rc<Inner>,
@@ -27,7 +26,6 @@ pub(super) struct SocketHandle {
 
 struct Inner {
     handle: ws::Handle,
-    stale: Rc<Cell<bool>>,
     open: Rc<Cell<bool>>,
     _state: ws::StateListener,
 }
@@ -36,20 +34,12 @@ impl SocketHandle {
     /// Follows `handle`'s state, calling `on_state` with whether it is open
     /// each time that changes.
     pub(super) fn new(handle: ws::Handle, on_state: Callback<bool>) -> Self {
-        let stale = Rc::new(Cell::new(false));
         let open = Rc::new(Cell::new(false));
 
-        // The socket's session is the one its upgrade carried, so once it
-        // closes, its reconnect carries the browser's current one.
         let (state, listener) = handle.on_state_change({
-            let stale = stale.clone();
             let open = open.clone();
 
             move |state: ws::State| {
-                if !state.is_open() {
-                    stale.set(false);
-                }
-
                 if open.replace(state.is_open()) != state.is_open() {
                     on_state.emit(state.is_open());
                 }
@@ -61,7 +51,6 @@ impl SocketHandle {
         Self {
             inner: Rc::new(Inner {
                 handle,
-                stale,
                 open,
                 _state: listener,
             }),
@@ -78,22 +67,8 @@ impl SocketHandle {
         &self.inner.handle
     }
 
-    /// Marks the socket as speaking for a session this browser no longer
-    /// uses, after a response replaced the session cookie (impersonating,
-    /// and stopping it). Until the socket closes, requests go over HTTP and
-    /// its [`AuthUpdate::Me`] is ignored.
-    pub(super) fn mark_stale(&self) {
-        self.inner.stale.set(true);
-    }
-
-    /// Whether the socket is [stale](Self::mark_stale).
-    pub(super) fn is_stale(&self) -> bool {
-        self.inner.stale.get()
-    }
-
-    /// Sends `body` over the socket and waits for the answer. `None` when the
-    /// socket is stale, or musli-web did not send it since the socket is not
-    /// connected (such as while it reconnects), so that nothing reached the
+    /// Sends `body` over the socket and waits for the answer. `None` when
+    /// musli-web did not send it since the socket is not connected (such as while it reconnects), so that nothing reached the
     /// server and the caller sends it over HTTP instead.
     ///
     /// A refusal is the server's typed [`AuthError`], as [`Error::Auth`]. A
@@ -109,10 +84,6 @@ impl SocketHandle {
         B: api::Request,
         for<'de> <B::Endpoint as api::Endpoint>::Response<'static>: api::DecodeBody<'de>,
     {
-        if self.is_stale() {
-            return None;
-        }
-
         match self.handle().call(body).await {
             Ok(value) => Some(Ok(value)),
             Err(error) if error.is_not_connected() => None,
@@ -274,18 +245,6 @@ mod tests {
     fn socket_without_service_is_closed() {
         let socket = SocketHandle::new(ws::Handle::default(), Callback::noop());
         assert!(!socket.is_open());
-    }
-
-    #[test]
-    fn stale_socket_falls_back() {
-        let socket = SocketHandle::new(ws::Handle::default(), Callback::noop());
-        assert!(!socket.is_stale());
-
-        socket.clone().mark_stale();
-        assert!(socket.is_stale());
-
-        let answer = poll(socket.request(MeRequest));
-        assert!(matches!(answer, Poll::Ready(None)));
     }
 
     #[test]

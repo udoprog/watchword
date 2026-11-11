@@ -9,7 +9,7 @@ use yew::prelude::*;
 
 use watchword_core::{
     AuthConfig, AuthRequest, AuthResponse, CloudflareConfig, CreatedUser, GoogleSettings,
-    GoogleSettingsUpdate, Link, LoginRequest, NewUser, PasswordChange, RegisterInfo,
+    GoogleSettingsUpdate, Link, LoginRequest, NewUser, PageSession, PasswordChange, RegisterInfo,
     RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
 };
 
@@ -225,23 +225,20 @@ impl AuthService {
         call!(self, AuthRequest::RevokeAccess { id }, AuthResponse::User(user) => user)
     }
 
-    /// Signs this browser in as another user, for admins when the server
-    /// enables impersonation, replacing the session cookie. The answer is the
-    /// user, with [`impersonated_by`](UserInfo::impersonated_by) set; reload
-    /// the user afterwards with
-    /// [`AuthContext::refresh`](super::AuthContext::refresh). `POST
+    /// Creates a session as another user for one page, for admins when the
+    /// server enables impersonation; the session cookie stays the admin's.
+    /// The answer is the page's credential and the user, with
+    /// [`impersonated_by`](UserInfo::impersonated_by) set. `POST
     /// /api/auth/users/{id}/impersonate`.
-    pub async fn impersonate(&self, id: UserId) -> Result<UserInfo, Error> {
-        call!(self, AuthRequest::Impersonate { id }, AuthResponse::User(user) => user)
+    pub async fn impersonate(&self, id: UserId) -> Result<PageSession, Error> {
+        call!(self, AuthRequest::Impersonate { id }, AuthResponse::PageSession(page) => page)
     }
 
-    /// Ends the impersonated session this browser holds and signs the admin
-    /// who started it back in, replacing the session cookie; the answer is
-    /// the admin. Refused with
+    /// Ends the page's impersonated session, and nothing else. Refused with
     /// [`AuthError::Forbidden`](watchword_core::AuthError::Forbidden) when the
     /// session is not impersonated. `POST /api/auth/impersonate/stop`.
-    pub async fn stop_impersonating(&self) -> Result<UserInfo, Error> {
-        call!(self, AuthRequest::StopImpersonating, AuthResponse::User(user) => user)
+    pub async fn stop_impersonating(&self) -> Result<(), Error> {
+        call!(self, AuthRequest::StopImpersonating, AuthResponse::Done => ())
     }
 
     /// The Cloudflare Access settings, or their default when the server has

@@ -1491,6 +1491,19 @@ async fn page_credential_beside_the_admins_cookie() {
         }
     }
 
+    // A cookie carrying the impersonated session is refused, by
+    // `Auth::request_session` and `LiveSession` alike.
+    let page_cookie = header(&page.id);
+
+    for uri in [me, "/tile"] {
+        let answer = page_get(&app, uri, Some(&page_cookie), None).await;
+        assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{uri}");
+    }
+
+    let mut headers = HeaderMap::new();
+    headers.insert(header::COOKIE, page_cookie.parse().unwrap());
+    assert!(auth.request_session(&headers).await.unwrap().is_none());
+
     // The admin signing out ends the page at once, `LiveSession`'s cache
     // included, though the page's session is still live.
     auth.sign_out(&root_session.id).await.unwrap();
