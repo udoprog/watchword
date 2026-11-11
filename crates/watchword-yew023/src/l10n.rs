@@ -50,6 +50,7 @@ pub(super) fn cause(phrases: &Phrases, error: &Error) -> String {
             return phrases.msg("watchword-cause-socket", &args!(detail = detail.as_str()));
         }
         Error::UnexpectedResponse => "watchword-cause-unexpected-response",
+        Error::PageBlocked => "watchword-cause-page-blocked",
         Error::Auth(AuthError::Invalid(reason)) => return invalid(phrases, reason),
         Error::Auth(AuthError::Unauthorized) => "watchword-cause-unauthorized",
         Error::Auth(AuthError::Forbidden) => "watchword-cause-forbidden",
@@ -83,6 +84,7 @@ pub(super) fn error_message(phrases: &Phrases, error: &Error, failed_id: &str) -
         Error::Auth(AuthError::Forbidden) => "watchword-error-forbidden",
         Error::Auth(AuthError::NotFound) => "watchword-error-user-not-found",
         Error::Network(..) => "watchword-error-unreachable",
+        Error::PageBlocked => "watchword-error-page-blocked",
         error => return failed(phrases, failed_id, error),
     };
 

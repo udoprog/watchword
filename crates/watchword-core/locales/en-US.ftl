@@ -33,6 +33,7 @@ watchword-error-forbidden = You are not allowed to do that.
 watchword-error-user-not-found = That user no longer exists.
 watchword-error-unreachable = Could not reach the server.
 watchword-error-unreachable-reload = Could not reach the server. Reload to try again.
+watchword-error-page-blocked = The browser blocked the new page. Allow pop-ups for this site and try again.
 
 # What failed, with $error the cause from the watchword-cause- messages.
 watchword-failed-saving = Saving failed: { $error }.
@@ -57,6 +58,7 @@ watchword-cause-status = the server answered with HTTP { $status }
 watchword-cause-network = could not reach the server: { $detail }
 watchword-cause-socket = the request over the socket failed: { $detail }
 watchword-cause-unexpected-response = the answer was not for the request made
+watchword-cause-page-blocked = the browser blocked the new page
 watchword-cause-unauthorized = not signed in
 watchword-cause-forbidden = not allowed
 watchword-cause-not-found = not found
@@ -198,7 +200,7 @@ watchword-delete-user = Delete { $name }
 watchword-link-revoked = Link revoked.
 watchword-signed-out-everywhere = Signed out everywhere.
 watchword-access-revoked = Access revoked.
-watchword-signed-in-as-user = Signed in as the user.
+watchword-opened-as-user = Opened a new page as the user.
 watchword-user-deleted = User deleted.
 # A user's account state, and its title with their sign-in $method:
 # password or google.

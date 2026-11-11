@@ -1,8 +1,11 @@
 use std::borrow::ToOwned;
+use std::boxed::Box;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::ops::Range;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::string::String;
 use std::string::ToString;
@@ -49,12 +52,16 @@ pub struct AdminUsersProps {
     /// [`AuthProvider`](super::AuthProvider).
     #[prop_or_default]
     pub me: Option<Rc<UserInfo>>,
-    /// Offers Impersonate when set, which the server must enable. It is
-    /// called with the user once this browser is signed in as them; the app
-    /// then reloads the user, such as with [`AuthContext::refresh`], and
-    /// leaves the admin page.
+    /// Offers Impersonate when set, which the server must enable.
+    /// Impersonate opens a new page as the user with
+    /// [`AuthService::impersonate_in_new_page`], at `impersonate_path`, and
+    /// this is called with the user once that page is open. This page and
+    /// the admin's session stay as they are.
     #[prop_or_default]
     pub on_impersonate: Option<Callback<UserInfo>>,
+    /// Where the impersonated page opens, any URL of the app's.
+    #[prop_or(AttrValue::Static("/"))]
+    pub impersonate_path: AttrValue,
     /// Bump it to fetch the users again, such as when the app learns of a
     /// change made elsewhere; the same as [`Users::reload`]. Not needed once
     /// the app hands its musli-web socket to [`AuthContext::set_socket`]
@@ -402,6 +409,19 @@ struct UserForm {
     role: Role,
 }
 
+/// Opens a new page impersonating `id` at `path`, answering with nothing.
+fn impersonate(
+    service: &AuthService,
+    id: UserId,
+    path: &str,
+) -> impl Future<Output = Result<(), Error>> + 'static {
+    let opened = service.impersonate_in_new_page(id, path);
+    async move { opened.await.map(drop) }
+}
+
+/// The request of an action, once started.
+pub type ActionFuture = Pin<Box<dyn Future<Output = Result<(), Error>>>>;
+
 /// An action on a user that answers with nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -451,6 +471,9 @@ pub enum Msg {
     /// The app's answer to the [`ConfirmRequest`] with this ticket.
     Answer(u64, bool),
     Act(UserId, Action),
+    /// An action already under way, started in the click, such as
+    /// Impersonate, which opens its page there.
+    Run(UserId, Action, ActionFuture),
     Done(UserId, Action, Result<(), Error>),
     Copy(String),
     Copied(bool),
@@ -847,23 +870,31 @@ impl Component for AdminUsers {
                     return false;
                 }
 
+                let service = self.service.clone();
+
+                let pending: ActionFuture = match action {
+                    Action::RevokeLink => Box::pin(async move { service.revoke_link(id).await }),
+                    Action::SignOut => Box::pin(async move { service.sign_out_user(id).await }),
+                    Action::RevokeAccess => {
+                        Box::pin(async move { service.revoke_access(id).await.map(drop) })
+                    }
+                    Action::Impersonate => {
+                        let path = ctx.props().impersonate_path.clone();
+                        Box::pin(impersonate(&service, id, &path))
+                    }
+                    Action::Delete => Box::pin(async move { service.delete_user(id).await }),
+                };
+
+                return Component::update(self, ctx, Msg::Run(id, action, pending));
+            }
+            Msg::Run(id, action, pending) => {
+                // Awaited even when busy, since it may hold an open page.
                 self.busy = true;
                 self.confirm.clear();
                 self.message = None;
 
-                let service = self.service.clone();
-
-                ctx.link().send_future(async move {
-                    let result = match action {
-                        Action::RevokeLink => service.revoke_link(id).await,
-                        Action::SignOut => service.sign_out_user(id).await,
-                        Action::RevokeAccess => service.revoke_access(id).await.map(drop),
-                        Action::Impersonate => service.impersonate(id).await.map(drop),
-                        Action::Delete => service.delete_user(id).await,
-                    };
-
-                    Msg::Done(id, action, result)
-                });
+                ctx.link()
+                    .send_future(async move { Msg::Done(id, action, pending.await) });
             }
             Msg::Done(id, action, result) => {
                 self.busy = false;
@@ -1400,6 +1431,19 @@ impl AdminUsers {
         let phrases = self.l10n.phrases();
         let named = |id: &str| phrases.msg(id, &args!(name = name));
 
+        // The page opens in the click itself, so that popup blockers allow it.
+        let impersonate_click = {
+            let service = self.service.clone();
+            let path = props.impersonate_path.clone();
+            link.callback(move |_| {
+                Msg::Run(
+                    id,
+                    Action::Impersonate,
+                    Box::pin(impersonate(&service, id, &path)),
+                )
+            })
+        };
+
         if editing {
             return html! {
                 <div class="auth-actions">
@@ -1465,7 +1509,7 @@ impl AdminUsers {
                     }
 
                     if props.on_impersonate.is_some() && !revoked {
-                        <button type="button" title={named("watchword-impersonate-user")} onclick={link.callback(move |_| Msg::Act(id, Action::Impersonate))} disabled={busy}>
+                        <button type="button" title={named("watchword-impersonate-user")} onclick={impersonate_click} disabled={busy}>
                             {phrases.text("watchword-impersonate")}
                         </button>
                     }
@@ -1506,7 +1550,7 @@ impl Action {
             Action::RevokeLink => "watchword-link-revoked",
             Action::SignOut => "watchword-signed-out-everywhere",
             Action::RevokeAccess => "watchword-access-revoked",
-            Action::Impersonate => "watchword-signed-in-as-user",
+            Action::Impersonate => "watchword-opened-as-user",
             Action::Delete => "watchword-user-deleted",
         }
     }

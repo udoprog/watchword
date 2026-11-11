@@ -935,3 +935,37 @@ fn confirm_requests() {
     drop(copy);
     assert_eq!(*answers.borrow(), [(7, true), (8, false), (9, false)]);
 }
+
+/// Without a page to open, impersonating in a new page sends nothing and
+/// says the page was blocked, in words the row can show.
+#[test]
+fn blocked_page_sends_nothing() {
+    use core::cell::Cell;
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+    use std::rc::Rc;
+
+    use super::{AuthService, Transport, TransportFuture};
+    use watchword_core::AuthRequest;
+
+    struct Counting(Rc<Cell<usize>>);
+
+    impl Transport for Counting {
+        fn send(&self, _: AuthRequest) -> TransportFuture<'_> {
+            self.0.set(self.0.get() + 1);
+            std::boxed::Box::pin(async { Err(Error::UnexpectedResponse) })
+        }
+    }
+
+    let sent = Rc::new(Cell::new(0));
+    let service = AuthService::new(Counting(sent.clone()));
+    let future = pin!(service.impersonate_in_new_page(UserId(2), "/"));
+    let mut cx = Context::from_waker(Waker::noop());
+
+    assert_eq!(future.poll(&mut cx), Poll::Ready(Err(Error::PageBlocked)));
+    assert_eq!(sent.get(), 0);
+    assert_eq!(
+        error_message(&en(), &Error::PageBlocked, "watchword-failed-impersonating"),
+        "The browser blocked the new page. Allow pop-ups for this site and try again."
+    );
+}

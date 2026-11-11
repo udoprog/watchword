@@ -30,6 +30,11 @@ pub enum Error {
     /// [`AuthResponse`](watchword_core::AuthResponse) of another, such as a
     /// [`Transport`](super::Transport) of the app's that mixed them up.
     UnexpectedResponse,
+    /// The browser did not open the new page of
+    /// [`AuthService::impersonate_in_new_page`](super::AuthService::impersonate_in_new_page),
+    /// such as when a popup blocker stopped it, or did not let it be handed
+    /// its session.
+    PageBlocked,
 }
 
 impl Error {
@@ -48,6 +53,7 @@ impl fmt::Display for Error {
             Error::Network(error) => write!(f, "could not reach the server: {error}"),
             Error::Socket(error) => write!(f, "the request over the socket failed: {error}"),
             Error::UnexpectedResponse => write!(f, "the answer was not for the request made"),
+            Error::PageBlocked => write!(f, "the browser blocked the new page"),
         }
     }
 }

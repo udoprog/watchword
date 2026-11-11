@@ -235,6 +235,46 @@ impl AuthService {
         call!(self, AuthRequest::Impersonate { id }, AuthResponse::PageSession(page) => page)
     }
 
+    /// Impersonates a user in a new page, leaving this page and its session
+    /// as they are: the way an admin's page impersonates.
+    ///
+    /// Call it in a click handler, since it opens an empty page of this
+    /// origin at once, before the returned future runs, so that popup
+    /// blockers allow it. The future asks [`impersonate`](Self::impersonate),
+    /// writes the credential into the new page's `sessionStorage` and sends
+    /// it to `url`, any URL of the app's (hash routes included), answering
+    /// with the impersonated user. When the request fails it closes the page
+    /// and answers with the error; when the browser blocked the page, it
+    /// sends nothing and answers [`Error::PageBlocked`].
+    pub fn impersonate_in_new_page(
+        &self,
+        id: UserId,
+        url: &str,
+    ) -> impl Future<Output = Result<UserInfo, Error>> + 'static {
+        let page = browser::open_empty_page();
+        let service = self.clone();
+        let url = String::from(url);
+
+        async move {
+            let page = page.ok_or(Error::PageBlocked)?;
+
+            let session = match service.impersonate(id).await {
+                Ok(session) => session,
+                Err(error) => {
+                    browser::close_opened_page(&page);
+                    return Err(error);
+                }
+            };
+
+            if !browser::hand_over_page(&page, &session.credential, &url) {
+                browser::close_opened_page(&page);
+                return Err(Error::PageBlocked);
+            }
+
+            Ok(session.user)
+        }
+    }
+
     /// Ends the page's impersonated session, and nothing else, and drops
     /// the page session the page held, also when the server answers that it
     /// had ended already. Refused with

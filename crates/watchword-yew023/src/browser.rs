@@ -372,6 +372,34 @@ pub(super) fn close_page() {
     }
 }
 
+/// Opens an empty same-origin page, keeping its handle, or `None` when the
+/// browser blocked it (or outside a browser). Called in a click, so that
+/// popup blockers allow it.
+pub(super) fn open_empty_page() -> Option<web_sys::Window> {
+    if !cfg!(target_arch = "wasm32") {
+        return None;
+    }
+
+    web_sys::window()?.open().ok()?
+}
+
+/// Hands `credential` to a page from [`open_empty_page`] as its page session
+/// and sends it to `url`, replacing the empty page in its history. Returns
+/// whether the browser allowed both.
+pub(super) fn hand_over_page(page: &web_sys::Window, credential: &str, url: &str) -> bool {
+    let Some(storage) = page.session_storage().ok().flatten() else {
+        return false;
+    };
+
+    storage.set_item(PAGE_SESSION_HEADER, credential).is_ok()
+        && page.location().replace(url).is_ok()
+}
+
+/// Closes a page from [`open_empty_page`].
+pub(super) fn close_opened_page(page: &web_sys::Window) {
+    let _ = page.close();
+}
+
 /// Copies text to the clipboard, returning whether the browser allowed it.
 pub(super) async fn copy_text(text: &str) -> bool {
     let Some(window) = web_sys::window() else {
