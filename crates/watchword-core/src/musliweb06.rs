@@ -154,6 +154,12 @@ pub fn is_watchword_id(id: musli_web06::api::MessageId) -> bool {
     (FIRST_ID..=LAST_ID).contains(&id.get())
 }
 
+/// The close code of a socket the server refused at negotiation, with the
+/// reason `session ended`: the session the page stated in its connection
+/// metadata has ended or is not its own, so an impersonated page's
+/// impersonation is over, as a 401 says over HTTP.
+pub const SESSION_ENDED: u16 = 4001;
+
 musli_web06::api::define! {
     #![musli(crate = musli_web06)]
 

@@ -773,9 +773,15 @@ impl Auth {
             value
                 .to_str()
                 .ok()
-                .and_then(|value| verify_page_credential(&self.inner.key, value))
+                .and_then(|value| self.verify_page_credential(value))
                 .map(str::to_owned),
         )
+    }
+
+    /// The session id of the page credential `value`, if it is correctly
+    /// signed.
+    pub(crate) fn verify_page_credential<'a>(&self, value: &'a str) -> Option<&'a str> {
+        verify_page_credential(&self.inner.key, value)
     }
 
     /// Deletes the sessions that have expired, and the registration and

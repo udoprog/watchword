@@ -8,10 +8,15 @@ use std::borrow::ToOwned;
 use std::string::String;
 use std::vec::Vec;
 
-use super::{AuthUpdate, Connection};
+use musli_web06::api::Metadata;
+use musli_web06::ws::Refuse;
+
+use super::{AuthUpdate, Connection, SESSION_ENDED};
 use crate::axum08::SignedIn;
 use crate::types::{AuthError, Impersonator, NewUser, RegisterRequest, Role, UserInfo};
-use crate::{Auth, AuthEvent, BootstrapAdmin, MemoryStore, generate_session_key};
+use crate::{
+    Auth, AuthEvent, BootstrapAdmin, MemoryStore, PAGE_SESSION_HEADER, generate_session_key,
+};
 
 const PASSWORD: &str = "password1";
 
@@ -556,4 +561,182 @@ async fn updates_of_an_ended_session_end_at_once() {
         tokio::time::timeout(WAIT, updates.next()).await.unwrap(),
         None
     );
+}
+
+/// Connection metadata stating the page credential `credential`.
+fn page_metadata(credential: &str) -> Metadata {
+    let mut metadata = Metadata::new();
+    metadata.insert(PAGE_SESSION_HEADER, credential);
+    metadata
+}
+
+/// Refused with `SESSION_ENDED`, `session ended`.
+fn ended(result: Result<(), Refuse>) -> bool {
+    matches!(result, Err(refuse) if refuse.code() == SESSION_ENDED && refuse.reason() == "session ended")
+}
+
+/// `root` impersonating a new regular user `erin` in a page: the page's
+/// credential and the impersonated user.
+async fn impersonating(auth: &Auth, root: &SignedIn) -> (String, UserInfo) {
+    let (erin, _) = pending(auth, root, "erin", Role::Regular).await;
+    let page = auth
+        .impersonate(&root.user, &root.session, erin.id)
+        .await
+        .unwrap();
+    (page.credential, erin)
+}
+
+/// Without the page's entry the connection keeps the upgrade's session.
+#[tokio::test]
+async fn accept_keeps_the_upgrades_session() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let conn = Connection::new(auth.clone(), &root);
+
+    conn.accept(&Metadata::new()).await.unwrap();
+    assert_eq!(conn.session_id(), root.session.id);
+    assert_eq!(conn.user_id(), root.user.id);
+    assert_eq!(conn.signed_in().await.unwrap().0.id, root.user.id);
+
+    // The same again stands; a page credential after it does not.
+    conn.accept(&Metadata::new()).await.unwrap();
+    let (credential, _) = impersonating(&auth, &root).await;
+    assert!(ended(conn.accept(&page_metadata(&credential)).await));
+    assert_eq!(conn.session_id(), root.session.id);
+}
+
+/// An upgrade signed in with an impersonated session needs no metadata to
+/// be refused: only a page states one, and only beside its admin's cookie.
+#[tokio::test]
+async fn accept_refuses_an_impersonated_upgrade() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let (erin, _) = pending(&auth, &root, "erin", Role::Regular).await;
+    let (user, session) = auth
+        .impersonate_session(&root.user, &root.session, erin.id)
+        .await
+        .unwrap();
+    let upgrade = SignedIn { user, session };
+
+    let conn = Connection::new(auth.clone(), &upgrade);
+    assert!(ended(conn.accept(&Metadata::new()).await));
+    assert_eq!(
+        refusal(conn.signed_in().await),
+        Some(AuthError::Unauthorized)
+    );
+
+    // Not even with the page's own credential.
+    let credential = auth
+        .impersonate(&root.user, &root.session, erin.id)
+        .await
+        .unwrap()
+        .credential;
+    let conn = Connection::new(auth.clone(), &upgrade);
+    assert!(ended(conn.accept(&page_metadata(&credential)).await));
+}
+
+/// The page's credential beside its admin's cookie switches the connection,
+/// and the clones made before, to the page's session.
+#[tokio::test]
+async fn accept_switches_to_the_pages_session() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let (credential, erin) = impersonating(&auth, &root).await;
+    let conn = Connection::new(auth.clone(), &root);
+    let clone = conn.clone();
+
+    conn.accept(&page_metadata(&credential)).await.unwrap();
+
+    for conn in [&conn, &clone] {
+        assert_eq!(conn.user_id(), erin.id);
+        assert_ne!(conn.session_id(), root.session.id);
+
+        let (user, session) = conn.signed_in().await.unwrap();
+        assert_eq!(user.id, erin.id);
+        assert_eq!(session.impersonator, Some(root.user.id));
+
+        // The admin's rights do not carry into the page.
+        assert_eq!(
+            refusal(conn.require_admin().await),
+            Some(AuthError::Forbidden)
+        );
+    }
+
+    // The same credential again stands; the upgrade's session does not.
+    clone.accept(&page_metadata(&credential)).await.unwrap();
+    assert!(ended(clone.accept(&Metadata::new()).await));
+    assert_eq!(conn.user_id(), erin.id);
+}
+
+/// Anything but a live page session of the upgrade's admin refuses, and the
+/// refused connection speaks for nobody, the admin included.
+#[tokio::test]
+async fn accept_refuses_a_failing_credential() {
+    let key = generate_session_key();
+    let auth = Auth::builder(MemoryStore::new(), key)
+        .impersonation(true)
+        .build();
+    let root = root(&auth).await;
+    let ada = user(&auth, &root, "ada", Role::Admin).await;
+    let (credential, _) = impersonating(&auth, &root).await;
+
+    // Not a page credential: garbage, a cookie value, and a credential
+    // signed with another key.
+    let cookie = auth.cookie_header(&root.session.id);
+    let cookie = cookie
+        .to_str()
+        .unwrap()
+        .split_once('=')
+        .unwrap()
+        .1
+        .to_owned();
+    let session = auth.verify_page_credential(&credential).unwrap();
+    let other = crate::core::page_credential(&generate_session_key(), session);
+
+    for bad in ["garbage", &cookie, &other, ""] {
+        let conn = Connection::new(auth.clone(), &root);
+        assert!(ended(conn.accept(&page_metadata(bad)).await), "{bad:?}");
+        assert_eq!(
+            refusal(conn.signed_in().await),
+            Some(AuthError::Unauthorized)
+        );
+        assert_eq!(
+            refusal(conn.require_admin().await),
+            Some(AuthError::Unauthorized)
+        );
+        assert_eq!(
+            conn.update(&AuthEvent::UserChanged(root.user.info()))
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(conn.lagged().await.unwrap(), None);
+    }
+
+    // Beside another admin's cookie.
+    let conn = Connection::new(auth.clone(), &ada);
+    assert!(ended(conn.accept(&page_metadata(&credential)).await));
+
+    // A page credential of a session that is not impersonated.
+    let plain = crate::core::page_credential(&key, &ada.session.id);
+    let conn = Connection::new(auth.clone(), &root);
+    assert!(ended(conn.accept(&page_metadata(&plain)).await));
+
+    // The admin's cookie session ended.
+    let conn = Connection::new(auth.clone(), &root);
+    auth.sign_out(&root.session.id).await.unwrap();
+    assert!(ended(conn.accept(&page_metadata(&credential)).await));
+}
+
+/// A page session that ended refuses, even beside its admin's live cookie.
+#[tokio::test]
+async fn accept_refuses_an_ended_page_session() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let (credential, _) = impersonating(&auth, &root).await;
+    let page = auth.verify_page_credential(&credential).unwrap().to_owned();
+    auth.sign_out(&page).await.unwrap();
+
+    let conn = Connection::new(auth.clone(), &root);
+    assert!(ended(conn.accept(&page_metadata(&credential)).await));
 }

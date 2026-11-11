@@ -1,20 +1,22 @@
-use std::sync::Arc;
+use std::boxed::Box;
+use std::sync::{Arc, OnceLock};
 
-use musli_web06::api::DecodeBody;
-use musli_web06::ws::{self, Incoming, Outgoing};
+use musli_web06::api::{DecodeBody, Metadata};
+use musli_web06::ws::{self, Incoming, Outgoing, Refuse};
+use tokio::sync::watch;
 
 use super::{
     AuthUpdate, CloudflareRequest, DeleteUserRequest, GoogleRequest, IssueLinkRequest, MeRequest,
-    Request, RequestError, RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, Updates,
-    UserUpdate, UsersRequest,
+    Request, RequestError, RevokeAccessRequest, RevokeLinkRequest, SESSION_ENDED,
+    SignOutUserRequest, Updates, UserUpdate, UsersRequest,
 };
-use crate::Auth;
 use crate::axum08::SignedIn;
 #[cfg(doc)]
 use crate::core::Error;
-use crate::core::{AuthEvent, Caller, Result};
+use crate::core::{AuthEvent, Caller, Result, vouches_for};
 use crate::store::{Session, User};
 use crate::types::{Access, AuthError, AuthRequest, UserId};
+use crate::{Auth, PAGE_SESSION_HEADER};
 
 /// watchword's side of one musli-web WebSocket, signed in with one session.
 ///
@@ -191,16 +193,167 @@ use crate::types::{Access, AuthError, AuthRequest, UserId};
 #[derive(Clone)]
 pub struct Connection {
     auth: Auth,
-    signed_in: Arc<SignedIn>,
+    shared: Arc<Shared>,
+}
+
+/// What a connection and its clones share.
+struct Shared {
+    /// The session and user the upgrade signed in with.
+    upgrade: SignedIn,
+    /// What [`Connection::accept`] settled on, set once.
+    accepted: OnceLock<Accepted>,
+    /// Set to `true` once `accepted` is, for [`Updates`] to follow.
+    settled: watch::Sender<bool>,
+}
+
+/// What [`Connection::accept`] settled on.
+pub(super) enum Accepted {
+    /// The upgrade's own session.
+    Upgrade,
+    /// The page's session, which the upgrade's cookie session vouched for.
+    Page(Box<SignedIn>),
+    /// Refused: the connection speaks for no session.
+    Refused,
+}
+
+/// The refusal of a socket whose session ended or is not its own.
+fn session_ended() -> Refuse {
+    Refuse::with_code(SESSION_ENDED, "session ended")
 }
 
 impl Connection {
     /// The connection signed in as `signed_in`, as the app's `/ws` route
-    /// extracted it at upgrade.
+    /// extracted it at upgrade, until [`accept`](Connection::accept) settles
+    /// whose socket it is.
     pub fn new(auth: Auth, signed_in: &SignedIn) -> Self {
         Self {
             auth,
-            signed_in: Arc::new(signed_in.clone()),
+            shared: Arc::new(Shared {
+                upgrade: signed_in.clone(),
+                accepted: OnceLock::new(),
+                settled: watch::Sender::new(false),
+            }),
+        }
+    }
+
+    /// Settles whose socket this is from the connection metadata the client
+    /// stated, before any request: musli-web's `ws::Handler::connect` hook,
+    /// which `Connection`'s own handler implements with this, so an app
+    /// whose handler is the `Connection`, or is combined with it through
+    /// [`ws::Handler::or`], need not call it. An app with a handler of its
+    /// own calls it from its `connect`.
+    ///
+    /// A browser's upgrade carries only the cookie, so in a page that
+    /// impersonates a user the upgrade signed in as the admin. Such a page
+    /// states its page credential in the metadata entry named
+    /// [`PAGE_SESSION_HEADER`], and the connection and its clones then speak
+    /// for the page's session, as [`Auth::request_session`] decides over
+    /// HTTP: the credential must be correctly signed and its session live
+    /// and impersonated, and the upgrade's session must be a live session
+    /// of its impersonating admin, not impersonated itself. From then on
+    /// [`Updates`] ends when either session ends. Without the entry the
+    /// connection keeps the upgrade's session, which must not be
+    /// impersonated.
+    ///
+    /// Anything else refuses with the close code [`SESSION_ENDED`] and the
+    /// reason `session ended`, and a failing store with musli-web's default
+    /// code and the reason `internal error`, logged here at error level.
+    /// A refused connection is never left as the upgrade's: it speaks for
+    /// no session, its checks answer [`AuthError::Unauthorized`] and its
+    /// updates end.
+    ///
+    /// It is the musli-web [`Refuse`] itself that is returned, so an app's
+    /// `connect` returns it as it is.
+    pub async fn accept(&self, metadata: &Metadata) -> Result<(), Refuse> {
+        let (accepted, refuse) = match self.settle(metadata).await {
+            Ok(Some(accepted)) => (accepted, None),
+            Ok(None) => (Accepted::Refused, Some(session_ended())),
+            Err(error) => {
+                tracing::error!(error = ?error, "auth: accepting a socket failed: {error}");
+                (Accepted::Refused, Some(Refuse::new("internal error")))
+            }
+        };
+
+        if let Err(ours) = self.shared.accepted.set(accepted) {
+            // Settled by an earlier call, which stands: this one passes only
+            // if it settled on the same session.
+            let earlier = self.accepted().and_then(|a| self.accepted_session(a));
+
+            if refuse.is_none() && earlier == self.accepted_session(&ours) {
+                return Ok(());
+            }
+
+            return Err(refuse.unwrap_or_else(session_ended));
+        }
+
+        self.shared.settled.send_replace(true);
+        refuse.map_or(Ok(()), Err)
+    }
+
+    /// The session `accepted` speaks for, `None` when refused.
+    fn accepted_session<'a>(&'a self, accepted: &'a Accepted) -> Option<&'a str> {
+        match accepted {
+            Accepted::Upgrade => Some(&self.shared.upgrade.session.id),
+            Accepted::Page(page) => Some(&page.session.id),
+            Accepted::Refused => None,
+        }
+    }
+
+    /// What [`accept`](Connection::accept) settles on, or `None` to refuse
+    /// with [`SESSION_ENDED`].
+    async fn settle(&self, metadata: &Metadata) -> Result<Option<Accepted>> {
+        let upgrade = &self.shared.upgrade;
+
+        let Some(credential) = metadata.get(PAGE_SESSION_HEADER) else {
+            if upgrade.session.impersonator.is_some() {
+                return Ok(None);
+            }
+
+            return Ok(Some(Accepted::Upgrade));
+        };
+
+        let Some(page) = self.auth.verify_page_credential(credential) else {
+            return Ok(None);
+        };
+
+        let Some((user, session)) = self.auth.session(page).await? else {
+            return Ok(None);
+        };
+
+        let Some(admin) = session.impersonator else {
+            return Ok(None);
+        };
+
+        let Some((_, cookie)) = self.auth.session(&upgrade.session.id).await? else {
+            return Ok(None);
+        };
+
+        if !vouches_for(cookie.user, cookie.impersonator, admin) {
+            return Ok(None);
+        }
+
+        Ok(Some(Accepted::Page(Box::new(SignedIn { user, session }))))
+    }
+
+    /// What [`accept`](Connection::accept) settled on, if it has.
+    pub(super) fn accepted(&self) -> Option<&Accepted> {
+        self.shared.accepted.get()
+    }
+
+    /// The session the connection speaks for, `None` once refused.
+    fn live_session_id(&self) -> Option<&str> {
+        match self.accepted() {
+            Some(Accepted::Refused) => None,
+            _ => Some(self.session_id()),
+        }
+    }
+
+    /// The connection's session through [`Auth::session`], `None` once it
+    /// ended or the connection was refused.
+    async fn session(&self) -> Result<Option<(User, Session)>> {
+        match self.live_session_id() {
+            Some(id) => self.auth.session(id).await,
+            None => Ok(None),
         }
     }
 
@@ -222,7 +375,7 @@ impl Connection {
 
     /// The session and user the upgrade signed in with.
     pub(super) fn upgrade(&self) -> &SignedIn {
-        &self.signed_in
+        &self.shared.upgrade
     }
 
     /// The [`AuthUpdate`] this connection may see of `event`, if any:
@@ -243,7 +396,7 @@ impl Connection {
         let update = match event {
             AuthEvent::SessionEnded(_) | AuthEvent::UserSessionsEnded { .. } => return Ok(None),
             AuthEvent::UserChanged(info) if info.id == self.user_id() => {
-                let Some((user, session)) = self.auth.session(self.session_id()).await? else {
+                let Some((user, session)) = self.session().await? else {
                     return Ok(None);
                 };
 
@@ -255,7 +408,7 @@ impl Connection {
             AuthEvent::UserDeleted(id) => AuthUpdate::UserDeleted(*id),
         };
 
-        let Some((user, _)) = self.auth.session(self.session_id()).await? else {
+        let Some((user, _)) = self.session().await? else {
             return Ok(None);
         };
 
@@ -279,7 +432,7 @@ impl Connection {
     /// [`Auth::session_info`] gives it, since a missed event may have
     /// changed it. Errors only when the store fails.
     pub async fn lagged(&self) -> Result<Option<AuthUpdate>> {
-        let Some((user, session)) = self.auth.session(self.session_id()).await? else {
+        let Some((user, session)) = self.session().await? else {
             return Ok(None);
         };
 
@@ -351,21 +504,36 @@ impl Connection {
         // has no endpoint for a request that changes it.
         debug_assert_eq!(request.cookie(), None);
 
-        let caller = Caller::new().session(self.session_id());
+        let Some(session) = self.live_session_id() else {
+            return Err(AuthError::Unauthorized.into());
+        };
+
+        let caller = Caller::new().session(session);
         let dispatched = self.auth.dispatch(&caller, request).await?;
         outgoing.write(dispatched.response);
         Ok(true)
     }
 
-    /// The id of the user this connection signed in as, as its upgrade
-    /// carried it. For an impersonated session it is the impersonated user.
+    /// The id of the user this connection speaks for: the page's once
+    /// [`accept`](Connection::accept) switched to its session, otherwise
+    /// the upgrade's. For an impersonated session it is the impersonated
+    /// user.
     pub fn user_id(&self) -> UserId {
-        self.signed_in.user.id
+        self.speaks_for().user.id
     }
 
-    /// The id of the session this connection signed in with.
+    /// The id of the session this connection speaks for: the page's once
+    /// [`accept`](Connection::accept) switched to it, otherwise the
+    /// upgrade's.
     pub fn session_id(&self) -> &str {
-        &self.signed_in.session.id
+        &self.speaks_for().session.id
+    }
+
+    fn speaks_for(&self) -> &SignedIn {
+        match self.accepted() {
+            Some(Accepted::Page(page)) => page,
+            _ => &self.shared.upgrade,
+        }
     }
 
     /// The connection's session and its user as stored now, or
@@ -379,7 +547,7 @@ impl Connection {
     /// Errors with [`Error::Auth`] for the refusal and another [`Error`] when
     /// the store fails, which the app should not report as a refusal.
     pub async fn signed_in(&self) -> Result<(User, Session)> {
-        match self.auth.session(self.session_id()).await? {
+        match self.session().await? {
             Some(signed_in) => Ok(signed_in),
             None => Err(AuthError::Unauthorized.into()),
         }
@@ -485,7 +653,8 @@ pub(super) fn decode(request: Request, body: &mut impl ReadBody) -> Option<AuthR
 }
 
 /// watchword's endpoints, for an app that combines its own handler with this
-/// one through [`ws::Handler::or`]. See [`Connection::handle`].
+/// one through [`ws::Handler::or`]. See [`Connection::handle`]; its `connect`
+/// is [`Connection::accept`].
 impl ws::Handler for Connection {
     type Id = Request;
     type Response = Result<bool, RequestError>;
@@ -497,5 +666,12 @@ impl ws::Handler for Connection {
         outgoing: &'this mut Outgoing<'_>,
     ) -> impl Future<Output = Self::Response> + Send + 'this {
         Connection::handle(self, id, incoming, outgoing)
+    }
+
+    fn connect<'this>(
+        &'this mut self,
+        metadata: &'this Metadata,
+    ) -> impl Future<Output = Result<(), Refuse>> + Send + 'this {
+        Connection::accept(self, metadata)
     }
 }
