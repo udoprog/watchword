@@ -740,3 +740,89 @@ async fn accept_refuses_an_ended_page_session() {
     let conn = Connection::new(auth.clone(), &root);
     assert!(ended(conn.accept(&page_metadata(&credential)).await));
 }
+
+/// Updates taken before `accept` follow the page's session once switched,
+/// and end when it ends, the admin's session still live.
+#[tokio::test]
+async fn updates_follow_the_pages_session() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let (credential, erin) = impersonating(&auth, &root).await;
+    let conn = Connection::new(auth.clone(), &root);
+    let mut updates = conn.updates();
+    assert_eq!(updates.guard().user(), root.user.info());
+
+    conn.accept(&page_metadata(&credential)).await.unwrap();
+    assert_eq!(updates.guard().user().id, erin.id);
+
+    // The page's own change, as the page's user.
+    let changed = auth
+        .set_role(&root.user, &root.session, erin.id, Role::Admin)
+        .await
+        .unwrap();
+    let next = tokio::time::timeout(WAIT, updates.next()).await.unwrap();
+    assert!(
+        matches!(&next, Some(AuthUpdate::Me(info)) if info.id == changed.id && info.impersonated_by.is_some()),
+        "{next:?}"
+    );
+
+    let page = auth.verify_page_credential(&credential).unwrap().to_owned();
+    auth.sign_out(&page).await.unwrap();
+    assert_eq!(
+        tokio::time::timeout(WAIT, updates.next()).await.unwrap(),
+        None
+    );
+    assert!(auth.session(&root.session.id).await.unwrap().is_some());
+}
+
+/// Once switched, the admin's cookie session ending ends the page's socket
+/// too, even while waiting.
+#[tokio::test]
+async fn updates_end_with_the_admins_session() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let (credential, _) = impersonating(&auth, &root).await;
+    let conn = Connection::new(auth.clone(), &root);
+    let mut updates = conn.updates();
+
+    let next = updates.next();
+    let accept = async {
+        tokio::time::sleep(BRIEFLY).await;
+        conn.accept(&page_metadata(&credential)).await.unwrap();
+        tokio::time::sleep(BRIEFLY).await;
+        auth.sign_out(&root.session.id).await.unwrap();
+    };
+    let (next, ()) = tokio::time::timeout(WAIT, async { tokio::join!(next, accept) })
+        .await
+        .unwrap();
+    assert_eq!(next, None);
+
+    assert!(updates.unless_ended(async {}).await.is_none());
+}
+
+/// A refused connection's updates end at once, whether taken before or
+/// after the refusal.
+#[tokio::test]
+async fn updates_of_a_refused_connection_end() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let conn = Connection::new(auth.clone(), &root);
+    let mut before = conn.updates();
+    let pending_next = before.next();
+
+    let refuse = async {
+        tokio::time::sleep(BRIEFLY).await;
+        assert!(ended(conn.accept(&page_metadata("garbage")).await));
+    };
+    let (next, ()) = tokio::time::timeout(WAIT, async { tokio::join!(pending_next, refuse) })
+        .await
+        .unwrap();
+    assert_eq!(next, None);
+
+    let mut after = conn.updates();
+    assert_eq!(
+        tokio::time::timeout(WAIT, after.next()).await.unwrap(),
+        None
+    );
+    assert_eq!(after.unless_ended(async { 1 }).await, None);
+}

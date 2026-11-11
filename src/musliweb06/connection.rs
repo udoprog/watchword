@@ -340,6 +340,12 @@ impl Connection {
         self.shared.accepted.get()
     }
 
+    /// A receiver that turns `true` once [`accept`](Connection::accept) has
+    /// settled.
+    pub(super) fn settled(&self) -> watch::Receiver<bool> {
+        self.shared.settled.subscribe()
+    }
+
     /// The session the connection speaks for, `None` once refused.
     fn live_session_id(&self) -> Option<&str> {
         match self.accepted() {
