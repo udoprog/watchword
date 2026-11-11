@@ -161,7 +161,7 @@ pub(super) fn google_sign_in(base: &str) -> String {
 
 /// Decodes `%XX` escapes, failing on a malformed escape or a result that is
 /// not UTF-8.
-fn percent_decode(value: &str) -> Option<String> {
+pub(super) fn percent_decode(value: &str) -> Option<String> {
     let mut out = Vec::with_capacity(value.len());
     let mut bytes = value.bytes();
 
@@ -408,4 +408,218 @@ pub(super) async fn copy_text(text: &str) -> bool {
 
     let promise = window.navigator().clipboard().write_text(text);
     wasm_bindgen_futures::JsFuture::from(promise).await.is_ok()
+}
+
+/// `url` resolved against the page's base URL, or `None` when it is not a
+/// URL (or outside a browser).
+pub(super) fn resolve_url(url: &str) -> Option<String> {
+    if !cfg!(target_arch = "wasm32") {
+        return None;
+    }
+
+    let base = web_sys::window()?.document()?.base_uri().ok()??;
+    Some(web_sys::Url::new_with_base(url, &base).ok()?.href())
+}
+
+/// An object URL of `blob`.
+pub(super) fn create_object_url(blob: &web_sys::Blob) -> Option<String> {
+    web_sys::Url::create_object_url_with_blob(blob).ok()
+}
+
+/// Revokes an object URL from [`create_object_url`].
+pub(super) fn revoke_object_url(url: &str) {
+    if cfg!(target_arch = "wasm32") {
+        let _ = web_sys::Url::revoke_object_url(url);
+    }
+}
+
+/// A controller to abort a fetch with.
+pub(super) fn abort_controller() -> Option<web_sys::AbortController> {
+    if !cfg!(target_arch = "wasm32") {
+        return None;
+    }
+
+    web_sys::AbortController::new().ok()
+}
+
+/// The body of `response` as a blob.
+pub(super) async fn response_blob(response: &web_sys::Response) -> Option<web_sys::Blob> {
+    use web_sys::wasm_bindgen::JsCast;
+
+    let blob = wasm_bindgen_futures::JsFuture::from(response.blob().ok()?)
+        .await
+        .ok()?;
+    blob.dyn_into().ok()
+}
+
+/// Saves `href` as a file named `filename` (empty for the browser's choice),
+/// by clicking an `<a download>`.
+pub(super) fn click_download(href: &str, filename: &str) {
+    use web_sys::wasm_bindgen::JsCast;
+
+    if !cfg!(target_arch = "wasm32") {
+        return;
+    }
+
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+
+    let Some(link) = document
+        .create_element("a")
+        .ok()
+        .and_then(|e| e.dyn_into::<web_sys::HtmlAnchorElement>().ok())
+    else {
+        return;
+    };
+
+    link.set_href(href);
+    link.set_download(filename);
+
+    let Some(body) = document.body() else {
+        return;
+    };
+
+    if body.append_child(&link).is_ok() {
+        link.click();
+        link.remove();
+    }
+}
+
+/// Logs an error to the browser's console.
+pub(super) fn console_error(message: &str) {
+    if cfg!(target_arch = "wasm32") {
+        web_sys::console::error_1(&JsValue::from_str(message));
+    }
+}
+
+/// The media elements [`watch_media`] looks at.
+const MEDIA: &str = "img[src], audio[src], video[src], source[src], a[download][href]";
+
+thread_local! {
+    static MEDIA_WATCHED: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+/// Watches the page, once, for media whose URL `private` says must not load
+/// with the cookie alone, and removes that URL with an error in the console:
+/// the `src` of `<img>`, `<audio>`, `<video>` and `<source>`, and the `href`
+/// of `<a download>`, both as the page is now and as elements gain them.
+/// `private` is given each URL resolved against the page.
+pub(super) fn watch_media(private: impl Fn(&str) -> bool + 'static) {
+    use std::rc::Rc;
+    use web_sys::js_sys::Array;
+    use web_sys::wasm_bindgen::JsCast;
+    use web_sys::wasm_bindgen::closure::Closure;
+    use web_sys::{Element, MutationObserver, MutationObserverInit, MutationRecord};
+
+    if !cfg!(target_arch = "wasm32") || MEDIA_WATCHED.replace(true) {
+        return;
+    }
+
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+
+    let private = Rc::new(private);
+    let watched = private.clone();
+
+    let callback = Closure::<dyn Fn(Array, MutationObserver)>::new(
+        move |records: Array, _: MutationObserver| {
+            for record in records.iter() {
+                let record = record.unchecked_into::<MutationRecord>();
+
+                let Some(target) = record.target() else {
+                    continue;
+                };
+
+                if record.type_() == "attributes" {
+                    if let Ok(element) = target.dyn_into::<Element>() {
+                        clear_media(&element, &*watched);
+                    }
+
+                    continue;
+                }
+
+                let added = record.added_nodes();
+
+                for index in 0..added.length() {
+                    if let Some(element) = added.item(index).and_then(|n| n.dyn_into().ok()) {
+                        clear_media_tree(&element, &*watched);
+                    }
+                }
+            }
+        },
+    );
+
+    let Ok(observer) = MutationObserver::new(callback.as_ref().unchecked_ref()) else {
+        return;
+    };
+
+    let init = MutationObserverInit::new();
+    init.set_child_list(true);
+    init.set_subtree(true);
+    init.set_attributes(true);
+    init.set_attribute_filter(&Array::of3(
+        &JsValue::from_str("src"),
+        &JsValue::from_str("href"),
+        &JsValue::from_str("download"),
+    ));
+
+    if observer.observe_with_options(&document, &init).is_err() {
+        return;
+    }
+
+    // The observer lives as long as the page.
+    callback.forget();
+
+    if let Some(root) = document.document_element() {
+        clear_media_tree(&root, &*private);
+    }
+}
+
+/// [`clear_media`] on `root` and every media element under it.
+fn clear_media_tree(root: &web_sys::Element, private: &dyn Fn(&str) -> bool) {
+    use web_sys::wasm_bindgen::JsCast;
+
+    clear_media(root, private);
+
+    let Ok(found) = root.query_selector_all(MEDIA) else {
+        return;
+    };
+
+    for index in 0..found.length() {
+        if let Some(element) = found.item(index).and_then(|n| n.dyn_into().ok()) {
+            clear_media(&element, private);
+        }
+    }
+}
+
+/// Removes the URL of a media `element` when `private` says so.
+fn clear_media(element: &web_sys::Element, private: &dyn Fn(&str) -> bool) {
+    if !element.matches(MEDIA).unwrap_or(false) {
+        return;
+    }
+
+    let name = if element.local_name() == "a" {
+        "href"
+    } else {
+        "src"
+    };
+
+    let Some(url) = element.get_attribute(name) else {
+        return;
+    };
+
+    let Some(resolved) = resolve_url(&url) else {
+        return;
+    };
+
+    if private(&resolved) {
+        let _ = element.remove_attribute(name);
+
+        console_error(&format!(
+            "watchword: removed {name}=\"{url}\" from a <{}>: in an impersonated page, signed-in media must load through MediaUrl or download, or it would load as the admin",
+            element.local_name()
+        ));
+    }
 }

@@ -299,7 +299,7 @@ fn encode(segment: &str) -> String {
     out
 }
 
-fn get(url: &str) -> RequestBuilder {
+pub(super) fn get(url: &str) -> RequestBuilder {
     with_page_session(Request::get(url))
 }
 
@@ -337,7 +337,7 @@ where
     Ok(check(response).await?.json().await?)
 }
 
-async fn check(response: Response) -> Result<Response, Error> {
+pub(super) async fn check(response: Response) -> Result<Response, Error> {
     if response.ok() {
         return Ok(response);
     }

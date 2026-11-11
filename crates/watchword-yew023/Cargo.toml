@@ -36,7 +36,7 @@ serde = { version = "1.0.229", default-features = false }
 wasm-bindgen-futures = "0.4.56"
 phrasebook02 = { package = "phrasebook", version = "0.2.0", features = ["yew023"] }
 musli-web05 = { package = "musli-web", version = "0.5.0", default-features = false, features = ["web03"], optional = true }
-web-sys = { version = "0.3.83", features = ["Clipboard", "Headers", "History", "HtmlInputElement", "HtmlSelectElement", "Location", "Navigator", "Request", "RequestCredentials", "Storage", "Window"] }
+web-sys = { version = "0.3.83", features = ["AbortController", "AbortSignal", "Blob", "Clipboard", "Document", "Element", "Headers", "History", "HtmlAnchorElement", "HtmlElement", "HtmlInputElement", "HtmlSelectElement", "Location", "MutationObserver", "MutationObserverInit", "MutationRecord", "Navigator", "Node", "NodeList", "Request", "RequestCredentials", "Response", "Storage", "Url", "Window", "console"] }
 
 [dev-dependencies]
 serde_json = "1.0.151"

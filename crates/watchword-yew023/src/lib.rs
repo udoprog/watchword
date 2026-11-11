@@ -452,6 +452,8 @@ mod l10n;
 #[cfg(feature = "std")]
 mod listener;
 #[cfg(feature = "std")]
+mod media;
+#[cfg(feature = "std")]
 mod provider;
 #[cfg(feature = "std")]
 mod register;
@@ -515,6 +517,10 @@ pub use self::listener::Listener;
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
 #[doc(inline)]
 pub use watchword_core::phrasebookcatalog01::L10N;
+
+#[cfg(feature = "std")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]
+pub use self::media::{MediaUrl, download, use_media_url};
 
 #[cfg(feature = "std")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "std")))]

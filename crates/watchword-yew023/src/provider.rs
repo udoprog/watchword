@@ -1,6 +1,7 @@
 use std::rc::Rc;
 #[cfg(feature = "musliweb05")]
 use std::time::Duration;
+use std::vec::Vec;
 
 #[cfg(feature = "musliweb05")]
 use musli_web05::web03::prelude::ws;
@@ -14,6 +15,7 @@ use super::context::AuthContext;
 use super::l10n;
 #[cfg(feature = "musliweb05")]
 use super::listener::Subscribers;
+use super::media;
 use super::register::Register;
 use super::service::AuthService;
 use super::sign_in::SignIn;
@@ -48,6 +50,16 @@ pub struct AuthProviderProps {
     /// this path itself.
     #[prop_or_default]
     pub sign_in_path: Option<AttrValue>,
+    /// The path prefixes of the app's signed-in media, by default `/api/`.
+    /// In a page an admin opened to impersonate someone, the `src` of an
+    /// `<img>`, `<audio>`, `<video>` or `<source>` and the `href` of an
+    /// `<a download>` on this origin under one of them is removed, with an
+    /// error in the console, unless it loaded through
+    /// [`MediaUrl`](super::MediaUrl): the browser would fetch it with the
+    /// admin's cookie alone, as the admin. Static media elsewhere loads as
+    /// usual.
+    #[prop_or_else(default_private_media)]
+    pub private_media: Vec<AttrValue>,
     /// The service the provider and everything it renders make their
     /// requests with, given to them through
     /// [`use_auth_service`](super::use_auth_service): an
@@ -91,7 +103,10 @@ pub struct AuthProviderProps {
 /// and clears `window.opener`. When that session ends it shows
 /// "Impersonation has ended." with Close instead of [`SignIn`], since
 /// signing in there would replace the admin's cookie, and a registration
-/// link there says to open it in a page that is not impersonating.
+/// link there says to open it in a page that is not impersonating. There it
+/// also clears signed-in media not loaded through
+/// [`MediaUrl`](super::MediaUrl); see
+/// [`private_media`](AuthProviderProps::private_media).
 ///
 /// With the `musliweb05` feature and a socket handed over with
 /// [`AuthContext::set_socket`], it also follows the server's
@@ -219,6 +234,10 @@ impl Component for AuthProvider {
 
         if impersonated_page {
             browser::enter_impersonated_page();
+            media::enter_impersonated_page(
+                ctx.props().private_media.clone(),
+                check_session.clone(),
+            );
         }
 
         Self {
@@ -475,6 +494,10 @@ impl Component for AuthProvider {
     }
 
     fn changed(&mut self, ctx: &Context<Self>, _: &Self::Properties) -> bool {
+        if self.impersonated_page {
+            media::set_private_media(ctx.props().private_media.clone());
+        }
+
         let service = service(ctx.props(), &self.transport);
 
         // The list came over the other service, maybe from another server.
@@ -682,6 +705,10 @@ impl AuthProvider {
             Err(..) => {}
         }
     }
+}
+
+fn default_private_media() -> Vec<AttrValue> {
+    vec![AttrValue::from("/api/")]
 }
 
 /// The service `props` give, or the one over `transport`.
