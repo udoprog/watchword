@@ -17,12 +17,12 @@ use jiff::{SignedDuration, Timestamp};
 
 use super::{Credential, Session, Store, Token, TokenKind, User};
 use crate::core::{
-    Auth, AuthEvent, Bootstrap, BootstrapAdmin, Error, TOKEN_LIFETIME, generate_session_key,
-    new_token,
+    Auth, AuthEvent, Bootstrap, BootstrapAdmin, Error, IMPERSONATION_LIFETIME, TOKEN_LIFETIME,
+    generate_session_key, new_token, verify_page_credential,
 };
 use crate::types::{
-    Access, AuthError, Conflict, Invalid, Link, LoginRequest, Method, NewUser, PasswordChange,
-    RegisterRequest, Role, UserChange, UserId,
+    Access, AuthError, Conflict, Invalid, Link, LoginRequest, Method, NewUser, PageSession,
+    PasswordChange, RegisterRequest, Role, UserChange, UserId,
 };
 
 /// The result of a test in the suite.
@@ -156,6 +156,7 @@ fn refused<T>(result: Result<T, Error>) -> AuthError {
 struct Env<S> {
     store: S,
     auth: Auth,
+    key: [u8; 32],
     admin: User,
     /// A session for `admin`, not stored, to act from.
     admin_session: Session,
@@ -175,7 +176,8 @@ async fn env_with<S>(
 where
     S: Store + Clone,
 {
-    let auth = build(Auth::builder(store.clone(), generate_session_key())).build();
+    let key = generate_session_key();
+    let auth = build(Auth::builder(store.clone(), key)).build();
 
     let new = NewUser {
         login: Some("admin".to_owned()),
@@ -194,6 +196,7 @@ where
     Ok(Env {
         store,
         auth,
+        key,
         admin,
         admin_session,
     })
@@ -292,6 +295,12 @@ where
 
         self.store.create_session(&session).await?;
         Ok(session)
+    }
+
+    /// The stored session a page credential names.
+    async fn page(&self, page: &PageSession) -> Result<Session, Box<dyn StdError>> {
+        let id = verify_page_credential(&self.key, &page.credential).ok_or("bad credential")?;
+        Ok(self.store.session(id).await?.ok_or("no session")?)
     }
 
     async fn live(&self, session: &str) -> Result<bool, Box<dyn StdError>> {
@@ -2161,15 +2170,18 @@ where
     // Pending users can be impersonated, and the session records the admin,
     // in the store too.
     let (pending, _) = env.invite("pending@example.com").await?;
-    let (user, session) = env.auth.impersonate(&env.admin, &mine, pending.id).await?;
-    assert_eq!(user.id, pending.id);
+    let page = env.auth.impersonate(&env.admin, &mine, pending.id).await?;
+    assert_eq!(page.user.id, pending.id);
+    let session = env.page(&page).await?;
+    assert_eq!(session.user, pending.id);
     assert_eq!(session.impersonator, Some(env.admin.id));
+    assert_eq!(
+        session.expires_at.duration_since(session.created_at),
+        IMPERSONATION_LIFETIME
+    );
     assert!(env.live(&session.id).await?);
-    let stored = env.store.session(&session.id).await?.ok_or("no session")?;
-    assert_eq!(stored.impersonator, Some(env.admin.id));
 
-    let info = env.auth.session_info(&user, &session).await?;
-    let by = info.impersonated_by.expect("marked as impersonated");
+    let by = page.user.impersonated_by.expect("marked as impersonated");
     assert_eq!(by.id, env.admin.id);
     assert_eq!(by.name, "admin");
 
@@ -2179,18 +2191,11 @@ where
     // Stopping is only for impersonated sessions.
     assert_eq!(refused(env.auth.stop_impersonating(&mine).await), forbidden);
 
-    // Stopping ends the impersonated session and signs the admin in again.
-    let (admin, back) = env.auth.stop_impersonating(&session).await?;
-    assert_eq!(admin.id, env.admin.id);
-    assert_eq!(back.user, env.admin.id);
-    assert_eq!(back.impersonator, None);
-    assert!(env.live(&back.id).await?);
+    // Stopping ends the impersonated session and nothing else.
+    env.auth.stop_impersonating(&session).await?;
     assert!(!env.live(&session.id).await?);
     assert!(env.store.session(&session.id).await?.is_none());
-    assert_eq!(
-        env.auth.session_info(&admin, &back).await?.impersonated_by,
-        None
-    );
+    assert!(env.live(&mine.id).await?);
 
     // An admin acting as another admin cannot impersonate from there, so
     // stopping always leads back to the admin who started.
@@ -2199,7 +2204,8 @@ where
         .set_role(&env.admin, &env.admin_session, other.id, Role::Admin)
         .await?;
     let other = env.reload(other.id).await?;
-    let (_, as_other) = env.auth.impersonate(&env.admin, &mine, other.id).await?;
+    let as_other = env.auth.impersonate(&env.admin, &mine, other.id).await?;
+    let as_other = env.page(&as_other).await?;
     assert_eq!(
         refused(env.auth.impersonate(&other, &as_other, pending.id).await),
         forbidden
@@ -2209,7 +2215,8 @@ where
     // admin, here changed in the store as another process would. One
     // loaded before still cannot go back to them, and finding it dead
     // deletes it, so that promoting the admin again does not revive it.
-    let (_, session) = env.auth.impersonate(&env.admin, &mine, pending.id).await?;
+    let session = env.auth.impersonate(&env.admin, &mine, pending.id).await?;
+    let session = env.page(&session).await?;
     let demote = UserChange {
         role: Some(Role::Regular),
         ..UserChange::default()
@@ -2237,7 +2244,8 @@ where
 
     // The same for a revoked admin. Their own sessions end with the
     // revocation; the impersonated one is not theirs.
-    let (_, session) = env.auth.impersonate(&env.admin, &mine, pending.id).await?;
+    let session = env.auth.impersonate(&env.admin, &mine, pending.id).await?;
+    let session = env.page(&session).await?;
     assert!(env.live(&session.id).await?);
     env.store.revoke(env.admin.id, Timestamp::now()).await?;
     assert!(env.store.session(&session.id).await?.is_some());

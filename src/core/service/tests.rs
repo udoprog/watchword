@@ -292,7 +292,9 @@ async fn operations_send_actor_attributed_audit_events() -> Result<(), Box<dyn s
 
     // Root impersonates pat, now an admin, and acts as them: the events
     // name root as the impersonator, and as the one responsible.
-    let (as_pat, as_pat_session) = auth.impersonate(&root, &root_session, pat.id).await?;
+    let (as_pat, as_pat_session) = auth
+        .impersonate_session(&root, &root_session, pat.id)
+        .await?;
     let by_root_as_pat = Actor::of(&as_pat, &as_pat_session);
     assert_eq!(
         by_root_as_pat,
@@ -498,7 +500,9 @@ async fn request_session_takes_the_page_credential() -> Result<(), Box<dyn std::
     let root_session = auth.test_session(&root).await?;
     let boss_session = auth.test_session(&boss).await?;
     let pat_session = auth.test_session(&pat).await?;
-    let (_, page) = auth.impersonate(&root, &root_session, pat.id).await?;
+    let (_, page) = auth
+        .impersonate_session(&root, &root_session, pat.id)
+        .await?;
 
     let cookie = |id: &str| auth.cookie_header(id).to_str().unwrap().to_owned();
     let credential = page_credential(&key, &page.id);

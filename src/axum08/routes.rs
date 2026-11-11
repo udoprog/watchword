@@ -14,7 +14,7 @@ use super::{Admin, SignedIn};
 use crate::Auth;
 use crate::core::{Caller, Error, SessionCookie};
 #[cfg(doc)]
-use crate::types::{AuthConfig, CreatedUser, Link, RegisterInfo, UserEntry, UserInfo};
+use crate::types::{AuthConfig, CreatedUser, Link, PageSession, RegisterInfo, UserEntry, UserInfo};
 use crate::types::{
     AuthError, AuthRequest, Invalid, LoginRequest, NewUser, PasswordChange, RegisterRequest,
     UserChange, UserId,
@@ -43,8 +43,8 @@ use crate::types::{
 /// | `DELETE /api/auth/users/{id}/link` | admin | 204; uses up the user's links |
 /// | `POST /api/auth/users/{id}/sign-out` | admin | 204; ends all of the user's sessions |
 /// | `POST /api/auth/users/{id}/revoke` | admin | [`UserInfo`]; revokes access; not self |
-/// | `POST /api/auth/users/{id}/impersonate` | admin, if enabled | [`UserInfo`] (with `impersonated_by`) + cookie for a session as that user, marked with the admin; not self, not revoked, not from an impersonated session |
-/// | `POST /api/auth/impersonate/stop` | signed in, impersonated | [`UserInfo`] + cookie for a new session as the admin, ending the impersonated one; 403 unless the session is impersonated (401 once its admin is no longer an active admin, which ends it; 403 if that happens while the request runs) |
+/// | `POST /api/auth/users/{id}/impersonate` | admin, if enabled | [`PageSession`]: a session as that user that records the admin, for [`IMPERSONATION_LIFETIME`](crate::IMPERSONATION_LIFETIME), and its page credential; no cookie; not self, not revoked, not from an impersonated session |
+/// | `POST /api/auth/impersonate/stop` | signed in, impersonated | 204, ending the page's impersonated session and nothing else; no cookie; 403 unless the session is impersonated (401 once its admin is no longer an active admin, which ends it; 403 if that happens while the request runs) |
 /// | `GET /api/auth/google` | anyone | redirect to Google to sign in, coming back to `?next=` if it is a [same-origin path](crate::is_same_origin_path); 404 unless Google is configured (feature `google`) |
 /// | `GET /api/auth/google/register/{token}` | anyone | redirect to Google to register with the link; 404 unknown, 410 used or expired |
 /// | `GET /api/auth/google/link` | signed in | redirect to Google to switch to it |
@@ -55,6 +55,12 @@ use crate::types::{
 /// `{id}` is the decimal [`UserId`]. Errors are an [`AuthError`] body with
 /// its status: 401, 403, 404, 409, 410, 429, or 400 with a message, which a
 /// malformed JSON body also gets.
+///
+/// A request carrying a page credential in
+/// [`PAGE_SESSION_HEADER`](crate::PAGE_SESSION_HEADER), valid or not, never
+/// touches the cookie, which is the admin's: login, Cloudflare sign-in and
+/// registration are 403, and logout ends only the page's session, as stop
+/// does, with no cookie.
 ///
 /// `POST /api/auth/login` throttles by the client's address, so the app must
 /// be served with `into_make_service_with_connect_info::<SocketAddr>()`;
@@ -384,17 +390,10 @@ async fn impersonate(
     State(auth): State<Auth>,
     Admin(admin): Admin,
     Id(id): Id,
-    headers: HeaderMap,
 ) -> Result<Response, Error> {
-    let caller = signed_in(&admin).headers(&headers);
-    answer(&auth, caller, AuthRequest::Impersonate { id }).await
+    answer(&auth, signed_in(&admin), AuthRequest::Impersonate { id }).await
 }
 
-async fn stop_impersonating(
-    State(auth): State<Auth>,
-    user: SignedIn,
-    headers: HeaderMap,
-) -> Result<Response, Error> {
-    let caller = signed_in(&user).headers(&headers);
-    answer(&auth, caller, AuthRequest::StopImpersonating).await
+async fn stop_impersonating(State(auth): State<Auth>, user: SignedIn) -> Result<Response, Error> {
+    answer(&auth, signed_in(&user), AuthRequest::StopImpersonating).await
 }

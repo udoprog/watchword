@@ -211,7 +211,7 @@ async fn an_impersonated_session_keeps_its_marker() {
     let root = root(&auth).await;
     let (erin, _) = pending(&auth, &root, "erin", Role::Regular).await;
     let (erin, session) = auth
-        .impersonate(&root.user, &root.session, erin.id)
+        .impersonate_session(&root.user, &root.session, erin.id)
         .await
         .unwrap();
     let info = erin.info();
@@ -335,7 +335,7 @@ async fn a_lag_resyncs_an_admin_and_refreshes_anyone_else() {
 
     // An impersonated session keeps its marker and not the admin's rights.
     let (erin, session) = auth
-        .impersonate(&root.user, &root.session, erin.user.id)
+        .impersonate_session(&root.user, &root.session, erin.user.id)
         .await
         .unwrap();
     let mut expected = erin.info();

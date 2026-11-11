@@ -18,17 +18,18 @@ use jiff::Timestamp;
 use tokio::sync::broadcast;
 use tokio::time::MissedTickBehavior;
 
+use super::session::impersonation_expiry;
 use super::throttle::LoginThrottle;
 use super::{
     Actor, AuditEvent, PasswordError, TOKEN_LIFETIME, dummy_hash, generate_session_key,
-    hash_password, is_expired, new_session_id, new_token, session_cookie, session_expiry,
-    token_expiry, verify_page_credential, verify_password, verify_session_cookie,
+    hash_password, is_expired, new_session_id, new_token, page_credential, session_cookie,
+    session_expiry, token_expiry, verify_page_credential, verify_password, verify_session_cookie,
 };
 use crate::store::{Credential, DynStore, Session, Store, StoreError, Token, TokenKind, User};
 use crate::types::{
     Access, AuthError, Conflict, Impersonator, Invalid, Link, LoginRequest, Method, NewUser,
-    PAGE_SESSION_HEADER, PasswordChange, RegisterInfo, RegisterRequest, Role, UserChange,
-    UserEntry, UserId, UserInfo, normalize_email, validate_password,
+    PAGE_SESSION_HEADER, PageSession, PasswordChange, RegisterInfo, RegisterRequest, Role,
+    UserChange, UserEntry, UserId, UserInfo, normalize_email, validate_password,
 };
 
 /// The setting [`load_or_create_key`] keeps the cookie key under.
@@ -1494,18 +1495,37 @@ impl Auth {
         Ok(())
     }
 
-    /// Creates a session as the user `id`, for an admin to see what they
-    /// see. The session records the admin as its
-    /// [`impersonator`](Session::impersonator), which
-    /// [`session_info`](Auth::session_info) shows and
-    /// [`stop_impersonating`](Auth::stop_impersonating) returns to.
+    /// Creates a session as the user `id` for one page of the admin's, so
+    /// that they see what the user sees (decision 33), and answers it as a
+    /// [`PageSession`]: its [`page_credential`](super::page_credential)
+    /// and the user's [`session_info`](Auth::session_info). The session
+    /// records the admin as its [`impersonator`](Session::impersonator),
+    /// lasts [`IMPERSONATION_LIFETIME`](super::IMPERSONATION_LIFETIME), and
+    /// is accepted only from its [`PAGE_SESSION_HEADER`], beside a cookie of
+    /// the admin's (see [`request_session`](Auth::request_session)); the
+    /// admin's own session is left as it is.
     ///
     /// Pending users can be impersonated, revoked ones cannot. Admins only,
     /// when [enabled](AuthBuilder::impersonation), not themselves, and not
     /// from `session` if it is itself impersonated (an admin acting as
-    /// another admin), so that stopping always leads back to the admin who
-    /// started.
+    /// another admin).
     pub async fn impersonate(
+        &self,
+        actor: &User,
+        session: &Session,
+        id: UserId,
+    ) -> Result<PageSession> {
+        let (user, session) = self.impersonate_session(actor, session, id).await?;
+
+        Ok(PageSession {
+            credential: page_credential(&self.inner.key, &session.id),
+            user: self.session_info(&user, &session).await?,
+        })
+    }
+
+    /// [`impersonate`](Auth::impersonate), answering the user and the new
+    /// session.
+    pub(crate) async fn impersonate_session(
         &self,
         actor: &User,
         session: &Session,
@@ -1528,9 +1548,17 @@ impl Auth {
             return Err(AuthError::Forbidden.into());
         }
 
-        let mut new = Self::new_session(user.id, Timestamp::now());
-        new.impersonator = Some(actor.id);
-        let new = self.insert_session(new).await?;
+        let now = Timestamp::now();
+
+        let new = self
+            .insert_session(Session {
+                id: new_session_id(),
+                user: user.id,
+                impersonator: Some(actor.id),
+                created_at: now,
+                expires_at: impersonation_expiry(now),
+            })
+            .await?;
 
         self.audit(AuditEvent::ImpersonationStarted {
             admin: actor.id,
@@ -1540,14 +1568,14 @@ impl Auth {
         Ok((user, new))
     }
 
-    /// Ends the impersonated `session` and creates a session for the admin
-    /// who started it, returning the admin and the new session.
+    /// Ends the impersonated `session`, a page's, and nothing else: the
+    /// admin's own session is left as it is.
     ///
     /// [`AuthError::Forbidden`], with nothing changed, when `session` is not
     /// impersonated, or its admin is no longer an active admin. The latter
     /// only happens between loading `session` and this call, since
     /// [`session`](Auth::session) already ends such a session.
-    pub async fn stop_impersonating(&self, session: &Session) -> Result<(User, Session)> {
+    pub async fn stop_impersonating(&self, session: &Session) -> Result<()> {
         let Some(id) = session.impersonator else {
             return Err(AuthError::Forbidden.into());
         };
@@ -1560,15 +1588,19 @@ impl Auth {
             return Err(AuthError::Forbidden.into());
         }
 
+        self.end_impersonation(admin.id, session).await
+    }
+
+    /// Ends the impersonated `session` of `admin`, with its audit event.
+    async fn end_impersonation(&self, admin: UserId, session: &Session) -> Result<()> {
         self.sign_out(&session.id).await?;
-        let new = self.create_session(admin.id).await?;
 
         self.audit(AuditEvent::ImpersonationStopped {
-            admin: admin.id,
+            admin,
             user: session.user,
         });
 
-        Ok((admin, new))
+        Ok(())
     }
 
     /// A trimmed login name. Setting one is [`AuthError::Invalid`] when

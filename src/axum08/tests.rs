@@ -66,10 +66,26 @@ async fn call(
     cookie: Option<&str>,
     body: Option<Value>,
 ) -> Answer {
+    page_call(app, method, uri, cookie, None, body).await
+}
+
+/// As [`call`], with an optional page credential.
+async fn page_call(
+    app: &Router,
+    method: Method,
+    uri: &str,
+    cookie: Option<&str>,
+    page: Option<&str>,
+    body: Option<Value>,
+) -> Answer {
     let mut request = Request::builder().method(method).uri(uri);
 
     if let Some(cookie) = cookie {
         request = request.header(header::COOKIE, cookie);
+    }
+
+    if let Some(page) = page {
+        request = request.header(crate::PAGE_SESSION_HEADER, page);
     }
 
     let request = match body {
@@ -613,36 +629,31 @@ async fn impersonation() {
     let created: CreatedUser = serde_json::from_value(created.body).unwrap();
     let path = format!("/api/auth/users/{}/impersonate", created.entry.user.id);
 
+    // Impersonating answers a page session and leaves the cookie alone.
     let as_pat = call(&app, Method::POST, &path, Some(&root), None).await;
-    assert_eq!(as_pat.status, StatusCode::OK);
-    assert_eq!(as_pat.body["login"], "pat");
-    let me = call(
-        &app,
-        Method::GET,
-        "/api/auth/me",
-        Some(&as_pat.cookie()),
-        None,
-    )
-    .await;
+    assert_eq!(as_pat.status, StatusCode::OK, "{}", as_pat.body);
+    assert!(!as_pat.headers.contains_key(header::SET_COOKIE));
+    assert_eq!(as_pat.body["user"]["login"], "pat");
+    let page = as_pat.body["credential"].as_str().unwrap().to_owned();
+    let page = Some(page.as_str());
+    let as_page =
+        |method, uri: &'static str, body| page_call(&app, method, uri, Some(&root), page, body);
+
+    let me = as_page(Method::GET, "/api/auth/me", None).await;
     assert_eq!(me.status, StatusCode::OK);
     assert_eq!(me.body["access"], "pending");
 
     // Both answers name the admin acting as pat; the admin's own do not.
     let root_me = call(&app, Method::GET, "/api/auth/me", Some(&root), None).await;
+    assert_eq!(root_me.body["login"], "root");
     assert!(root_me.body.get("impersonated_by").is_none());
     let by = json!({ "id": root_me.body["id"], "name": "root" });
-    assert_eq!(as_pat.body["impersonated_by"], by);
+    assert_eq!(as_pat.body["user"]["impersonated_by"], by);
     assert_eq!(me.body["impersonated_by"], by);
 
     // So do the account routes, which answer with the own user.
-    let renamed = call(
-        &app,
-        Method::PATCH,
-        "/api/auth/account",
-        Some(&as_pat.cookie()),
-        Some(json!({ "login": "patty" })),
-    )
-    .await;
+    let rename = Some(json!({ "login": "patty" }));
+    let renamed = as_page(Method::PATCH, "/api/auth/account", rename).await;
     assert_eq!(renamed.status, StatusCode::OK);
     assert_eq!(renamed.body["login"], "patty");
     assert_eq!(renamed.body["impersonated_by"], by);
@@ -655,34 +666,61 @@ async fn impersonation() {
     assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
 
     // Nor impersonate again from it (pat is not an admin anyway).
-    let refused = call(&app, Method::POST, &path, Some(&as_pat.cookie()), None).await;
+    let refused = page_call(&app, Method::POST, &path, Some(&root), page, None).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN);
 
-    // Stopping signs the admin back in and ends pat's session.
-    let back = call(&app, Method::POST, stop, Some(&as_pat.cookie()), None).await;
-    assert_eq!(back.status, StatusCode::OK);
-    assert_eq!(back.body["login"], "root");
-    assert!(back.body.get("impersonated_by").is_none());
+    // Nor sign in from it, which would replace the admin's cookie.
+    let login = Some(json!({ "login": "root", "password": PASSWORD }));
+    let refused = as_page(Method::POST, "/api/auth/login", login).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+    assert!(!refused.headers.contains_key(header::SET_COOKIE));
 
-    let me = call(
+    // Stopping ends pat's session and nothing else, with no cookie.
+    let back = as_page(Method::POST, stop, None).await;
+    assert_eq!(back.status, StatusCode::NO_CONTENT);
+    assert!(!back.headers.contains_key(header::SET_COOKIE));
+    let gone = as_page(Method::GET, "/api/auth/me", None).await;
+    assert_eq!(gone.status, StatusCode::UNAUTHORIZED);
+    let me = call(&app, Method::GET, "/api/auth/me", Some(&root), None).await;
+    assert_eq!(me.status, StatusCode::OK);
+    assert_eq!(me.body["login"], "root");
+
+    // Signing out in a page does the same.
+    let as_pat = call(&app, Method::POST, &path, Some(&root), None).await;
+    let page = as_pat.body["credential"].as_str().unwrap();
+    let me = page_call(
         &app,
         Method::GET,
         "/api/auth/me",
-        Some(&back.cookie()),
+        Some(&root),
+        Some(page),
         None,
     )
     .await;
-    assert_eq!(me.status, StatusCode::OK);
-    assert_eq!(me.body["login"], "root");
-    let gone = call(
+    assert_eq!(me.body["login"], "patty");
+    let out = page_call(
+        &app,
+        Method::POST,
+        "/api/auth/logout",
+        Some(&root),
+        Some(page),
+        None,
+    )
+    .await;
+    assert_eq!(out.status, StatusCode::NO_CONTENT);
+    assert!(!out.headers.contains_key(header::SET_COOKIE));
+    let gone = page_call(
         &app,
         Method::GET,
         "/api/auth/me",
-        Some(&as_pat.cookie()),
+        Some(&root),
+        Some(page),
         None,
     )
     .await;
     assert_eq!(gone.status, StatusCode::UNAUTHORIZED);
+    let me = call(&app, Method::GET, "/api/auth/me", Some(&root), None).await;
+    assert_eq!(me.body["login"], "root");
 }
 
 /// The session a request with `cookie` is signed in with, as the
@@ -692,6 +730,16 @@ async fn loaded(auth: &Auth, cookie: &str) -> Option<SignedIn> {
     headers.insert(header::COOKIE, cookie.parse().unwrap());
     let id = auth.session_id(&headers)?;
     let (user, session) = auth.session(&id).await.unwrap()?;
+    Some(SignedIn { user, session })
+}
+
+/// The session a page's request with `cookie` and `credential` is signed
+/// in with.
+async fn loaded_page(auth: &Auth, cookie: &str, credential: &str) -> Option<SignedIn> {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::COOKIE, cookie.parse().unwrap());
+    headers.insert(crate::PAGE_SESSION_HEADER, credential.parse().unwrap());
+    let (user, session) = auth.request_session(&headers).await.unwrap()?;
     Some(SignedIn { user, session })
 }
 
@@ -727,10 +775,10 @@ async fn impersonation_ends_with_its_admin() {
 
     let as_pat = call(&app, Method::POST, &path, Some(&boss), None).await;
     assert_eq!(as_pat.status, StatusCode::OK);
-    let as_pat = as_pat.cookie();
-    let signed_in = loaded(&auth, &as_pat).await.unwrap();
+    let as_pat = as_pat.body["credential"].as_str().unwrap().to_owned();
+    let signed_in = loaded_page(&auth, &boss, &as_pat).await.unwrap();
     let guard = auth.guard(&signed_in.user, &signed_in.session);
-    let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
+    let tile = page_call(&app, Method::GET, "/tile", Some(&boss), Some(&as_pat), None).await;
     assert_eq!(tile.status, StatusCode::OK);
 
     // A change that leaves boss an admin keeps it.
@@ -742,7 +790,7 @@ async fn impersonation_ends_with_its_admin() {
         .await
         .unwrap();
     assert!(tokio::time::timeout(BRIEFLY, guard.ended()).await.is_err());
-    let answer = call(&app, Method::GET, me, Some(&as_pat), None).await;
+    let answer = page_call(&app, Method::GET, me, Some(&boss), Some(&as_pat), None).await;
     assert_eq!(answer.status, StatusCode::OK);
 
     // Demoting boss ends it, but not boss's own session.
@@ -750,9 +798,9 @@ async fn impersonation_ends_with_its_admin() {
         .await
         .unwrap();
     tokio::time::timeout(WAIT, guard.ended()).await.unwrap();
-    let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
+    let tile = page_call(&app, Method::GET, "/tile", Some(&boss), Some(&as_pat), None).await;
     assert_eq!(tile.status, StatusCode::UNAUTHORIZED);
-    let answer = call(&app, Method::GET, me, Some(&as_pat), None).await;
+    let answer = page_call(&app, Method::GET, me, Some(&boss), Some(&as_pat), None).await;
     assert_eq!(answer.status, StatusCode::UNAUTHORIZED);
     let answer = call(&app, Method::GET, me, Some(&boss), None).await;
     assert_eq!(answer.status, StatusCode::OK);
@@ -761,29 +809,29 @@ async fn impersonation_ends_with_its_admin() {
     auth.set_role(&root, &Session::unstored(&root), boss_id, Role::Admin)
         .await
         .unwrap();
-    let answer = call(&app, Method::GET, me, Some(&as_pat), None).await;
+    let answer = page_call(&app, Method::GET, me, Some(&boss), Some(&as_pat), None).await;
     assert_eq!(answer.status, StatusCode::UNAUTHORIZED);
 
     // Revoking boss ends a new one too; stopping it is then refused as
     // signed out.
     let as_pat = call(&app, Method::POST, &path, Some(&boss), None).await;
     assert_eq!(as_pat.status, StatusCode::OK);
-    let as_pat = as_pat.cookie();
-    let signed_in = loaded(&auth, &as_pat).await.unwrap();
+    let as_pat = as_pat.body["credential"].as_str().unwrap().to_owned();
+    let signed_in = loaded_page(&auth, &boss, &as_pat).await.unwrap();
     let guard = auth.guard(&signed_in.user, &signed_in.session);
-    let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
+    let tile = page_call(&app, Method::GET, "/tile", Some(&boss), Some(&as_pat), None).await;
     assert_eq!(tile.status, StatusCode::OK);
 
     auth.revoke_access(&root, &Session::unstored(&root), boss_id)
         .await
         .unwrap();
     tokio::time::timeout(WAIT, guard.ended()).await.unwrap();
-    let tile = call(&app, Method::GET, "/tile", Some(&as_pat), None).await;
+    let tile = page_call(&app, Method::GET, "/tile", Some(&boss), Some(&as_pat), None).await;
     assert_eq!(tile.status, StatusCode::UNAUTHORIZED);
-    let answer = call(&app, Method::GET, me, Some(&as_pat), None).await;
+    let answer = page_call(&app, Method::GET, me, Some(&boss), Some(&as_pat), None).await;
     assert_eq!(answer.status, StatusCode::UNAUTHORIZED);
     let stop = "/api/auth/impersonate/stop";
-    let answer = call(&app, Method::POST, stop, Some(&as_pat), None).await;
+    let answer = page_call(&app, Method::POST, stop, Some(&boss), Some(&as_pat), None).await;
     assert_eq!(answer.status, StatusCode::UNAUTHORIZED);
 
     // pat's own sessions are untouched.
@@ -1377,7 +1425,7 @@ async fn page_credential_beside_the_admins_cookie() {
     let root_session = auth.test_session(&root).await.unwrap();
     let boss_session = auth.test_session(&boss).await.unwrap();
     let (_, page) = auth
-        .impersonate(&root, &root_session, pat.id)
+        .impersonate_session(&root, &root_session, pat.id)
         .await
         .unwrap();
 
@@ -1457,7 +1505,7 @@ async fn page_credential_beside_the_admins_cookie() {
     let root_session = auth.test_session(&root).await.unwrap();
     let root_cookie = header(&root_session.id);
     let (_, page) = auth
-        .impersonate(&root, &root_session, pat.id)
+        .impersonate_session(&root, &root_session, pat.id)
         .await
         .unwrap();
     let credential = crate::page_credential(&key, &page.id);

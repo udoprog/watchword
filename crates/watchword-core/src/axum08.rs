@@ -28,6 +28,7 @@ impl IntoResponse for AuthResponse {
             AuthResponse::Users(value) => Json(value).into_response(),
             AuthResponse::CreatedUser(value) => Json(value).into_response(),
             AuthResponse::Link(value) => Json(value).into_response(),
+            AuthResponse::PageSession(value) => Json(value).into_response(),
             AuthResponse::RegisterInfo(value) => Json(value).into_response(),
             AuthResponse::Cloudflare(value) => Json(value).into_response(),
             AuthResponse::Google(value) => Json(value).into_response(),

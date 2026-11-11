@@ -6,8 +6,8 @@ use alloc::vec::Vec;
 
 use crate::{
     AuthConfig, CloudflareConfig, CreatedUser, GoogleSettings, GoogleSettingsUpdate, Link,
-    LoginRequest, NewUser, PasswordChange, RegisterInfo, RegisterRequest, UserChange, UserEntry,
-    UserId, UserInfo,
+    LoginRequest, NewUser, PageSession, PasswordChange, RegisterInfo, RegisterRequest, UserChange,
+    UserEntry, UserId, UserInfo,
 };
 
 /// One operation of watchword's service, as the server's `Auth::dispatch`
@@ -109,15 +109,15 @@ pub enum AuthRequest {
         /// The user.
         id: UserId,
     },
-    /// Signs in as another user, in a session marked with the admin. Admins,
-    /// if impersonation is enabled. Replaces the cookie. `POST
-    /// /api/auth/users/{id}/impersonate`.
+    /// Creates a session as another user, marked with the admin, for one
+    /// page; the cookie stays the admin's. Admins, if impersonation is
+    /// enabled. `POST /api/auth/users/{id}/impersonate`.
     Impersonate {
         /// The user to act as.
         id: UserId,
     },
-    /// Ends an impersonated session, signing the admin back in. Signed in,
-    /// impersonated. Replaces the cookie. `POST /api/auth/impersonate/stop`.
+    /// Ends the page's impersonated session, and nothing else. Signed in,
+    /// impersonated. `POST /api/auth/impersonate/stop`.
     StopImpersonating,
     /// The Cloudflare Access settings. Admins. `GET /api/auth/cloudflare`,
     /// the musli-web endpoint `Cloudflare`.
@@ -139,17 +139,12 @@ impl AuthRequest {
     ///
     /// Only an HTTP response can set or clear the `HttpOnly` cookie, so an
     /// operation with a [`CookieChange`] must go over HTTP; the server's
-    /// socket adapter has no endpoint for one. One that
-    /// [replaces](CookieChange::Replace) the cookie also leaves a socket
-    /// opened with the earlier session speaking for that session.
+    /// socket adapter has no endpoint for one.
     pub fn cookie(&self) -> Option<CookieChange> {
         match self {
             AuthRequest::Login(..)
             | AuthRequest::CloudflareSignIn
             | AuthRequest::Register { .. } => Some(CookieChange::Set),
-            AuthRequest::Impersonate { .. } | AuthRequest::StopImpersonating => {
-                Some(CookieChange::Replace)
-            }
             AuthRequest::Logout => Some(CookieChange::Clear),
             AuthRequest::Config
             | AuthRequest::Me
@@ -164,6 +159,8 @@ impl AuthRequest {
             | AuthRequest::RevokeLink { .. }
             | AuthRequest::SignOutUser { .. }
             | AuthRequest::RevokeAccess { .. }
+            | AuthRequest::Impersonate { .. }
+            | AuthRequest::StopImpersonating
             | AuthRequest::Cloudflare
             | AuthRequest::SetCloudflare(..)
             | AuthRequest::Google
@@ -178,9 +175,6 @@ impl AuthRequest {
 pub enum CookieChange {
     /// Signs in, setting the cookie to a new session.
     Set,
-    /// Replaces the signed-in session with a new one, as impersonating and
-    /// stopping do.
-    Replace,
     /// Ends the session and clears the cookie.
     Clear,
 }
@@ -206,6 +200,8 @@ pub enum AuthResponse {
     CreatedUser(CreatedUser),
     /// The answer to [`AuthRequest::IssueLink`].
     Link(Link),
+    /// The answer to [`AuthRequest::Impersonate`].
+    PageSession(PageSession),
     /// The answer to [`AuthRequest::RegisterInfo`].
     RegisterInfo(RegisterInfo),
     /// The Cloudflare Access settings, the answer to
@@ -228,8 +224,8 @@ mod musli {
 
     use super::AuthResponse;
     use crate::{
-        AuthConfig, CloudflareConfig, CreatedUser, GoogleSettings, Link, RegisterInfo, UserEntry,
-        UserInfo,
+        AuthConfig, CloudflareConfig, CreatedUser, GoogleSettings, Link, PageSession, RegisterInfo,
+        UserEntry, UserInfo,
     };
 
     /// Encodes as the value the variant carries, `()` for
@@ -245,6 +241,7 @@ mod musli {
         Vec<UserEntry>: Encode<M>,
         CreatedUser: Encode<M>,
         Link: Encode<M>,
+        PageSession: Encode<M>,
         RegisterInfo: Encode<M>,
         CloudflareConfig: Encode<M>,
         GoogleSettings: Encode<M>,
@@ -262,6 +259,7 @@ mod musli {
                 AuthResponse::Users(value) => value.encode(encoder),
                 AuthResponse::CreatedUser(value) => value.encode(encoder),
                 AuthResponse::Link(value) => value.encode(encoder),
+                AuthResponse::PageSession(value) => value.encode(encoder),
                 AuthResponse::RegisterInfo(value) => value.encode(encoder),
                 AuthResponse::Cloudflare(value) => value.encode(encoder),
                 AuthResponse::Google(value) => value.encode(encoder),

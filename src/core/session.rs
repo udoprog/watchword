@@ -38,6 +38,11 @@ pub fn session_expiry(now: Timestamp) -> Timestamp {
     expiry(now, SESSION_LIFETIME)
 }
 
+/// When an impersonated session created at `now` expires.
+pub(crate) fn impersonation_expiry(now: Timestamp) -> Timestamp {
+    expiry(now, IMPERSONATION_LIFETIME)
+}
+
 /// When a link issued at `now` expires.
 pub fn token_expiry(now: Timestamp) -> Timestamp {
     expiry(now, TOKEN_LIFETIME)

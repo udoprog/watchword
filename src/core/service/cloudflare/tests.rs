@@ -493,7 +493,9 @@ async fn changing_settings_is_audited() -> TestResult {
     let other = store.create_user(&new, Timestamp::now()).await?.unwrap();
     let cred = Credential::Password(crate::core::dummy_hash().to_owned());
     assert!(store.set_credential(other.id, &cred, None).await?);
-    let (as_other, as_other_session) = auth.impersonate(&root, &root_session, other.id).await?;
+    let (as_other, as_other_session) = auth
+        .impersonate_session(&root, &root_session, other.id)
+        .await?;
     take();
 
     let disabled = CloudflareConfig {

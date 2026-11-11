@@ -390,6 +390,20 @@ pub struct CreatedUser {
     pub link: Link,
 }
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
+/// The answer to impersonating a user: a session as that user for one page,
+/// which the page sends in [`PAGE_SESSION_HEADER`] beside its admin's cookie.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "musli02", derive(Encode, Decode))]
+#[cfg_attr(feature = "musli02", musli(crate = musli_core02))]
+pub struct PageSession {
+    /// The page's session credential.
+    pub credential: String,
+    /// The impersonated user, with [`UserInfo::impersonated_by`] set.
+    pub user: UserInfo,
+}
+
 /// What the sign-in page offers, from `GET /api/auth/config`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "musli02", derive(Encode, Decode))]

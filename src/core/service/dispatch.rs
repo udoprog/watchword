@@ -7,7 +7,9 @@ use http::HeaderMap;
 
 use super::{Auth, Result, require_admin};
 use crate::store::{Session, User};
-use crate::types::{AuthError, AuthRequest, AuthResponse, CookieChange, CreatedUser, Invalid};
+use crate::types::{
+    AuthError, AuthRequest, AuthResponse, CookieChange, CreatedUser, Invalid, PAGE_SESSION_HEADER,
+};
 
 /// Who an [`AuthRequest`] comes from, as its transport knows them, for
 /// [`Auth::dispatch`].
@@ -94,7 +96,8 @@ pub struct Dispatched {
     /// The answer to the request.
     pub response: AuthResponse,
     /// The change to the session cookie, for the requests whose
-    /// [`AuthRequest::cookie`] says they make one, and `None` for the rest.
+    /// [`AuthRequest::cookie`] says they make one, and `None` for the rest
+    /// and for every request that carries a page credential.
     pub cookie: Option<SessionCookie>,
 }
 
@@ -117,9 +120,7 @@ impl Dispatched {
 /// A change to the session cookie, which only an HTTP response can make.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionCookie {
-    /// Sign in with this new session: [`Auth::set_cookie`] with its id. For
-    /// both [`CookieChange::Set`](crate::types::CookieChange::Set) and
-    /// [`Replace`](crate::types::CookieChange::Replace).
+    /// Sign in with this new session: [`Auth::set_cookie`] with its id.
     Set(Session),
     /// Clear the cookie: [`Auth::clear_cookie`].
     Clear,
@@ -141,6 +142,13 @@ impl Auth {
     /// a [`SessionCookie`] in [`Dispatched::cookie`], which the caller must
     /// apply for the user to be signed in (or out) as answered.
     ///
+    /// A request whose headers carry a [`PAGE_SESSION_HEADER`], valid or
+    /// not, never touches the cookie, which is the admin's (decision 33):
+    /// [`AuthRequest::Login`], [`AuthRequest::CloudflareSignIn`] and
+    /// [`AuthRequest::Register`] are refused with [`AuthError::Forbidden`],
+    /// and [`AuthRequest::Logout`] ends only the page's session, as
+    /// [`AuthRequest::StopImpersonating`] does.
+    ///
     /// Without the `cloudflare` feature, the Cloudflare requests are refused
     /// with [`AuthError::NotFound`], after the same checks as with it, and
     /// so are the Google settings requests without the `google` feature or
@@ -153,6 +161,20 @@ impl Auth {
     /// otherwise when the store fails or hashing a password does.
     pub async fn dispatch(&self, caller: &Caller<'_>, request: AuthRequest) -> Result<Dispatched> {
         let change = request.cookie();
+        let page = caller
+            .headers
+            .is_some_and(|headers| headers.contains_key(PAGE_SESSION_HEADER));
+
+        if page
+            && matches!(
+                request,
+                AuthRequest::Login(..)
+                    | AuthRequest::CloudflareSignIn
+                    | AuthRequest::Register { .. }
+            )
+        {
+            return Err(AuthError::Forbidden.into());
+        }
 
         let dispatched = match request {
             AuthRequest::Config => Dispatched::new(AuthResponse::Config(crate::AuthConfig {
@@ -180,6 +202,15 @@ impl Auth {
             AuthRequest::CloudflareSignIn => {
                 let (user, session) = self.sign_in_cloudflare_for(caller).await?;
                 Dispatched::set(AuthResponse::User(user.info()), session)
+            }
+            AuthRequest::Logout if page => {
+                if let Some((_, session)) = self.caller_signed_in(caller).await?
+                    && let Some(admin) = session.impersonator
+                {
+                    self.end_impersonation(admin, &session).await?;
+                }
+
+                Dispatched::new(AuthResponse::Done)
             }
             AuthRequest::Logout => {
                 if let Some(id) = self.caller_session_id(caller) {
@@ -257,14 +288,14 @@ impl Auth {
             }
             AuthRequest::Impersonate { id } => {
                 let (admin, session) = self.caller_admin(caller).await?;
-                let (user, session) = self.impersonate(&admin, &session, id).await?;
-                let info = self.session_info(&user, &session).await?;
-                Dispatched::set(AuthResponse::User(info), session)
+                Dispatched::new(AuthResponse::PageSession(
+                    self.impersonate(&admin, &session, id).await?,
+                ))
             }
             AuthRequest::StopImpersonating => {
                 let (_, session) = self.caller_session(caller).await?;
-                let (admin, session) = self.stop_impersonating(&session).await?;
-                Dispatched::set(AuthResponse::User(admin.info()), session)
+                self.stop_impersonating(&session).await?;
+                Dispatched::new(AuthResponse::Done)
             }
             AuthRequest::Cloudflare => {
                 self.caller_admin(caller).await?;
@@ -292,9 +323,12 @@ impl Auth {
             _ => return Err(AuthError::NotFound.into()),
         };
 
-        // What the request says it does to the cookie is what it did.
+        // What the request says it does to the cookie is what it did, and a
+        // page's request does nothing to it.
         debug_assert_eq!(
-            change.map(|change| change == CookieChange::Clear),
+            change
+                .filter(|_| !page)
+                .map(|change| change == CookieChange::Clear),
             dispatched
                 .cookie
                 .as_ref()
@@ -307,20 +341,23 @@ impl Auth {
     /// The caller's live session and its user, or
     /// [`AuthError::Unauthorized`].
     async fn caller_session(&self, caller: &Caller<'_>) -> Result<(User, Session)> {
-        if let Some((user, session)) = caller.signed_in {
-            return Ok((user.clone(), session.clone()));
-        }
-
-        let signed_in = match (caller.session_id, caller.headers) {
-            (Some(id), _) => self.session(id).await?,
-            (None, Some(headers)) => self.request_session(headers).await?,
-            (None, None) => None,
-        };
-
-        match signed_in {
+        match self.caller_signed_in(caller).await? {
             Some(signed_in) => Ok(signed_in),
             None => Err(AuthError::Unauthorized.into()),
         }
+    }
+
+    /// The caller's live session and its user, if any.
+    async fn caller_signed_in(&self, caller: &Caller<'_>) -> Result<Option<(User, Session)>> {
+        if let Some((user, session)) = caller.signed_in {
+            return Ok(Some((user.clone(), session.clone())));
+        }
+
+        Ok(match (caller.session_id, caller.headers) {
+            (Some(id), _) => self.session(id).await?,
+            (None, Some(headers)) => self.request_session(headers).await?,
+            (None, None) => None,
+        })
     }
 
     /// As [`caller_session`](Auth::caller_session), refused with
