@@ -233,7 +233,12 @@ as last seen, so the server needs no event mirroring of its own either.
 ## Impersonation
 
 An admin impersonates a user in a page of its own, while the admin's
-pages and session stay as they are. That page holds its session in
+pages and session stay as they are. [`AdminUsers`]' Impersonate opens it
+at its `impersonate_path` (default `/`) with
+[`AuthService::impersonate_in_new_page`], which an app's own button can
+call too, in its click handler so that popup blockers allow the page.
+The admin's page hands the new page its session; nothing goes in a URL.
+That page holds its session in
 `sessionStorage` and sends it in the `watchword-session` header beside
 the admin's cookie: [`http`]'s requests do, and [`AuthProvider`] makes
 every same-origin `fetch` of the page do the same before the app
@@ -396,6 +401,7 @@ order:
 [`AuthSubscription`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthSubscription.html
 [`AuthProvider`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthProvider.html
 [`AuthService`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthService.html
+[`AuthService::impersonate_in_new_page`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AuthService.html#method.impersonate_in_new_page
 [`CloudflareSettings`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.CloudflareSettings.html
 [`ConfirmRequest`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.ConfirmRequest.html
 [`DangerAction`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/enum.DangerAction.html

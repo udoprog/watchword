@@ -905,7 +905,8 @@ The components make every request with the provider's `AuthService`
   admin, writes the credential into that window's `sessionStorage` and
   navigates it to `url`, any URL of the app's, hash routes included. If
   the request fails it closes the window and returns the error; if the
-  browser blocked the window it sends nothing.
+  browser blocked the window it sends nothing and returns
+  `Error::PageBlocked`, which `<AdminUsers>` shows in the row.
 - `Error` (formerly `http::Error`, still re-exported there) is
   `#[non_exhaustive]`, since app transports construct it.
 - `use_auth_service()` reads the `AuthService` context, which
@@ -2009,7 +2010,8 @@ once the release is on crates.io.
     `Auth::request_session`, `impersonate` answering a `PageSession`,
     `stop_impersonating` answering nothing, `Connection::accept`.
     watchword-yew023: `AuthService::impersonate -> PageSession`,
-    `impersonate_in_new_page`, `stop_impersonating -> ()`,
+    `impersonate_in_new_page`, `Error::PageBlocked`,
+    `stop_impersonating -> ()`,
     `socket_headers`, `MediaUrl`, `use_media_url`, `download`, and the
     props `private_media` (`<AuthProvider>`) and `impersonate_path`
     (`<AdminUsers>`). An app: moves to musli-web 0.6 and `musliweb06`,
