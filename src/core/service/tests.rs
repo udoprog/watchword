@@ -3,6 +3,7 @@ use std::boxed::Box;
 use http::{HeaderMap, HeaderValue, header};
 
 use super::*;
+use crate::core::page_credential;
 use crate::store::MemoryStore;
 use crate::types::{NewUser, PasswordChange};
 
@@ -473,5 +474,81 @@ async fn test_users_and_sessions() -> Result<(), Box<dyn std::error::Error>> {
         role: Role::Regular,
     };
     auth.create_user(&alice, &session, &bob).await?;
+    Ok(())
+}
+
+/// A page credential signs in only beside a live cookie session of the admin
+/// impersonating in it, and never falls back to the cookie.
+#[tokio::test]
+async fn request_session_takes_the_page_credential() -> Result<(), Box<dyn std::error::Error>> {
+    let key = generate_session_key();
+    let auth = Auth::builder(MemoryStore::new(), key)
+        .impersonation(true)
+        .build();
+
+    let user = |login: &str, role| NewUser {
+        login: Some(login.into()),
+        email: None,
+        role,
+    };
+
+    let root = auth.test_user(&user("root", Role::Admin), "pw").await?;
+    let boss = auth.test_user(&user("boss", Role::Admin), "pw").await?;
+    let pat = auth.test_user(&user("pat", Role::Regular), "pw").await?;
+    let root_session = auth.test_session(&root).await?;
+    let boss_session = auth.test_session(&boss).await?;
+    let pat_session = auth.test_session(&pat).await?;
+    let (_, page) = auth.impersonate(&root, &root_session, pat.id).await?;
+
+    let cookie = |id: &str| auth.cookie_header(id).to_str().unwrap().to_owned();
+    let credential = page_credential(&key, &page.id);
+    let request = |cookie: Option<&str>, credential: Option<&str>| {
+        let mut pairs = std::vec::Vec::new();
+        pairs.extend(cookie.map(|c| (header::COOKIE.as_str(), c)));
+        pairs.extend(credential.map(|c| (PAGE_SESSION_HEADER, c)));
+        headers(&pairs)
+    };
+    let signed_in = async |headers: HeaderMap| {
+        auth.request_session(&headers)
+            .await
+            .unwrap()
+            .map(|(user, session)| (user.id, session.id))
+    };
+
+    // Without the header, the cookie's session.
+    let own = request(Some(&cookie(&root_session.id)), None);
+    assert_eq!(
+        signed_in(own).await,
+        Some((root.id, root_session.id.clone()))
+    );
+
+    // With it, the page's session beside the admin's cookie.
+    let beside = request(Some(&cookie(&root_session.id)), Some(&credential));
+    assert_eq!(signed_in(beside).await, Some((pat.id, page.id.clone())));
+
+    // Not alone, nor beside another admin's or the user's own cookie.
+    assert_eq!(signed_in(request(None, Some(&credential))).await, None);
+    let other = request(Some(&cookie(&boss_session.id)), Some(&credential));
+    assert_eq!(signed_in(other).await, None);
+    let own = request(Some(&cookie(&pat_session.id)), Some(&credential));
+    assert_eq!(signed_in(own).await, None);
+
+    // A cookie value is not a page credential, and a session that is not
+    // impersonated is not a page's: neither falls back to the cookie.
+    let as_cookie = auth.cookie_header(&page.id);
+    let (_, as_cookie) = as_cookie.to_str()?.split_once('=').ok_or("no value")?;
+    let forged = request(Some(&cookie(&root_session.id)), Some(as_cookie));
+    assert_eq!(signed_in(forged).await, None);
+    let plain = page_credential(&key, &root_session.id);
+    let plain = request(Some(&cookie(&root_session.id)), Some(&plain));
+    assert_eq!(signed_in(plain).await, None);
+    let garbage = request(Some(&cookie(&root_session.id)), Some("nope"));
+    assert_eq!(signed_in(garbage).await, None);
+
+    // The admin signing out ends the page, though its session is still live.
+    auth.sign_out(&root_session.id).await?;
+    let ended = request(Some(&cookie(&root_session.id)), Some(&credential));
+    assert_eq!(signed_in(ended).await, None);
+    assert!(auth.session(&page.id).await?.is_some());
     Ok(())
 }

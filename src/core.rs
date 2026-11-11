@@ -13,7 +13,10 @@ mod session;
 mod throttle;
 
 pub use self::audit::{Actor, AuditEvent};
-pub use self::cookie::{generate_session_key, session_cookie, verify_session_cookie};
+pub use self::cookie::{
+    generate_session_key, page_credential, session_cookie, verify_page_credential,
+    verify_session_cookie,
+};
 pub use self::guard::SessionGuard;
 pub use self::password::{PasswordError, dummy_hash, hash_password, verify_password};
 #[cfg(all(feature = "google", feature = "axum08"))]
@@ -23,6 +26,6 @@ pub use self::service::{
     Error, Result, Secure, SessionCookie, load_or_create_key,
 };
 pub use self::session::{
-    SESSION_LIFETIME, SESSION_LIFETIME_DAYS, TOKEN_LIFETIME, is_expired, new_session_id, new_token,
-    session_expiry, token_expiry,
+    IMPERSONATION_LIFETIME, SESSION_LIFETIME, SESSION_LIFETIME_DAYS, TOKEN_LIFETIME, is_expired,
+    new_session_id, new_token, session_expiry, token_expiry,
 };

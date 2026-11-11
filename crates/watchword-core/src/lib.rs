@@ -87,6 +87,10 @@ mod tests;
 /// The shortest password [`validate_password`] accepts, in bytes.
 pub const MIN_PASSWORD_LEN: usize = 8;
 
+/// The request header that carries an impersonated page's session credential
+/// (decision 33), accepted only beside the impersonating admin's cookie.
+pub const PAGE_SESSION_HEADER: &str = "watchword-session";
+
 #[cfg(feature = "alloc")]
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "alloc")))]
 /// Returns why the password is not acceptable, if it is not.

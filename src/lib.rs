@@ -216,7 +216,8 @@ pub use watchword_yew023 as yew023;
 mod yew023_tests;
 
 pub use self::types::{
-    Access, AuthConfig, Conflict, MIN_PASSWORD_LEN, Method, Role, UserId, is_same_origin_path,
+    Access, AuthConfig, Conflict, MIN_PASSWORD_LEN, Method, PAGE_SESSION_HEADER, Role, UserId,
+    is_same_origin_path,
 };
 
 #[cfg(feature = "alloc")]
@@ -231,9 +232,10 @@ pub use self::types::{
 #[cfg_attr(watchword_docsrs, doc(cfg(feature = "server")))]
 pub use self::core::{
     Actor, AuditEvent, Auth, AuthBuilder, AuthEvent, Bootstrap, BootstrapAdmin, CookieConfig,
-    PasswordError, SESSION_LIFETIME, Secure, SessionGuard, TOKEN_LIFETIME, dummy_hash,
-    generate_session_key, hash_password, is_expired, load_or_create_key, new_session_id, new_token,
-    session_cookie, session_expiry, token_expiry, verify_password, verify_session_cookie,
+    IMPERSONATION_LIFETIME, PasswordError, SESSION_LIFETIME, Secure, SessionGuard, TOKEN_LIFETIME,
+    dummy_hash, generate_session_key, hash_password, is_expired, load_or_create_key,
+    new_session_id, new_token, page_credential, session_cookie, session_expiry, token_expiry,
+    verify_page_credential, verify_password, verify_session_cookie,
 };
 
 #[cfg(feature = "server")]

@@ -22,13 +22,13 @@ use super::throttle::LoginThrottle;
 use super::{
     Actor, AuditEvent, PasswordError, TOKEN_LIFETIME, dummy_hash, generate_session_key,
     hash_password, is_expired, new_session_id, new_token, session_cookie, session_expiry,
-    token_expiry, verify_password, verify_session_cookie,
+    token_expiry, verify_page_credential, verify_password, verify_session_cookie,
 };
 use crate::store::{Credential, DynStore, Session, Store, StoreError, Token, TokenKind, User};
 use crate::types::{
     Access, AuthError, Conflict, Impersonator, Invalid, Link, LoginRequest, Method, NewUser,
-    PasswordChange, RegisterInfo, RegisterRequest, Role, UserChange, UserEntry, UserId, UserInfo,
-    normalize_email, validate_password,
+    PAGE_SESSION_HEADER, PasswordChange, RegisterInfo, RegisterRequest, Role, UserChange,
+    UserEntry, UserId, UserInfo, normalize_email, validate_password,
 };
 
 /// The setting [`load_or_create_key`] keeps the cookie key under.
@@ -713,6 +713,66 @@ impl Auth {
         }
 
         Ok(Some((user, session)))
+    }
+
+    /// The live session a request signs in with, and its user, which every
+    /// framework integration uses (decision 33).
+    ///
+    /// With a [`PAGE_SESSION_HEADER`] header, the page credential's session,
+    /// which must be impersonated and live (as [`session`](Auth::session)
+    /// says), beside a cookie that carries a live session of its
+    /// impersonating admin. Anything else is `None`: it never falls back to
+    /// the cookie, so a page whose impersonation ended is signed out, never
+    /// turned into the admin. Without the header, the cookie's session.
+    pub async fn request_session(&self, headers: &HeaderMap) -> Result<Option<(User, Session)>> {
+        let Some(page) = self.page_session_id(headers) else {
+            let Some(id) = self.session_id(headers) else {
+                return Ok(None);
+            };
+
+            return self.session(&id).await;
+        };
+
+        let Some(page) = page else {
+            return Ok(None);
+        };
+
+        let Some((user, session)) = self.session(&page).await? else {
+            return Ok(None);
+        };
+
+        let Some(admin) = session.impersonator else {
+            return Ok(None);
+        };
+
+        let Some(cookie) = self.session_id(headers) else {
+            return Ok(None);
+        };
+
+        let Some((_, cookie)) = self.session(&cookie).await? else {
+            return Ok(None);
+        };
+
+        if !vouches_for(&cookie, admin) {
+            return Ok(None);
+        }
+
+        Ok(Some((user, session)))
+    }
+
+    /// The session id of the request's [`PAGE_SESSION_HEADER`]: `None`
+    /// without the header, `Some(None)` when it is not a correctly signed
+    /// page credential.
+    pub(crate) fn page_session_id(&self, headers: &HeaderMap) -> Option<Option<String>> {
+        let value = headers.get(PAGE_SESSION_HEADER)?;
+
+        Some(
+            value
+                .to_str()
+                .ok()
+                .and_then(|value| verify_page_credential(&self.inner.key, value))
+                .map(str::to_owned),
+        )
     }
 
     /// Deletes the sessions that have expired, and the registration and
@@ -1818,6 +1878,12 @@ async fn hash_blocking(password: &str) -> Result<String> {
 }
 
 /// Whether the client reached the proxy in front of the server over HTTPS.
+/// Whether the cookie's session `cookie` vouches for a page session
+/// impersonated by `admin`: it is the admin's own session.
+pub(crate) fn vouches_for(cookie: &Session, admin: UserId) -> bool {
+    cookie.user == admin && cookie.impersonator.is_none()
+}
+
 fn is_https(headers: &HeaderMap) -> bool {
     headers
         .get("x-forwarded-proto")

@@ -8,6 +8,8 @@ use jiff::{SignedDuration, Timestamp};
 pub const SESSION_LIFETIME_DAYS: i64 = 30;
 /// How long a session lasts.
 pub const SESSION_LIFETIME: SignedDuration = SignedDuration::from_hours(SESSION_LIFETIME_DAYS * 24);
+/// How long an impersonated session lasts: a working day (decision 33).
+pub const IMPERSONATION_LIFETIME: SignedDuration = SignedDuration::from_hours(8);
 /// How long a registration or reset link lasts.
 pub const TOKEN_LIFETIME: SignedDuration = SignedDuration::from_hours(7 * 24);
 
