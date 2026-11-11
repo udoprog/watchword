@@ -1941,9 +1941,10 @@ once the release is on crates.io.
       key is written over; a duplicated tab copies it too, so a duplicate
       is the same impersonation, and Stop in one ends both. A link the page
       opens in a new tab (`noopener`) starts without it, as the admin, with
-      the admin's menu showing it. Assumed, to be checked in a browser
-      test: a write to the empty window's `sessionStorage` survives its
-      navigation to the same origin.
+      the admin's menu showing it. The handover rests on a write to the
+      empty window's `sessionStorage` surviving its navigation to the same
+      origin, which it does in Chrome (checked by hand with `examples/app`;
+      there is no browser test).
     - *The credential works only beside its admin's cookie.*
       `request_session` and `accept` require the request's cookie to carry
       a live session of the impersonating admin. Script that reads the
