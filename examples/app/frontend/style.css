@@ -260,3 +260,7 @@ a { color: var(--accent); }
 
 .auth-cloudflare-settings .auth-instructions { color: var(--muted); font-size: 14px; }
 .auth-toggle { flex-direction: row; align-items: center; gap: 8px; }
+
+.badges { display: flex; flex-wrap: wrap; gap: 16px; }
+.badges figure { margin: 0; }
+.badges figcaption { color: var(--muted); font-size: 13px; }

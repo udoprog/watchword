@@ -27,8 +27,8 @@ use auth::{Auth, BootstrapAdmin, CloudflareConfig, GoogleConfig, MemoryStore};
 use axum::Router;
 use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRef, State};
-use axum::http::StatusCode;
-use axum::response::Response;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use musli_web::ws;
 use tower_http::services::{ServeDir, ServeFile};
@@ -257,6 +257,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/api/example/ws", get(ws))
+        .route("/api/example/badge.svg", get(badge))
         .merge(auth::axum08::routes())
         .route(
             "/api/{*rest}",
@@ -279,6 +280,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     Ok(())
+}
+
+/// `GET /api/example/badge.svg`: a signed-in image naming its user, which
+/// the frontend shows through `MediaUrl` so that an impersonated page shows
+/// the impersonated user rather than the admin whose cookie it carries.
+async fn badge(user: SignedIn) -> impl IntoResponse {
+    let name = user
+        .user
+        .login
+        .or(user.user.email)
+        .unwrap_or_else(|| user.user.id.to_string());
+
+    let name = name
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="40"><rect width="240" height="40" rx="6" fill="#2f6f4f"/><text x="120" y="25" fill="#fff" font-family="sans-serif" font-size="16" text-anchor="middle">{name}</text></svg>"##
+    );
+
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        svg,
+    )
 }
 
 /// `GET /api/example/ws`: the app's musli-web socket, which lives as long

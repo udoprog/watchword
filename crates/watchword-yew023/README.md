@@ -249,6 +249,33 @@ In that page Stop impersonating and Sign out end only the page's session
 and close it, and once its session ends the page says so with Close,
 never the sign-in page, which would replace the admin's cookie.
 
+What the browser fetches by itself, such as an `<img>`'s `src`, carries
+only the admin's cookie. So signed-in media load through [`MediaUrl`]
+(or [`use_media_url`]) and files are saved with [`download`], which in
+that page fetch with the page's session into object URLs, and elsewhere
+use the URL as it is. In that page [`AuthProvider`] removes same-origin
+media URLs under its `private_media` prefixes (default `/api/`) that did
+not load so, with an error in the console, so they show broken rather
+than as the admin.
+
+```rust
+use watchword_yew023::{download, use_media_url};
+use yew::prelude::*;
+
+#[function_component]
+fn Report() -> Html {
+    let chart = use_media_url("/api/report/chart.png");
+    let onclick = Callback::from(|_| download("/api/report.pdf", None));
+
+    html! {
+        <>
+            <img src={chart.src()} alt="Chart" />
+            <button {onclick}>{"Download"}</button>
+        </>
+    }
+}
+```
+
 <br>
 
 ## With a musli-web socket

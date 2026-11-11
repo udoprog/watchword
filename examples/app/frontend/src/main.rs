@@ -13,6 +13,7 @@ use std::rc::Rc;
 
 use auth::yew023::{
     AccountPanel, AdminCloudflare, AdminUsers, AuthProvider, UserMenu, UsersQuery, use_auth,
+    use_media_url,
 };
 use musli_web::web03::prelude::ws;
 use yew::prelude::*;
@@ -160,10 +161,34 @@ fn Home(props: &HomeProps) -> Html {
                 if auth.is_admin() { {" Settings holds the Cloudflare Access configuration."} }
             </p>
             <ServerStatus socket={props.socket.clone()} />
+            <Badges />
             <p class="hint">
                 {"The app holds a WebSocket open for the session. It carries the account and user-management requests and their live updates (open Users in two windows to see one follow the other), and the app's own requests, such as the status above. Signing out elsewhere, being revoked or deleted closes it, and the app then shows the sign-in page with \"Your session has ended\"."}
             </p>
         </section>
+    }
+}
+
+/// The signed-in image `/api/example/badge.svg`, which names its user, shown
+/// twice: through `use_media_url`, as signed-in media should be, and as a
+/// plain `<img>`, which in an impersonated page `AuthProvider` clears since
+/// the browser would load it with the admin's cookie.
+#[function_component]
+fn Badges() -> Html {
+    const BADGE: &str = "/api/example/badge.svg";
+    let badge = use_media_url(BADGE);
+
+    html! {
+        <div class="badges">
+            <figure>
+                <img src={badge.src()} alt="The signed-in user's badge" />
+                <figcaption>{"Through use_media_url"}</figcaption>
+            </figure>
+            <figure>
+                <img src={BADGE} alt="The unprotected badge" />
+                <figcaption>{"A plain <img>, unprotected: cleared in an impersonated page"}</figcaption>
+            </figure>
+        </div>
     }
 }
 
