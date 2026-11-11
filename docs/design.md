@@ -485,6 +485,18 @@ for that request exists. A frontend transport uses the same method to send
 those requests over HTTP. The Google routes stay outside the enum: they are
 browser navigations and redirects, not requests a client sends. Decision 29.
 
+A request carrying a page credential never touches the cookie, which is
+the admin's: `dispatch` refuses `Login`, `CloudflareSignIn` and `Register`
+with `Forbidden` when the `watchword-session` header is present, valid or
+not, and answers `Logout` by ending only the page's session, as
+`StopImpersonating` does (its audit event included), with no
+`SessionCookie`. Other operations that end sessions keep the cookie out of
+it as well: a password change in the page keeps the page's session and
+ends the user's others, and ending the user's sessions (revoke, sign out
+everywhere, a credential change) ends the page's with them; none of it
+touches the admin's own session, unless the admin acts on themselves while
+impersonating another admin.
+
 ### 2.3 Storage (`server`)
 
 There is one trait, because several operations must be atomic across users,
@@ -728,7 +740,11 @@ fails is a 401, never the cookie's session. So an app's own routes behind
 user with no change on the server. A WebSocket upgrade cannot carry the
 header, so at `/ws` `SignedIn` is the cookie's (the admin, in an
 impersonated page) until the socket's negotiation says otherwise (2.7).
-`LiveSession` caches what `request_session` found, binding included.
+`LiveSession` checks a page credential's session and the cookie's on
+every request, each through its cache, and compares the cookie's user with
+the page session's admin each time, so signing the admin out (which drops
+the cookie's entry at once, as any `SessionEnded` does) ends their pages'
+requests at once in this process, and within 10 seconds in another.
 
 `require_session` lets through watchword's public paths, the sign-in path and
 the app's own (`public`), and any request with a live session. Otherwise a
@@ -840,12 +856,15 @@ The components make every request with the provider's `AuthService`
     header unless it set one. An app's own requests therefore need no
     change, and none can forget the header and act as the admin through
     the cookie. `XMLHttpRequest` and `sendBeacon` are not covered.
-  - It also adds a Content Security Policy (`<meta http-equiv>`) whose
-    `img-src` and `media-src` allow only `blob:`, `data:` and the
-    provider's `public_media` (none by default: path prefixes such as
-    `/assets/`, or other origins), so an
-    `<img>` or `<audio>` the app did not load through `MediaUrl` fails
-    visibly instead of showing what the admin may see.
+  - It watches the page for `src` and `href` attributes of `<img>`,
+    `<audio>`, `<video>`, `<source>` and `<a download>` (a
+    `MutationObserver`, which runs before the next paint) and clears any
+    same-origin URL under the provider's `private_media` prefixes
+    (default `/api/`), with an error in the console naming it. So signed-in
+    media the app did not load through `MediaUrl` shows broken, never the
+    admin's view, while its static images, wherever trunk puts them, load
+    as usual. The request itself may already have gone out with the cookie
+    (a `GET` whose answer is dropped). CSS `url()`s are not watched.
   - `socket_headers()` gives the negotiate headers for the app's musli-web
     socket: `watchword-session` while the page has a page session, none
     otherwise (2.7).
@@ -904,7 +923,9 @@ The components make every request with the provider's `AuthService`
   - It fetches `/api/auth/config` and `/api/auth/me`.
   - It shows a splash with Retry while loading or when the server is
     unreachable.
-  - It shows `<SignIn>` when signed out, and `<Register>` on `/register/{token}`.
+  - It shows `<SignIn>` when signed out, and `<Register>` on `/register/{token}`,
+    except in an impersonated page, where a registration link shows that
+    it must be opened in a page that is not impersonating.
     Otherwise it renders its children with an `AuthContext`.
   - In an impersonated page it signs in with the page session, and sets
     `window.opener` to null so the page and the admin's stay unrelated.
@@ -913,7 +934,7 @@ The components make every request with the provider's `AuthService`
     "Impersonation has ended." with Close instead of `<SignIn>`, since
     signing in there would replace the admin's cookie; Close closes the
     page, or loads `/` as the cookie's user when the browser refuses.
-  - Props: `title` (the app's name), `public_media` (above),
+  - Props: `title` (the app's name), `private_media` (above),
     `signed_out_notice`, which overrides
     the "session has ended" message `watchword-session-ended`,
     `sign_in_path`, the page `RequireSession` redirects to, and `service`,
@@ -977,14 +998,18 @@ The components make every request with the provider's `AuthService`
   is enabled.
 - `<AccountPanel>` covers the role, login (when `logins`), email, change or set
   password, switching to Google, and sign out. The app wraps it in a page or a
-  modal.
+  modal. In an impersonated page it offers no switching to Google (a
+  navigation, which would carry only the admin's cookie and bind the
+  admin), and its sign out is Stop impersonating.
 - `<UserMenu on_account on_admin on_stop_impersonating>` shows the user's name,
   Account, Users (for admins only) and Sign out. While an admin impersonates
   the user it also shows a banner, "Impersonating {user} as {admin}.", with a
   Stop impersonating button that calls `AuthService::stop_impersonating`
   (`Result<(), Error>`), which ends the page's session and drops the page
   session, calls `on_stop_impersonating` (optional) and closes the page as
-  Close does. The admin's session and other pages are untouched.
+  Close does. The admin's session and other pages are untouched. There,
+  Sign out does the same as Stop impersonating (as `Logout` does on the
+  server), so it never signs the admin out.
 - `<AdminUsers>` covers:
   - the user list, filtered and paged by `query: UsersQuery` (`page_size`,
     default `PAGE_SIZE`), with `on_query_change` so an app can keep the query
@@ -1949,13 +1974,24 @@ once the release is on crates.io.
       looks the same from the admin's page and the impersonated one, so
       the server cannot refuse it (neither Fetch Metadata nor `Origin`
       names the page). So the impersonated page adds the header to every
-      same-origin `fetch` itself, and its Content Security Policy blocks
-      the images and audio the app did not load through `MediaUrl`, which
-      fetches them with the header into object URLs (the user's choice
-      over a credential in a URL). Requiring a header on every unsafe
+      same-origin `fetch` itself, and clears the media sources under
+      `private_media` (default `/api/`) the app did not load through
+      `MediaUrl`, which fetches them with the header into object URLs (the
+      user's choice over a credential in a URL). A Content Security Policy
+      was rejected for that: it only allows, so it would break every static
+      image, trunk's hashed root assets included, until the app listed
+      them, which it cannot do by prefix. Requiring a header on every unsafe
       cookie request was rejected: it breaks every app's every `POST`
       outside impersonation too. Downloads not made through `download`,
       forms and navigations still go as the cookie's user.
+    - *Nothing in the page touches the cookie.* The server refuses the
+      sign-in requests that carry a page credential and answers `Logout`
+      by ending the page's session alone, so the admin's cookie stays
+      whatever the frontend does; the components hide what would navigate
+      with the cookie (switching to Google, a registration link). Ending
+      the user's sessions ends the page's, never the admin's.
+      `LiveSession` checks the binding on every request, so its cache
+      never outlives the admin's cookie session.
     - *The socket states the session in its negotiation.* A browser cannot
       set headers on an upgrade, and no credential goes in a URL, so
       musli-web 0.6 carries negotiate headers, rebuilt on each reconnect,
@@ -1975,11 +2011,12 @@ once the release is on crates.io.
     watchword-yew023: `AuthService::impersonate -> PageSession`,
     `impersonate_in_new_page`, `stop_impersonating -> ()`,
     `socket_headers`, `MediaUrl`, `use_media_url`, `download`, and the
-    props `public_media` (`<AuthProvider>`) and `impersonate_path`
+    props `private_media` (`<AuthProvider>`) and `impersonate_path`
     (`<AdminUsers>`). An app: moves to musli-web 0.6 and `musliweb06`,
     passes `socket_headers` to its socket and calls `conn.accept` in the
     negotiate hook; loads its `<img>`, `<audio>` and downloads of
-    signed-in routes through `MediaUrl`/`download`, and lists its public
-    media in `public_media`; drops any socket reconnect from
+    signed-in routes through `MediaUrl`/`download`, and sets
+    `private_media` if its signed-in media are not all under `/api/`;
+    drops any socket reconnect from
     `on_impersonate`/`on_stop_impersonating`. Its fetches and its routes
     behind `SignedIn`/`Admin` are unchanged.
