@@ -57,7 +57,12 @@
 //! included list) or, without the include, combined with it as a
 //! `ws::Handler` through `ws::Handler::or`, and turns each
 //! [`AuthEvent`](crate::AuthEvent) into the [`AuthUpdate`] that socket may
-//! see. Its `updates` are the socket loop's whole auth arm: an `Updates`
+//! see. Its `accept`, musli-web's `ws::Handler::connect` hook, settles whose
+//! socket it is from the connection metadata before any request: an
+//! impersonated page states its page credential there, under
+//! [`PAGE_SESSION_HEADER`](crate::PAGE_SESSION_HEADER), and the socket then
+//! speaks for the page's session, or is refused with [`SESSION_ENDED`]. Its
+//! `updates` are the socket loop's whole auth arm: an `Updates`
 //! holds the session's guard and the event receiver and yields the updates to
 //! broadcast until the session ends. Its
 //! `signed_in` and `require_admin` gate the app's own requests on that socket

@@ -865,7 +865,7 @@ The components make every request with the provider's `AuthService`
     admin's view, while its static images, wherever trunk puts them, load
     as usual. The request itself may already have gone out with the cookie
     (a `GET` whose answer is dropped). CSS `url()`s are not watched.
-  - `socket_headers()` gives the negotiate headers for the app's musli-web
+  - `socket_headers()` gives the connection metadata for the app's musli-web
     socket: `watchword-session` while the page has a page session, none
     otherwise (2.7).
 - `MediaUrl` loads what the browser would otherwise fetch by itself, and
@@ -1094,8 +1094,9 @@ impl, the accessors `signed_in`, `require_admin`, `user_id` and `session_id`, an
 following the broadcasts and sending their requests over the socket
 (`AuthContext::set_socket`). `examples/app` is wired this way and is the
 reference for an app. Decisions 13, 16–20 and 23 record why it is shaped this
-way. The move to musli-web 0.6 is built, against its unreleased crate. Not
-built yet: `accept`, on 0.6's negotiate headers (decision 33).*
+way. The move to musli-web 0.6 is built, against its unreleased crate, and so
+is `accept`, on 0.6's connection metadata (decision 33). Not built yet: the
+frontend's side of it, `socket_headers` and the refused socket in the page.*
 
 An app whose frontend already talks to its server over a musli-web WebSocket
 can carry watchword's account and user-management operations, and its live
@@ -1131,15 +1132,18 @@ second transport for the operations that can use it, not a replacement.
   differ. `Handle::call(body)` is a future of the decoded response; its error
   says whether the request was never sent (`is_not_connected`). It reconnects
   by itself, with backoff.
-- Assumed of 0.6, the breaking release that adds negotiate headers (musli
-  card b1fea8dd; its API is musli's, and the names here stand for it):
-  the client's service builder takes a closure, called on every connect and
-  reconnect, giving the headers sent with NEGOTIATE; the server runs an
-  async hook after negotiating and before dispatching any request, which
-  gets those headers and accepts, possibly replacing the connection's
-  state, or refuses with a close code and reason; and the client sees a
-  refusal as such, with its code and reason in the state change, and does
-  not reconnect with the same headers. Nothing else of 0.5 changes.
+- 0.6, the breaking release, adds connection metadata: the client's
+  service builder takes a closure (`metadata`), called on every connect and
+  reconnect, which fills the `api::Metadata` sent with the negotiation
+  (names limited to `a-z 0-9 . _ -`, so `watchword-session` is one); the
+  server calls `ws::Handler::connect(&mut self, &api::Metadata) ->
+  Result<(), ws::Refuse>` once per connection, after the versions are
+  checked and before any request reaches `handle`, which accepts, possibly
+  replacing the connection's state, or refuses with
+  `Refuse::with_code(4000..=4999, reason)` (`Refuse::new(reason)` is code
+  4000); `Or` calls both handlers' `connect`; and the client sees a refusal
+  as such, its code and reason in `client::Refused` (`Error::as_refused`),
+  and does not reconnect. Nothing else of 0.5 changes.
 
 #### Types: `watchword::musliweb06` (feature `musliweb06`)
 
@@ -1271,8 +1275,11 @@ let server = musli_web::axum08::server(socket, AppHandler { .. }.or(conn.clone()
 let mut updates = conn.updates();
 let Some(Ok(mut server)) = updates.unless_ended(connect).await else { return };   // stops a stalled negotiation once the session ends
 
-// In musli-web's negotiate hook, before any request is dispatched:
-conn.accept(&headers).await   // -> Result<(), Refusal>; Refusal is SESSION_ENDED, or a store failure
+// In the app's ws::Handler::connect, before any request is dispatched (the
+// Connection's own handler, and so `.or(conn)`, already calls it):
+async fn connect(&mut self, metadata: &api::Metadata) -> Result<(), ws::Refuse> {
+    self.conn.accept(metadata).await   // Refuse is SESSION_ENDED, or a store failure (code 4000)
+}
 
 // In the app's connection loop, next to server.run():
 update = updates.next() => {
@@ -1294,20 +1301,26 @@ event = events.recv() => {
 }
 ```
 
-- `Connection` holds the `Auth` and the `SignedIn` of the upgrade (behind an
-  `Arc`, for the guard `updates` starts). It is `Clone` and cheap, so it sits
+- `Connection` holds the `Auth`, and behind an `Arc` shared by its clones
+  the `SignedIn` of the upgrade (for the guard `updates` starts) and what
+  `accept` settled on (set once). It is `Clone` and cheap, so it sits
   inside the app's own handler.
 - `accept` settles whose socket it is. The upgrade carries only the
   cookie, so in an impersonated page its `SignedIn` is the admin. Without
-  a `watchword-session` negotiate header it keeps the upgrade's session,
-  which must not be impersonated. With one, it checks the credential as
+  a `watchword-session` entry in the connection metadata it keeps the
+  upgrade's session, which must not be impersonated. With one, it checks the credential as
   `Auth::request_session` does, beside the upgrade's cookie session, which
   must be its admin's, and switches the connection and its clones to the
   page's session before any request; `updates` follows both sessions from
   then on, so either ending ends the socket. A credential that fails
-  refuses with `SESSION_ENDED`: the socket closes, and is never left as
-  the admin. A store failure refuses too, with a generic close, and is
-  logged.
+  refuses with `SESSION_ENDED` (`Refuse::with_code(4001, "session
+  ended")`): the socket closes, and is never left as the admin. A store
+  failure refuses too, with `Refuse::new("internal error")`, and is
+  logged. A refused connection speaks for no session: its checks answer
+  `Unauthorized` and its updates end. `accept` returns musli-web's
+  `ws::Refuse` itself rather than a type of its own, so an app's `connect`
+  returns it unchanged. A second call stands only if it settles on the
+  same session.
 - `updates()` returns an `Updates`, which owns the `Auth::guard` of the
   upgrade's session and an `Auth::events` receiver, subscribed when it is
   made, so it is taken before negotiating. `next()` yields the next update to
@@ -1448,7 +1461,7 @@ transports; `<AdminUsers>` drops it, as before.
 No cookie changes hands when impersonating, so no socket speaks for a
 session other than its page's: the admin's page keeps its own, and the
 impersonated page opens its own. The app builds its web03 `Service` with
-musli-web's header closure set to `socket_headers` (2.6), which the
+musli-web's metadata closure set to `socket_headers` (2.6), which the
 provider can answer before it renders the children that build it. A
 refusal with `SESSION_ENDED` ends the impersonation in the page as a 401
 does; in a page without a page session the provider checks the session.
@@ -1917,7 +1930,7 @@ once the release is on crates.io.
     browser, so swapping it made every tab of the admin the user and signed
     the admin out until Stop. Now the admin's page opens a new page holding
     an impersonated session of its own, in `sessionStorage`, sent in the
-    `watchword-session` header and in musli-web's negotiate headers, and
+    `watchword-session` header and in musli-web's connection metadata, and
     only beside the admin's cookie; the admin's page and session stay as
     they are. The cookie-swapping flow is removed, not kept behind an
     option: two flows would keep the stale-socket mark of decision 30 and
@@ -1996,8 +2009,9 @@ once the release is on crates.io.
       never outlives the admin's cookie session.
     - *The socket states the session in its negotiation.* A browser cannot
       set headers on an upgrade, and no credential goes in a URL, so
-      musli-web 0.6 carries negotiate headers, rebuilt on each reconnect,
-      and a server hook (`accept`) switches the `Connection` from the
+      musli-web 0.6 carries connection metadata, rebuilt on each
+      reconnect, and a server hook (`Handler::connect`, which calls
+      `accept`) switches the `Connection` from the
       upgrade's cookie session to the page's, or refuses. `musliweb06`
       replaces `musliweb05` (decision 19). `Impersonate` joins the band,
       since it no longer sets a cookie; Stop stays HTTP, as it ends the
@@ -2016,8 +2030,8 @@ once the release is on crates.io.
     `socket_headers`, `MediaUrl`, `use_media_url`, `download`, and the
     props `private_media` (`<AuthProvider>`) and `impersonate_path`
     (`<AdminUsers>`). An app: moves to musli-web 0.6 and `musliweb06`,
-    passes `socket_headers` to its socket and calls `conn.accept` in the
-    negotiate hook; loads its `<img>`, `<audio>` and downloads of
+    passes `socket_headers` to its socket and calls `conn.accept` in its
+    `Handler::connect` (or uses the `Connection` as a handler, which does); loads its `<img>`, `<audio>` and downloads of
     signed-in routes through `MediaUrl`/`download`, and sets
     `private_media` if its signed-in media are not all under `/api/`;
     drops any socket reconnect from

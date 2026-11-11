@@ -61,7 +61,10 @@ use crate::{Auth, PAGE_SESSION_HEADER};
 /// variant's requests to [`handle`](Connection::handle). The client then gets
 /// watchword's endpoints through the app's list type, so one socket handle
 /// sends both, and the exhaustive `match` below does not compile until it
-/// forwards `api::Request::Auth`:
+/// forwards `api::Request::Auth`. Its `connect` calls
+/// [`accept`](Connection::accept), which settles whose socket it is before
+/// any request, switching an impersonated page's socket to the page's
+/// session:
 ///
 /// ```no_run
 /// # mod api {
@@ -89,6 +92,10 @@ use crate::{Auth, PAGE_SESSION_HEADER};
 ///     type Id = api::Request;
 ///     type Response = Result<bool, RequestError>;
 ///
+///     async fn connect(&mut self, metadata: &musli_web06::api::Metadata) -> Result<(), ws::Refuse> {
+///         self.conn.accept(metadata).await
+///     }
+///
 ///     async fn handle(
 ///         &self,
 ///         id: api::Request,
@@ -109,7 +116,9 @@ use crate::{Auth, PAGE_SESSION_HEADER};
 /// watchword's types, keeps the lists apart: `Connection` is also the
 /// [`ws::Handler`] of watchword's list, which the app combines with its own
 /// through [`ws::Handler::or`], routing each request by the list that knows
-/// its id. `Or` refuses lists that share an id, but being generic that check
+/// its id, and calling both handlers' `connect`, so `Connection`'s
+/// [`accept`](Connection::accept) runs without the app writing anything.
+/// `Or` refuses lists that share an id, but being generic that check
 /// only runs once a binary is built, so `cargo check` misses it; a `const`
 /// assertion on the lists' [`IdSet`](musli_web06::api::IdSet)s catches it
 /// earlier. watchword's band, 32000–32255, is a convention, so this matters
@@ -368,7 +377,8 @@ impl Connection {
     /// [`Auth::guard`] and [`Auth::events`] in the socket loop.
     ///
     /// The guard follows the session the upgrade signed in with, and the
-    /// events are subscribed to now, so call it before negotiating the
+    /// page's too once [`accept`](Connection::accept) switched to it, and
+    /// the events are subscribed to now, so call it before negotiating the
     /// socket: nothing sent meanwhile is missed. See [`Updates`].
     pub fn updates(&self) -> Updates {
         Updates::new(self.clone())
