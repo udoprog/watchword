@@ -1313,3 +1313,160 @@ mod cloudflare {
 mod gate;
 #[cfg(feature = "google")]
 mod google;
+
+/// Sends `GET uri` with an optional cookie and page credential, returning
+/// the status and, on success, the body.
+async fn page_get(app: &Router, uri: &str, cookie: Option<&str>, page: Option<&str>) -> Answer {
+    let mut request = Request::builder().uri(uri);
+
+    if let Some(cookie) = cookie {
+        request = request.header(header::COOKIE, cookie);
+    }
+
+    if let Some(page) = page {
+        request = request.header(crate::PAGE_SESSION_HEADER, page);
+    }
+
+    let response = app
+        .clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = axum08::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
+
+    Answer {
+        status,
+        headers,
+        body,
+    }
+}
+
+/// A page credential wins over the admin's cookie in every extractor, works
+/// only beside it, and never falls back to it.
+#[tokio::test]
+async fn page_credential_beside_the_admins_cookie() {
+    let key = generate_session_key();
+    let auth = Auth::builder(MemoryStore::new(), key)
+        .impersonation(true)
+        .build();
+    let app = router(&auth);
+
+    let new = |login: &str, role| crate::types::NewUser {
+        login: Some(login.to_owned()),
+        email: None,
+        role,
+    };
+    let root = auth
+        .test_user(&new("root", Role::Admin), PASSWORD)
+        .await
+        .unwrap();
+    let boss = auth
+        .test_user(&new("boss", Role::Admin), PASSWORD)
+        .await
+        .unwrap();
+    let pat = auth
+        .test_user(&new("pat", Role::Regular), PASSWORD)
+        .await
+        .unwrap();
+    let root_session = auth.test_session(&root).await.unwrap();
+    let boss_session = auth.test_session(&boss).await.unwrap();
+    let (_, page) = auth
+        .impersonate(&root, &root_session, pat.id)
+        .await
+        .unwrap();
+
+    let header = |id: &str| auth.cookie_header(id).to_str().unwrap().to_owned();
+    let root_cookie = header(&root_session.id);
+    let boss_cookie = header(&boss_session.id);
+    let credential = crate::page_credential(&key, &page.id);
+    let me = "/api/auth/me";
+
+    // Without the header, the cookie's user.
+    let answer = page_get(&app, me, Some(&root_cookie), None).await;
+    assert_eq!(answer.status, StatusCode::OK);
+    assert_eq!(answer.body["login"], "root");
+
+    // With it, the page's: in `SignedIn`, `LiveSession`, and `Admin` refusing.
+    let answer = page_get(&app, me, Some(&root_cookie), Some(&credential)).await;
+    assert_eq!(answer.status, StatusCode::OK);
+    assert_eq!(answer.body["login"], "pat");
+    assert_eq!(answer.body["impersonated_by"]["name"], "root");
+    let tile = page_get(&app, "/tile", Some(&root_cookie), Some(&credential)).await;
+    assert_eq!(tile.status, StatusCode::OK);
+    assert_eq!(tile.body, Value::String(page.id.clone()));
+    let users = page_get(
+        &app,
+        "/api/auth/users",
+        Some(&root_cookie),
+        Some(&credential),
+    )
+    .await;
+    assert_eq!(users.status, StatusCode::FORBIDDEN);
+    let users = page_get(&app, "/api/auth/users", Some(&root_cookie), None).await;
+    assert_eq!(users.status, StatusCode::OK);
+
+    // So does `Caller::headers`.
+    let mut headers = HeaderMap::new();
+    headers.insert(header::COOKIE, root_cookie.parse().unwrap());
+    headers.insert(crate::PAGE_SESSION_HEADER, credential.parse().unwrap());
+    let caller = crate::core::Caller::new().headers(&headers);
+    let answer = auth
+        .dispatch(&caller, crate::types::AuthRequest::Me)
+        .await
+        .unwrap();
+    assert!(
+        matches!(&answer.response, crate::types::AuthResponse::User(info) if info.id == pat.id),
+        "{:?}",
+        answer.response
+    );
+
+    // A bad credential, or one beside no cookie or another admin's, is a
+    // 401, never the cookie's user.
+    let as_cookie = root_cookie.split_once('=').unwrap().1;
+    let refused: [(Option<&str>, &str); 4] = [
+        (Some(&root_cookie), "nope"),
+        (Some(&root_cookie), as_cookie),
+        (None, &credential),
+        (Some(&boss_cookie), &credential),
+    ];
+
+    for (cookie, credential) in refused {
+        for uri in [me, "/tile"] {
+            let answer = page_get(&app, uri, cookie, Some(credential)).await;
+            assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{uri} {cookie:?}");
+        }
+    }
+
+    // The admin signing out ends the page at once, `LiveSession`'s cache
+    // included, though the page's session is still live.
+    auth.sign_out(&root_session.id).await.unwrap();
+    assert!(auth.session(&page.id).await.unwrap().is_some());
+
+    for uri in [me, "/tile"] {
+        let answer = page_get(&app, uri, Some(&root_cookie), Some(&credential)).await;
+        assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{uri}");
+    }
+
+    // An ended page session is a 401 beside a live cookie of its admin.
+    let root_session = auth.test_session(&root).await.unwrap();
+    let root_cookie = header(&root_session.id);
+    let (_, page) = auth
+        .impersonate(&root, &root_session, pat.id)
+        .await
+        .unwrap();
+    let credential = crate::page_credential(&key, &page.id);
+    let tile = page_get(&app, "/tile", Some(&root_cookie), Some(&credential)).await;
+    assert_eq!(tile.status, StatusCode::OK);
+    auth.sign_out(&page.id).await.unwrap();
+
+    for uri in [me, "/tile"] {
+        let answer = page_get(&app, uri, Some(&root_cookie), Some(&credential)).await;
+        assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{uri}");
+    }
+}

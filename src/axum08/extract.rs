@@ -11,9 +11,11 @@ use crate::types::{Access, AuthError};
 /// The signed-in user and their session, loaded fresh for each request.
 ///
 /// Rejects with [`AuthError::Unauthorized`] (401) unless the request's
-/// session cookie names a live session of an active user, or of a pending
-/// user an admin impersonates. An impersonated session is live only while
-/// its admin is still an active admin. Since the user (and for an
+/// session, as [`Auth::request_session`] reads it, is a live session of an
+/// active user, or of a pending user an admin impersonates. An impersonated
+/// session is live only while its admin is still an active admin. A
+/// [`PAGE_SESSION_HEADER`](crate::PAGE_SESSION_HEADER) wins over the cookie,
+/// and one that fails is a 401, never the cookie's session. Since the user (and for an
 /// impersonated session its admin) is read from the store on every request,
 /// a role change or revocation applies to the next one.
 ///
@@ -40,11 +42,7 @@ impl SignedIn {
             return Ok(Some(signed_in.clone()));
         }
 
-        let Some(id) = auth.session_id(&parts.headers) else {
-            return Ok(None);
-        };
-
-        let Some((user, session)) = auth.session(&id).await? else {
+        let Some((user, session)) = auth.request_session(&parts.headers).await? else {
             return Ok(None);
         };
 
@@ -126,6 +124,10 @@ where
 /// demoting or deleting the admin who impersonates in it; the 10 seconds only
 /// delay noticing a session ended in another process.
 ///
+/// A page credential's session and the cookie's are each checked this way on
+/// every request, and the cookie's user compared with the page session's
+/// admin, so signing the admin out ends their pages' requests at once.
+///
 /// Rejects with [`AuthError::Unauthorized`] (401) as [`SignedIn`] does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveSession(pub String);
@@ -140,14 +142,9 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let auth = Auth::from_ref(state);
 
-        let Some(id) = auth.session_id(&parts.headers) else {
-            return Err(AuthError::Unauthorized.into());
-        };
-
-        if !auth.session_live(&id).await? {
-            return Err(AuthError::Unauthorized.into());
+        match auth.request_session_live(&parts.headers).await? {
+            Some(id) => Ok(LiveSession(id)),
+            None => Err(AuthError::Unauthorized.into()),
         }
-
-        Ok(LiveSession(id))
     }
 }

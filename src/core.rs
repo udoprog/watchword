@@ -21,6 +21,8 @@ pub use self::guard::SessionGuard;
 pub use self::password::{PasswordError, dummy_hash, hash_password, verify_password};
 #[cfg(all(feature = "google", feature = "axum08"))]
 pub(crate) use self::service::GoogleReturn;
+#[cfg(feature = "axum08")]
+pub(crate) use self::service::vouches_for;
 pub use self::service::{
     Auth, AuthBuilder, AuthEvent, Bootstrap, BootstrapAdmin, Caller, CookieConfig, Dispatched,
     Error, Result, Secure, SessionCookie, load_or_create_key,

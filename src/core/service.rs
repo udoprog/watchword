@@ -753,7 +753,7 @@ impl Auth {
             return Ok(None);
         };
 
-        if !vouches_for(&cookie, admin) {
+        if !vouches_for(cookie.user, cookie.impersonator, admin) {
             return Ok(None);
         }
 
@@ -1878,10 +1878,10 @@ async fn hash_blocking(password: &str) -> Result<String> {
 }
 
 /// Whether the client reached the proxy in front of the server over HTTPS.
-/// Whether the cookie's session `cookie` vouches for a page session
-/// impersonated by `admin`: it is the admin's own session.
-pub(crate) fn vouches_for(cookie: &Session, admin: UserId) -> bool {
-    cookie.user == admin && cookie.impersonator.is_none()
+/// Whether a cookie session of `user`, impersonated by `impersonator`,
+/// vouches for a page session impersonated by `admin`: it is the admin's own.
+pub(crate) fn vouches_for(user: UserId, impersonator: Option<UserId>, admin: UserId) -> bool {
+    user == admin && impersonator.is_none()
 }
 
 fn is_https(headers: &HeaderMap) -> bool {

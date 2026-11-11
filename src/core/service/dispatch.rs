@@ -62,7 +62,8 @@ impl<'a> Caller<'a> {
         self
     }
 
-    /// The request's HTTP headers: its session cookie, when neither
+    /// The request's HTTP headers: its session, as
+    /// [`Auth::request_session`] reads it, when neither
     /// [`signed_in`](Caller::signed_in) nor [`session`](Caller::session) is
     /// given, and its Cloudflare Access credentials.
     pub fn headers(mut self, headers: &'a HeaderMap) -> Self {
@@ -310,11 +311,13 @@ impl Auth {
             return Ok((user.clone(), session.clone()));
         }
 
-        let Some(id) = self.caller_session_id(caller) else {
-            return Err(AuthError::Unauthorized.into());
+        let signed_in = match (caller.session_id, caller.headers) {
+            (Some(id), _) => self.session(id).await?,
+            (None, Some(headers)) => self.request_session(headers).await?,
+            (None, None) => None,
         };
 
-        match self.session(&id).await? {
+        match signed_in {
             Some(signed_in) => Ok(signed_in),
             None => Err(AuthError::Unauthorized.into()),
         }

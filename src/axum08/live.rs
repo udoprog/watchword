@@ -4,8 +4,10 @@ use std::string::String;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use axum08::http::HeaderMap;
+
 use crate::Auth;
-use crate::core::{AuthEvent, Result};
+use crate::core::{AuthEvent, Result, vouches_for};
 use crate::types::{Access, UserId};
 
 /// How long a confirmed session is believed live without asking the store.
@@ -31,12 +33,15 @@ struct Entry {
 }
 
 impl LiveCache {
-    fn get(&self, session: &str, now: Instant) -> bool {
+    /// The user and impersonator of a session confirmed live within
+    /// [`LIVE_TTL`].
+    fn get(&self, session: &str, now: Instant) -> Option<(UserId, Option<UserId>)> {
         let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
 
         entries
             .get(session)
-            .is_some_and(|entry| now.duration_since(entry.at) < LIVE_TTL)
+            .filter(|entry| now.duration_since(entry.at) < LIVE_TTL)
+            .map(|entry| (entry.user, entry.impersonator))
     }
 
     fn insert(&self, session: &str, user: UserId, impersonator: Option<UserId>, now: Instant) {
@@ -93,27 +98,61 @@ impl LiveCache {
     }
 
     #[cfg(test)]
+    fn live(&self, session: &str, now: Instant) -> bool {
+        self.get(session, now).is_some()
+    }
+
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.entries.lock().unwrap().len()
     }
 }
 
 impl Auth {
-    /// Whether the session `session_id` is live, as [`Auth::session`] says,
-    /// answering from the cache for [`LIVE_TTL`] after a confirmation.
-    pub(crate) async fn session_live(&self, session_id: &str) -> Result<bool> {
+    /// The id of the request's live session, as
+    /// [`request_session`](Auth::request_session) says, checking the page
+    /// credential's session and the cookie's each through the cache.
+    pub(crate) async fn request_session_live(&self, headers: &HeaderMap) -> Result<Option<String>> {
+        let page = self.page_session_id(headers);
+
+        let Some(cookie) = self.session_id(headers) else {
+            return Ok(None);
+        };
+
+        let Some((user, impersonator)) = self.session_live(&cookie).await? else {
+            return Ok(None);
+        };
+
+        let Some(page) = page else {
+            return Ok(Some(cookie));
+        };
+
+        let Some(page) = page else {
+            return Ok(None);
+        };
+
+        match self.session_live(&page).await? {
+            Some((_, Some(admin))) if vouches_for(user, impersonator, admin) => Ok(Some(page)),
+            _ => Ok(None),
+        }
+    }
+
+    /// The user and impersonator of the live session `session_id`, as
+    /// [`Auth::session`] says, answering from the cache for [`LIVE_TTL`]
+    /// after a confirmation.
+    async fn session_live(&self, session_id: &str) -> Result<Option<(UserId, Option<UserId>)>> {
         let cache = self.live_cache();
 
-        if cache.get(session_id, Instant::now()) {
-            return Ok(true);
+        if let Some(entry) = cache.get(session_id, Instant::now()) {
+            return Ok(Some(entry));
         }
 
         let Some((user, session)) = self.session(session_id).await? else {
-            return Ok(false);
+            return Ok(None);
         };
 
         cache.insert(session_id, user.id, session.impersonator, Instant::now());
-        Ok(true)
+        Ok(Some((user.id, session.impersonator)))
     }
 }
 
@@ -130,9 +169,9 @@ mod tests {
         let t0 = Instant::now();
 
         cache.insert("a", UserId(1), None, t0);
-        assert!(cache.get("a", t0 + Duration::from_secs(9)));
-        assert!(!cache.get("a", t0 + LIVE_TTL));
-        assert!(!cache.get("b", t0));
+        assert!(cache.live("a", t0 + Duration::from_secs(9)));
+        assert!(!cache.live("a", t0 + LIVE_TTL));
+        assert!(!cache.live("b", t0));
 
         for n in 0..LIVE_CAPACITY + 10 {
             cache.insert(
@@ -145,9 +184,9 @@ mod tests {
 
         assert_eq!(cache.len(), LIVE_CAPACITY);
         // The oldest went first.
-        assert!(!cache.get("a", t0));
-        assert!(!cache.get("0", t0 + Duration::from_secs(1)));
-        assert!(cache.get(
+        assert!(!cache.live("a", t0));
+        assert!(!cache.live("0", t0 + Duration::from_secs(1)));
+        assert!(cache.live(
             &(LIVE_CAPACITY + 9).to_string(),
             t0 + Duration::from_secs(1)
         ));
@@ -164,19 +203,19 @@ mod tests {
         cache.insert("c1", UserId(3), None, now);
 
         cache.forget(&AuthEvent::SessionEnded("c1".to_owned()));
-        assert!(!cache.get("c1", now));
+        assert!(!cache.live("c1", now));
 
         cache.forget(&AuthEvent::UserSessionsEnded {
             user: UserId(1),
             keep: Some("a2".to_owned()),
         });
-        assert!(!cache.get("a1", now));
-        assert!(cache.get("a2", now));
-        assert!(cache.get("b1", now));
+        assert!(!cache.live("a1", now));
+        assert!(cache.live("a2", now));
+        assert!(cache.live("b1", now));
 
         cache.forget(&AuthEvent::UserDeleted(UserId(2)));
-        assert!(!cache.get("b1", now));
-        assert!(cache.get("a2", now));
+        assert!(!cache.live("b1", now));
+        assert!(cache.live("a2", now));
     }
 
     #[test]
@@ -202,21 +241,21 @@ mod tests {
 
         // Still an active admin: nothing ends.
         cache.forget(&AuthEvent::UserChanged(info(Role::Admin, Access::Active)));
-        assert!(cache.get("own", now) && cache.get("as2", now) && cache.get("as3", now));
+        assert!(cache.live("own", now) && cache.live("as2", now) && cache.live("as3", now));
 
         // Demoted: their impersonations end, their own session does not.
         cache.forget(&AuthEvent::UserChanged(info(Role::Regular, Access::Active)));
-        assert!(cache.get("own", now));
-        assert!(!cache.get("as2", now) && !cache.get("as3", now));
-        assert!(cache.get("as4", now));
+        assert!(cache.live("own", now));
+        assert!(!cache.live("as2", now) && !cache.live("as3", now));
+        assert!(cache.live("as4", now));
 
         // Revoked: everything of theirs ends.
         cache.insert("as2", UserId(2), Some(UserId(1)), now);
         cache.forget(&AuthEvent::UserChanged(info(Role::Admin, Access::Revoked)));
-        assert!(!cache.get("own", now) && !cache.get("as2", now));
+        assert!(!cache.live("own", now) && !cache.live("as2", now));
 
         // Deleted: so do the impersonations of the deleted admin.
         cache.forget(&AuthEvent::UserDeleted(UserId(5)));
-        assert!(!cache.get("as4", now));
+        assert!(!cache.live("as4", now));
     }
 }
