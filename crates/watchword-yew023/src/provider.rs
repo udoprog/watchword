@@ -109,6 +109,9 @@ pub struct AuthProvider {
     service: AuthService,
     config: Option<AuthConfig>,
     register_token: Option<AttrValue>,
+    /// Whether this is an impersonated page: one that held a page session
+    /// when it loaded (decision 33).
+    impersonated_page: bool,
     checking: bool,
     on_signed_in: Callback<UserInfo>,
     sign_out: Callback<()>,
@@ -199,6 +202,14 @@ impl Component for AuthProvider {
         let transport = Rc::new(DefaultTransport::default());
         let service = service(ctx.props(), &transport);
 
+        // Before the children render, so none of their requests goes out
+        // without the page session.
+        let impersonated_page = browser::page_session().is_some();
+
+        if impersonated_page {
+            browser::enter_impersonated_page();
+        }
+
         Self {
             state: State::Loading,
             l10n,
@@ -207,6 +218,7 @@ impl Component for AuthProvider {
             service,
             config: None,
             register_token: browser::register_token().map(AttrValue::from),
+            impersonated_page,
             checking: false,
             on_signed_in: link.callback(Msg::SignedIn),
             sign_out: link.callback(|()| Msg::SignOut),

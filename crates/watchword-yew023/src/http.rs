@@ -8,7 +8,9 @@
 //! sends every request with them, through [`send`].
 //!
 //! Requests go to the page's own origin with same-origin cookies, so the
-//! session cookie set by the server is sent along. The client uses this
+//! session cookie set by the server is sent along, and in a page an admin
+//! opened to impersonate someone, the page's session in the
+//! `watchword-session` header. The client uses this
 //! crate's own gloo-net, so an app does not need to match its gloo version.
 //!
 //! Each function maps an error status to [`Error::Auth`] when the body is an
@@ -23,9 +25,11 @@ use web_sys::RequestCredentials;
 
 use watchword_core::{
     AuthConfig, AuthError, AuthRequest, AuthResponse, CloudflareConfig, GoogleSettings,
-    GoogleSettingsUpdate, Link, LoginRequest, NewUser, PageSession, PasswordChange, RegisterInfo,
-    RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
+    GoogleSettingsUpdate, Link, LoginRequest, NewUser, PAGE_SESSION_HEADER, PageSession,
+    PasswordChange, RegisterInfo, RegisterRequest, UserChange, UserEntry, UserId, UserInfo,
 };
+
+use super::browser;
 
 #[doc(no_inline)]
 pub use super::Error;
@@ -296,23 +300,34 @@ fn encode(segment: &str) -> String {
 }
 
 fn get(url: &str) -> RequestBuilder {
-    Request::get(url).credentials(RequestCredentials::SameOrigin)
+    with_page_session(Request::get(url))
 }
 
 fn post(url: &str) -> RequestBuilder {
-    Request::post(url).credentials(RequestCredentials::SameOrigin)
+    with_page_session(Request::post(url))
 }
 
 fn put(url: &str) -> RequestBuilder {
-    Request::put(url).credentials(RequestCredentials::SameOrigin)
+    with_page_session(Request::put(url))
 }
 
 fn patch(url: &str) -> RequestBuilder {
-    Request::patch(url).credentials(RequestCredentials::SameOrigin)
+    with_page_session(Request::patch(url))
 }
 
 fn delete(url: &str) -> RequestBuilder {
-    Request::delete(url).credentials(RequestCredentials::SameOrigin)
+    with_page_session(Request::delete(url))
+}
+
+/// Sends the cookie, and in an impersonated page its page session in
+/// [`PAGE_SESSION_HEADER`].
+fn with_page_session(builder: RequestBuilder) -> RequestBuilder {
+    let builder = builder.credentials(RequestCredentials::SameOrigin);
+
+    match browser::page_session() {
+        Some(credential) => builder.header(PAGE_SESSION_HEADER, &credential),
+        None => builder,
+    }
 }
 
 async fn read<T>(response: Response) -> Result<T, Error>

@@ -5,7 +5,7 @@ use std::borrow::ToOwned;
 use std::string::String;
 use std::vec::Vec;
 
-use watchword_core::is_same_origin_path;
+use watchword_core::{PAGE_SESSION_HEADER, is_same_origin_path};
 use web_sys::wasm_bindgen::JsValue;
 use yew::{InputEvent, TargetCast};
 
@@ -232,6 +232,144 @@ pub(super) fn origin() -> String {
     web_sys::window()
         .and_then(|w| w.location().origin().ok())
         .unwrap_or_default()
+}
+
+/// The page session of an impersonated page (decision 33): its credential,
+/// kept in `sessionStorage` under [`PAGE_SESSION_HEADER`]. `None` outside a
+/// browser.
+pub(super) fn page_session() -> Option<String> {
+    if !cfg!(target_arch = "wasm32") {
+        return None;
+    }
+
+    let storage = web_sys::window()?.session_storage().ok()??;
+    let credential = storage.get_item(PAGE_SESSION_HEADER).ok()??;
+    (!credential.is_empty()).then_some(credential)
+}
+
+/// Forgets the page session, so the page's requests carry only the cookie.
+pub(super) fn drop_page_session() {
+    if !cfg!(target_arch = "wasm32") {
+        return;
+    }
+
+    if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+        let _ = storage.remove_item(PAGE_SESSION_HEADER);
+    }
+}
+
+/// Readies an impersonated page before anything renders: every same-origin
+/// `fetch` from now on carries the page session unless it set the header
+/// itself, and `window.opener` is cleared so this page and the admin's stay
+/// unrelated.
+pub(super) fn enter_impersonated_page() {
+    if !cfg!(target_arch = "wasm32") {
+        return;
+    }
+
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+
+    let _ = window.set_opener(&JsValue::NULL);
+    wrap_fetch(&window);
+}
+
+thread_local! {
+    static FETCH_WRAPPED: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+/// Replaces `window.fetch` with one that adds the page session's header,
+/// once per page.
+fn wrap_fetch(window: &web_sys::Window) {
+    use web_sys::js_sys::{Array, Function, Promise, Reflect};
+    use web_sys::wasm_bindgen::JsCast;
+    use web_sys::wasm_bindgen::closure::Closure;
+
+    if FETCH_WRAPPED.replace(true) {
+        return;
+    }
+
+    let fetch = JsValue::from_str("fetch");
+
+    let Some(original) = Reflect::get(window, &fetch)
+        .ok()
+        .and_then(|f| f.dyn_into::<Function>().ok())
+    else {
+        return;
+    };
+
+    let Some(request_class) = Reflect::get(window, &JsValue::from_str("Request"))
+        .ok()
+        .and_then(|f| f.dyn_into::<Function>().ok())
+    else {
+        return;
+    };
+
+    let target = window.clone();
+
+    let wrapper = Closure::<dyn Fn(JsValue, JsValue) -> JsValue>::new(
+        move |input: JsValue, init: JsValue| {
+            // A request the browser refuses to build is passed on as it is,
+            // so it fails as it would have.
+            let request = Reflect::construct(&request_class, &Array::of2(&input, &init))
+                .ok()
+                .and_then(|request| request.dyn_into::<web_sys::Request>().ok());
+
+            let Some(request) = request else {
+                return original
+                    .call2(&target, &input, &init)
+                    .unwrap_or_else(|error| Promise::reject(&error).into());
+            };
+
+            // Read at each request: Stop or an ended session drops it.
+            if let Some(credential) = page_session() {
+                let origin = target.location().origin().unwrap_or_default();
+                let headers = request.headers();
+
+                if is_same_origin_url(&request.url(), &origin)
+                    && !headers.has(PAGE_SESSION_HEADER).unwrap_or(true)
+                {
+                    let _ = headers.set(PAGE_SESSION_HEADER, &credential);
+                }
+            }
+
+            original
+                .call1(&target, &request)
+                .unwrap_or_else(|error| Promise::reject(&error).into())
+        },
+    );
+
+    if Reflect::set(window, &fetch, wrapper.as_ref()).is_ok() {
+        // The wrapper lives as long as the page.
+        wrapper.forget();
+    }
+}
+
+/// Whether the absolute `url` is on `origin`, such as `https://example.com`.
+pub(super) fn is_same_origin_url(url: &str, origin: &str) -> bool {
+    !origin.is_empty()
+        && url
+            .strip_prefix(origin)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']))
+}
+
+/// Closes the page, or when the browser refuses (a page a script did not
+/// open), loads `/` instead.
+pub(super) fn close_page() {
+    if !cfg!(target_arch = "wasm32") {
+        return;
+    }
+
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+
+    let _ = window.close();
+
+    if !window.closed().unwrap_or(false) {
+        let _ = window.location().set_href("/");
+    }
 }
 
 /// Copies text to the clipboard, returning whether the browser allowed it.
