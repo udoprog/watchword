@@ -123,6 +123,7 @@
 //! | [`SetCloudflare`] | 32012 | [`CloudflareConfig`] | [`CloudflareConfig`] |
 //! | [`Google`] | 32013 | [`GoogleRequest`] | [`GoogleSettings`] |
 //! | [`SetGoogle`] | 32014 | [`GoogleSettingsUpdate`] | [`GoogleSettings`] |
+//! | [`Impersonate`] | 32015 | [`ImpersonateRequest`] | [`PageSession`] |
 //!
 //! [`AuthBroadcast`] (32100) carries [`AuthUpdate`]s.
 //!
@@ -136,7 +137,7 @@ use musli_core02::{Decode, Encode};
 use crate::AuthError;
 use crate::{
     CloudflareConfig, CreatedUser, GoogleSettings, GoogleSettingsUpdate, Link, NewUser,
-    PasswordChange, UserChange, UserEntry, UserId, UserInfo,
+    PageSession, PasswordChange, UserChange, UserEntry, UserId, UserInfo,
 };
 
 /// The first id of the band watchword owns.
@@ -313,6 +314,20 @@ musli_web06::api::define! {
         type Response<'de> = GoogleSettings;
     }
 
+    /// Creates a session as another user, marked with the admin, for one
+    /// page, answering with its page credential; the admin's own session
+    /// stays as it is. Admins only, if impersonation is enabled. Like
+    /// `POST /api/auth/users/{id}/impersonate`. Stopping stays HTTP-only
+    /// (`POST /api/auth/impersonate/stop`), as it ends the session the
+    /// page's socket speaks for.
+    #[musli(id = 32015)]
+    pub type Impersonate;
+
+    impl Endpoint for Impersonate {
+        impl Request for ImpersonateRequest;
+        type Response<'de> = PageSession;
+    }
+
     /// The live auth changes a connection may see, as [`AuthUpdate`]s.
     #[musli(id = 32100)]
     pub type AuthBroadcast;
@@ -393,4 +408,5 @@ user_requests! {
     RevokeLinkRequest => RevokeLink,
     SignOutUserRequest => SignOutUser,
     RevokeAccessRequest => RevokeAccess,
+    ImpersonateRequest => Impersonate,
 }

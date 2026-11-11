@@ -45,6 +45,7 @@
 //! | [`SetCloudflare`] | 32012 | [`CloudflareConfig`] | [`CloudflareConfig`] |
 //! | [`Google`] | 32013 | [`GoogleRequest`] | [`GoogleSettings`](crate::types::GoogleSettings) |
 //! | [`SetGoogle`] | 32014 | [`GoogleSettingsUpdate`](crate::types::GoogleSettingsUpdate) | [`GoogleSettings`](crate::types::GoogleSettings) |
+//! | [`Impersonate`] | 32015 | [`ImpersonateRequest`] | [`PageSession`](crate::types::PageSession) |
 //!
 //! [`AuthBroadcast`] (32100) carries [`AuthUpdate`]s.
 //!

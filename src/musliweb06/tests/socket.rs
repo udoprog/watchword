@@ -6,7 +6,7 @@
 use std::borrow::ToOwned;
 use std::future::Future;
 use std::net::SocketAddr;
-use std::string::ToString;
+use std::string::{String, ToString};
 use std::time::Duration;
 use std::vec::Vec;
 
@@ -23,18 +23,19 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 use super::super::{
-    CloudflareRequest, DeleteUserRequest, GoogleRequest, IssueLinkRequest, MeRequest,
-    RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, UserUpdate, UsersRequest,
+    CloudflareRequest, DeleteUserRequest, GoogleRequest, ImpersonateRequest, IssueLinkRequest,
+    MeRequest, RevokeAccessRequest, RevokeLinkRequest, SESSION_ENDED, SignOutUserRequest,
+    UserUpdate, UsersRequest,
 };
 use super::{PASSWORD, auth, pending, root, user};
 use crate::axum08::SignedIn;
 use crate::musliweb06::{Connection, RequestError};
 use crate::store::StoreError;
 use crate::types::{
-    AuthError, CloudflareConfig, Conflict, GoogleSettingsUpdate, Invalid, NewUser, PasswordChange,
-    Role, UserChange, UserEntry, UserId, UserInfo,
+    AuthError, CloudflareConfig, Conflict, GoogleSettingsUpdate, Invalid, NewUser, PageSession,
+    PasswordChange, Role, UserChange, UserEntry, UserId, UserInfo,
 };
-use crate::{Auth, AuthEvent};
+use crate::{Auth, AuthEvent, PAGE_SESSION_HEADER};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -178,6 +179,10 @@ impl ws::Handler for Handler {
             app::Request::Unknown(..) => Ok(false),
         }
     }
+
+    async fn connect(&mut self, metadata: &api::Metadata) -> Result<(), ws::Refuse> {
+        self.conn.accept(metadata).await
+    }
 }
 
 /// The app's own API, without watchword's, for a handler combined with
@@ -295,20 +300,51 @@ impl Server {
     /// A client of `path` signed in as `signed_in` with its session cookie
     /// on the upgrade, connected.
     async fn client_at(&self, path: &str, signed_in: &SignedIn) -> Client {
+        let (handle, task) = self.service(path, signed_in, None);
+        timeout(handle.wait_until_open()).await.unwrap();
+        Client { handle, task }
+    }
+
+    /// A client of `path` with `signed_in`'s cookie on the upgrade, stating
+    /// the page credential `page` in its metadata if given, running until
+    /// the connection ends.
+    fn service(
+        &self,
+        path: &str,
+        signed_in: &SignedIn,
+        page: Option<String>,
+    ) -> (Handle, JoinHandle<Result<(), client::Error>>) {
         let url = format!("ws://{}{path}", self.addr);
         let cookie = self.auth.cookie_header(&signed_in.session.id);
         let mut service = tungstenite030::connect(url)
             .header("Cookie", cookie.to_str().unwrap())
+            .metadata(move |metadata| {
+                if let Some(page) = &page {
+                    metadata.insert(PAGE_SESSION_HEADER, page);
+                }
+            })
             .reconnect(false)
             .build();
         let handle = service.handle().clone();
+        let task = tokio::spawn(async move { service.run().await });
+        (handle, task)
+    }
 
-        let task = tokio::spawn(async move {
-            _ = service.run().await;
-        });
-
+    /// A client of `path` in a page impersonating as `page`, beside
+    /// `signed_in`'s cookie, connected.
+    async fn page_at(&self, path: &str, signed_in: &SignedIn, page: &str) -> Client {
+        let (handle, task) = self.service(path, signed_in, Some(page.to_owned()));
         timeout(handle.wait_until_open()).await.unwrap();
         Client { handle, task }
+    }
+
+    /// The refusal of a client of `path` in a page stating `page` beside
+    /// `signed_in`'s cookie: its close code and reason.
+    async fn refusal(&self, path: &str, signed_in: &SignedIn, page: &str) -> (u16, String) {
+        let (_, task) = self.service(path, signed_in, Some(page.to_owned()));
+        let error = timeout(task).await.unwrap().expect_err("refused");
+        let refused = error.as_refused().expect("a refusal");
+        (refused.code(), refused.reason().to_owned())
     }
 }
 
@@ -320,7 +356,7 @@ impl Drop for Server {
 
 struct Client {
     handle: Handle,
-    task: JoinHandle<()>,
+    task: JoinHandle<Result<(), client::Error>>,
 }
 
 impl Client {
@@ -374,7 +410,7 @@ impl Drop for Client {
 fn routes_watchwords_endpoints() {
     type Or = ws::Or<AloneHandler, Connection>;
 
-    for id in 32000..=32014 {
+    for id in 32000..=32015 {
         let id = api::MessageId::new(id).unwrap();
         assert!(
             matches!(app::Request::from_id(id), app::Request::Auth(..)),
@@ -386,7 +422,7 @@ fn routes_watchwords_endpoints() {
         );
     }
 
-    for id in [1, 500, 31999, 32015, 32254, 32255, 32256] {
+    for id in [1, 500, 31999, 32016, 32254, 32255, 32256] {
         let id = api::MessageId::new(id).unwrap();
         assert!(
             !matches!(app::Request::from_id(id), app::Request::Auth(..)),
@@ -867,4 +903,83 @@ async fn refusals_map_to_auth_errors() {
 
     let users = auth.users(&root.user).await.unwrap();
     assert!(users.iter().any(|entry| entry.user.id == erin.id));
+}
+
+/// An admin impersonates over the socket, and the page's own socket, beside
+/// the admin's cookie, speaks for the page's session, through the app's
+/// handler calling `accept` and through `or`.
+#[tokio::test]
+async fn a_page_socket_speaks_for_its_session() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let (erin, _) = pending(&auth, &root, "erin", Role::Regular).await;
+    let server = Server::new(&auth).await;
+    let admin = server.client(&root).await;
+
+    let page: PageSession = admin
+        .send(ImpersonateRequest { id: erin.id })
+        .await
+        .unwrap();
+    assert_eq!(page.user.id, erin.id);
+
+    for path in ["/ws", "/ws/or"] {
+        let client = server.page_at(path, &root, &page.credential).await;
+        let me: UserInfo = client.send(MeRequest).await.unwrap();
+        assert_eq!(me, page.user, "{path}");
+        assert_eq!(
+            client.refused(UsersRequest).await,
+            Some(AuthError::Forbidden),
+            "{path}"
+        );
+    }
+
+    // The admin's socket is still the admin's.
+    let me: UserInfo = admin.send(MeRequest).await.unwrap();
+    assert_eq!(me, root.user.info());
+
+    // Impersonating from the page is refused, as over HTTP.
+    let client = server.page_at("/ws", &root, &page.credential).await;
+    assert_eq!(
+        client
+            .refused(ImpersonateRequest { id: root.user.id })
+            .await,
+        Some(AuthError::Forbidden)
+    );
+}
+
+/// A page whose credential fails is refused with `SESSION_ENDED`, never
+/// left signed in as the admin of the cookie.
+#[tokio::test]
+async fn a_failing_page_socket_is_refused() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let ada = user(&auth, &root, "ada", Role::Admin).await;
+    let (erin, _) = pending(&auth, &root, "erin", Role::Regular).await;
+    let server = Server::new(&auth).await;
+    let page = auth
+        .impersonate(&root.user, &root.session, erin.id)
+        .await
+        .unwrap();
+    let ended = (SESSION_ENDED, "session ended".to_owned());
+
+    for path in ["/ws", "/ws/or"] {
+        assert_eq!(
+            server.refusal(path, &root, "garbage").await,
+            ended,
+            "{path}"
+        );
+        // Beside another admin's cookie.
+        assert_eq!(
+            server.refusal(path, &ada, &page.credential).await,
+            ended,
+            "{path}"
+        );
+    }
+
+    let id = auth
+        .verify_page_credential(&page.credential)
+        .unwrap()
+        .to_owned();
+    auth.sign_out(&id).await.unwrap();
+    assert_eq!(server.refusal("/ws", &root, &page.credential).await, ended);
 }

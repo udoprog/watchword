@@ -6,9 +6,9 @@ use musli_web06::ws::{self, Incoming, Outgoing, Refuse};
 use tokio::sync::watch;
 
 use super::{
-    AuthUpdate, CloudflareRequest, DeleteUserRequest, GoogleRequest, IssueLinkRequest, MeRequest,
-    Request, RequestError, RevokeAccessRequest, RevokeLinkRequest, SESSION_ENDED,
-    SignOutUserRequest, Updates, UserUpdate, UsersRequest,
+    AuthUpdate, CloudflareRequest, DeleteUserRequest, GoogleRequest, ImpersonateRequest,
+    IssueLinkRequest, MeRequest, Request, RequestError, RevokeAccessRequest, RevokeLinkRequest,
+    SESSION_ENDED, SignOutUserRequest, Updates, UserUpdate, UsersRequest,
 };
 use crate::axum08::SignedIn;
 #[cfg(doc)]
@@ -652,6 +652,10 @@ pub(super) fn decode(request: Request, body: &mut impl ReadBody) -> Option<AuthR
             AuthRequest::Google
         }
         Request::SetGoogle => AuthRequest::SetGoogle(body.read()?),
+        Request::Impersonate => {
+            let ImpersonateRequest { id } = body.read()?;
+            AuthRequest::Impersonate { id }
+        }
         Request::Unknown(_) => return None,
     };
 

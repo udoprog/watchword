@@ -480,7 +480,7 @@ mod musliweb06 {
     /// meaning.
     #[test]
     fn ids_are_pinned() {
-        let ids: [(MessageId, u16); 16] = [
+        let ids: [(MessageId, u16); 17] = [
             (Me::ID, 32000),
             (UpdateAccount::ID, 32001),
             (ChangePassword::ID, 32002),
@@ -496,6 +496,7 @@ mod musliweb06 {
             (SetCloudflare::ID, 32012),
             (Google::ID, 32013),
             (SetGoogle::ID, 32014),
+            (Impersonate::ID, 32015),
             (AuthBroadcast::ID, 32100),
         ];
 
@@ -542,6 +543,7 @@ mod musliweb06 {
         });
         round_trip(DeleteUserRequest { id: UserId(3) });
         round_trip(RevokeAccessRequest { id: UserId(3) });
+        round_trip(ImpersonateRequest { id: UserId(3) });
         round_trip(CloudflareRequest);
         round_trip(CloudflareConfig::default());
         round_trip(Ok::<_, AuthError>(CloudflareConfig {

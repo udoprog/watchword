@@ -19,9 +19,9 @@ use tower::ServiceExt;
 
 use super::super::connection::{ReadBody, decode};
 use super::super::{
-    CloudflareRequest, DeleteUserRequest, FIRST_ID, GoogleRequest, IssueLinkRequest, LAST_ID,
-    MeRequest, Request, RevokeAccessRequest, RevokeLinkRequest, SignOutUserRequest, UserUpdate,
-    UsersRequest,
+    CloudflareRequest, DeleteUserRequest, FIRST_ID, GoogleRequest, ImpersonateRequest,
+    IssueLinkRequest, LAST_ID, MeRequest, Request, RevokeAccessRequest, RevokeLinkRequest,
+    SignOutUserRequest, UserUpdate, UsersRequest,
 };
 use super::auth;
 use crate::types::{
@@ -62,6 +62,7 @@ impl Bodies {
             Box::new(RevokeLinkRequest { id }),
             Box::new(SignOutUserRequest { id }),
             Box::new(RevokeAccessRequest { id }),
+            Box::new(ImpersonateRequest { id }),
             Box::new(CloudflareConfig::default()),
             Box::new(GoogleRequest),
             Box::new(GoogleSettingsUpdate::default()),
@@ -111,6 +112,11 @@ fn route(request: &AuthRequest) -> (Method, String, Option<Value>) {
         AuthRequest::RevokeAccess { id } => {
             (Method::POST, format!("/api/auth/users/{id}/revoke"), None)
         }
+        AuthRequest::Impersonate { id } => (
+            Method::POST,
+            format!("/api/auth/users/{id}/impersonate"),
+            None,
+        ),
         AuthRequest::Cloudflare => (Method::GET, "/api/auth/cloudflare".to_owned(), None),
         AuthRequest::SetCloudflare(config) => {
             (Method::PUT, "/api/auth/cloudflare".to_owned(), json(config))
