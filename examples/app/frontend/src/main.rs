@@ -12,8 +12,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use auth::yew023::{
-    AccountPanel, AdminCloudflare, AdminUsers, AuthProvider, UserMenu, UsersQuery, use_auth,
-    use_media_url,
+    AccountPanel, AdminCloudflare, AdminUsers, AuthProvider, UserMenu, UsersQuery, socket_metadata,
+    use_auth, use_media_url,
 };
 use musli_web::web03::prelude::ws;
 use yew::prelude::*;
@@ -49,6 +49,10 @@ fn App() -> Html {
     // The app's musli-web socket, `/api/example/ws`, open while signed in
     // since `App` only renders then.
     //
+    // - `socket_metadata` states the page's session when an admin opened
+    //   this page to impersonate someone, read on every connect, so the
+    //   server's `Connection::accept` has the socket speak for that session
+    //   rather than the admin's cookie.
     // - `set_socket` gives watchword the handle once. From then on the
     //   account panel, the admin page and `refresh()` send their requests
     //   over it while it is open, and over HTTP while it reconnects.
@@ -59,9 +63,12 @@ fn App() -> Html {
     // - When the socket closes, or stays closed, `AuthProvider` checks the
     //   session over HTTP: a 401 shows the sign-in page with "Your session
     //   has ended", which unmounts the app and so drops the socket.
-    //   Otherwise musli-web reconnects by itself, with backoff.
+    //   Otherwise musli-web reconnects by itself, with backoff. A socket the
+    //   server refuses because an impersonated page's session ended ends
+    //   that page at once, with "Impersonation has ended."
     let service = use_memo((), |()| {
         ws::connect(ws::Connect::location("/api/example/ws"))
+            .metadata(socket_metadata)
             .close_before_unload()
             .build()
     });
@@ -163,7 +170,7 @@ fn Home(props: &HomeProps) -> Html {
             <ServerStatus socket={props.socket.clone()} />
             <Badges />
             <p class="hint">
-                {"The app holds a WebSocket open for the session. It carries the account and user-management requests and their live updates (open Users in two windows to see one follow the other), and the app's own requests, such as the status above. Signing out elsewhere, being revoked or deleted closes it, and the app then shows the sign-in page with \"Your session has ended\"."}
+                {"The app holds a WebSocket open for the session. It carries the account and user-management requests and their live updates (open Users in two windows to see one follow the other), and the app's own requests, such as the status above. Signing out elsewhere, being revoked or deleted closes it, and the app then shows the sign-in page with \"Your session has ended\". In a page an admin opened to impersonate someone, the socket speaks for that page's session, not the admin's: Stop impersonating, or the admin signing out, closes it and the page shows \"Impersonation has ended.\""}
             </p>
         </section>
     }
