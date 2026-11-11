@@ -59,11 +59,6 @@ fn App() -> Html {
     //   session over HTTP: a 401 shows the sign-in page with "Your session
     //   has ended", which unmounts the app and so drops the socket.
     //   Otherwise musli-web reconnects by itself, with backoff.
-    // - The socket speaks for the session its upgrade carried. Impersonating,
-    //   and stopping it, replace the session cookie, so the app calls
-    //   `reconnect` then. Until the socket reconnects watchword marks it stale
-    //   and uses HTTP, so the requests are right either way; reconnecting puts
-    //   them, and the live updates, back on the socket.
     let service = use_memo((), |()| {
         ws::connect(ws::Connect::location("/api/example/ws"))
             .close_before_unload()
@@ -75,17 +70,6 @@ fn App() -> Html {
         let handle = service.handle().clone();
         use_effect_with((), move |()| auth.set_socket(Some(handle)));
     }
-
-    // Closes the socket and opens it again, so that its upgrade carries the
-    // current session cookie.
-    let reconnect = {
-        let service = service.clone();
-
-        use_callback((), move |(), _| {
-            service.close();
-            service.open();
-        })
-    };
 
     let go = |to: Page| {
         let page = page.clone();
@@ -112,19 +96,8 @@ fn App() -> Html {
             </section>
         },
         Page::Users => {
-            // After impersonating, the cookie is the other user's: reconnect
-            // the socket, which still speaks for the admin's session, and
-            // load them.
-            let on_impersonate = {
-                let auth = auth.clone();
-                let page = page.clone();
-                let reconnect = reconnect.clone();
-                Callback::from(move |_| {
-                    page.set(Page::Home);
-                    reconnect.emit(());
-                    auth.refresh();
-                })
-            };
+            // Impersonating opens a page of its own, so this page stays.
+            let on_impersonate = Callback::from(|_| ());
             let on_query_change = {
                 let query = query.clone();
                 Callback::from(move |q| query.set(q))
@@ -143,17 +116,6 @@ fn App() -> Html {
         Page::Settings => html! { <Settings /> },
     };
 
-    // Stopping replaces the cookie with the admin's session again, so the
-    // socket reconnects with it too.
-    let on_stop_impersonating = {
-        let to_users = go(Page::Users);
-        let reconnect = reconnect.clone();
-        Callback::from(move |()| {
-            reconnect.emit(());
-            to_users.emit(());
-        })
-    };
-
     html! {
         <>
             <header class="top">
@@ -167,7 +129,6 @@ fn App() -> Html {
                 <UserMenu
                     on_account={go(Page::Account)}
                     on_admin={go(Page::Users)}
-                    {on_stop_impersonating}
                 />
             </header>
             <main class="content">{content}</main>
