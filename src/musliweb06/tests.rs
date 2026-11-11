@@ -67,6 +67,14 @@ async fn register(auth: &Auth, token: &str) -> SignedIn {
     SignedIn { user, session }
 }
 
+/// A connection signed in as `signed_in`, accepted without metadata, as
+/// musli-web does before any request.
+async fn accepted(auth: &Auth, signed_in: &SignedIn) -> Connection {
+    let conn = Connection::new(auth.clone(), signed_in);
+    conn.accept(&Metadata::new()).await.unwrap();
+    conn
+}
+
 /// The user-list events about `other`, which only an admin's connection
 /// passes on.
 fn list_events(other: &UserInfo) -> Vec<(AuthEvent, AuthUpdate)> {
@@ -107,7 +115,7 @@ async fn an_admin_sees_itself_and_the_user_list() {
     let auth = auth();
     let root = root(&auth).await;
     let (other, _) = pending(&auth, &root, "erin", Role::Regular).await;
-    let conn = Connection::new(auth.clone(), &root);
+    let conn = accepted(&auth, &root).await;
 
     let me = AuthEvent::UserChanged(root.user.info());
     assert_eq!(
@@ -134,7 +142,7 @@ async fn an_admin_sees_real_operations() {
     let auth = auth();
     let root = root(&auth).await;
     let ada = user(&auth, &root, "ada", Role::Admin).await;
-    let conn = Connection::new(auth.clone(), &ada);
+    let conn = accepted(&auth, &ada).await;
     let mut events = auth.events();
 
     let new = NewUser {
@@ -169,7 +177,7 @@ async fn a_regular_user_sees_only_itself() {
     let auth = auth();
     let root = root(&auth).await;
     let erin = user(&auth, &root, "erin", Role::Regular).await;
-    let conn = Connection::new(auth.clone(), &erin);
+    let conn = accepted(&auth, &erin).await;
 
     let me = AuthEvent::UserChanged(erin.user.info());
     assert_eq!(
@@ -193,7 +201,7 @@ async fn me_follows_a_role_change() {
     let auth = auth();
     let root = root(&auth).await;
     let erin = user(&auth, &root, "erin", Role::Regular).await;
-    let conn = Connection::new(auth.clone(), &erin);
+    let conn = accepted(&auth, &erin).await;
 
     let promoted = auth
         .set_role(&root.user, &root.session, erin.user.id, Role::Admin)
@@ -215,18 +223,13 @@ async fn an_impersonated_session_keeps_its_marker() {
     let auth = auth();
     let root = root(&auth).await;
     let (erin, _) = pending(&auth, &root, "erin", Role::Regular).await;
-    let (erin, session) = auth
-        .impersonate_session(&root.user, &root.session, erin.id)
+    let page = auth
+        .impersonate(&root.user, &root.session, erin.id)
         .await
         .unwrap();
-    let info = erin.info();
-    let conn = Connection::new(
-        auth.clone(),
-        &SignedIn {
-            user: erin,
-            session,
-        },
-    );
+    let info = erin;
+    let conn = Connection::new(auth.clone(), &root);
+    conn.accept(&page_metadata(&page.credential)).await.unwrap();
 
     let mut expected = info.clone();
     expected.impersonated_by = Some(Impersonator {
@@ -252,7 +255,7 @@ async fn a_demoted_admin_stops_seeing_the_user_list() {
     let root = root(&auth).await;
     let ada = user(&auth, &root, "ada", Role::Admin).await;
     let (erin, _) = pending(&auth, &root, "erin", Role::Regular).await;
-    let conn = Connection::new(auth.clone(), &ada);
+    let conn = accepted(&auth, &ada).await;
 
     let (event, update) = list_events(&erin).remove(0);
     assert_eq!(conn.update(&event).await.unwrap(), Some(update));
@@ -281,7 +284,7 @@ async fn an_ended_session_sees_nothing() {
     let root = root(&auth).await;
     let ada = user(&auth, &root, "ada", Role::Admin).await;
     let (erin, _) = pending(&auth, &root, "erin", Role::Regular).await;
-    let conn = Connection::new(auth.clone(), &ada);
+    let conn = accepted(&auth, &ada).await;
 
     let revoked = auth
         .revoke_access(&root.user, &root.session, ada.user.id)
@@ -296,7 +299,7 @@ async fn an_ended_session_sees_nothing() {
     }
 
     // Signed out.
-    let conn = Connection::new(auth.clone(), &root);
+    let conn = accepted(&auth, &root).await;
     auth.sign_out(&root.session.id).await.unwrap();
     let me = AuthEvent::UserChanged(root.user.info());
     assert_eq!(conn.update(&me).await.unwrap(), None);
@@ -315,20 +318,20 @@ async fn a_lag_resyncs_an_admin_and_refreshes_anyone_else() {
     let ada = user(&auth, &root, "ada", Role::Admin).await;
     let erin = user(&auth, &root, "erin", Role::Regular).await;
 
-    let conn = Connection::new(auth.clone(), &root);
+    let conn = accepted(&auth, &root).await;
     assert_eq!(
         conn.lagged().await.unwrap(),
         Some(AuthUpdate::Resync(root.user.info()))
     );
 
-    let conn = Connection::new(auth.clone(), &erin);
+    let conn = accepted(&auth, &erin).await;
     assert_eq!(
         conn.lagged().await.unwrap(),
         Some(AuthUpdate::Me(erin.user.info()))
     );
 
     // The missed change itself shows in the user carried.
-    let conn = Connection::new(auth.clone(), &ada);
+    let conn = accepted(&auth, &ada).await;
     let demoted = auth
         .set_role(&root.user, &root.session, ada.user.id, Role::Regular)
         .await
@@ -339,22 +342,17 @@ async fn a_lag_resyncs_an_admin_and_refreshes_anyone_else() {
     );
 
     // An impersonated session keeps its marker and not the admin's rights.
-    let (erin, session) = auth
-        .impersonate_session(&root.user, &root.session, erin.user.id)
+    let page = auth
+        .impersonate(&root.user, &root.session, erin.user.id)
         .await
         .unwrap();
-    let mut expected = erin.info();
+    let mut expected = erin.user.info();
     expected.impersonated_by = Some(Impersonator {
         id: root.user.id,
         name: "root".to_owned(),
     });
-    let conn = Connection::new(
-        auth.clone(),
-        &SignedIn {
-            user: erin,
-            session,
-        },
-    );
+    let conn = Connection::new(auth.clone(), &root);
+    conn.accept(&page_metadata(&page.credential)).await.unwrap();
     assert_eq!(conn.lagged().await.unwrap(), Some(AuthUpdate::Me(expected)));
 }
 
@@ -365,13 +363,13 @@ async fn a_lag_on_an_ended_session_sends_nothing() {
     let root = root(&auth).await;
     let ada = user(&auth, &root, "ada", Role::Admin).await;
 
-    let conn = Connection::new(auth.clone(), &ada);
+    let conn = accepted(&auth, &ada).await;
     auth.revoke_access(&root.user, &root.session, ada.user.id)
         .await
         .unwrap();
     assert_eq!(conn.lagged().await.unwrap(), None);
 
-    let conn = Connection::new(auth.clone(), &root);
+    let conn = accepted(&auth, &root).await;
     auth.sign_out(&root.session.id).await.unwrap();
     assert_eq!(conn.lagged().await.unwrap(), None);
 }
@@ -392,7 +390,7 @@ async fn the_checks_follow_the_stored_user() {
     let auth = auth();
     let root = root(&auth).await;
     let erin = user(&auth, &root, "erin", Role::Regular).await;
-    let conn = Connection::new(auth.clone(), &erin);
+    let conn = accepted(&auth, &erin).await;
 
     assert_eq!(conn.user_id(), erin.user.id);
     assert_eq!(conn.session_id(), erin.session.id);
@@ -443,8 +441,8 @@ async fn updates_follow_the_session() {
     let root = root(&auth).await;
     let erin = user(&auth, &root, "erin", Role::Regular).await;
 
-    let mut admin = Connection::new(auth.clone(), &root).updates();
-    let mut regular = Connection::new(auth.clone(), &erin).updates();
+    let mut admin = accepted(&auth, &root).await.updates();
+    let mut regular = accepted(&auth, &erin).await.updates();
     assert_eq!(admin.connection().user_id(), root.user.id);
     assert_eq!(admin.guard().user(), root.user.info());
 
@@ -487,7 +485,7 @@ async fn updates_resync_after_a_lag() {
     let auth = auth();
     let root = root(&auth).await;
     let ada = user(&auth, &root, "ada", Role::Regular).await;
-    let mut updates = Connection::new(auth.clone(), &root).updates();
+    let mut updates = accepted(&auth, &root).await.updates();
 
     // More changes than the event channel holds.
     let mut last = None;
@@ -529,7 +527,7 @@ async fn updates_resync_after_a_lag() {
 async fn unless_ended_stops_with_the_session() {
     let auth = auth();
     let root = root(&auth).await;
-    let updates = Connection::new(auth.clone(), &root).updates();
+    let updates = accepted(&auth, &root).await.updates();
 
     assert_eq!(updates.unless_ended(async { 1 }).await, Some(1));
 
@@ -553,7 +551,7 @@ async fn unless_ended_stops_with_the_session() {
 async fn updates_of_an_ended_session_end_at_once() {
     let auth = auth();
     let root = root(&auth).await;
-    let conn = Connection::new(auth.clone(), &root);
+    let conn = accepted(&auth, &root).await;
     auth.sign_out(&root.session.id).await.unwrap();
 
     let mut updates = conn.updates();
@@ -825,4 +823,62 @@ async fn updates_of_a_refused_connection_end() {
         None
     );
     assert_eq!(after.unless_ended(async { 1 }).await, None);
+}
+
+/// Until `accept` settled it, a connection speaks for no session: an app
+/// that forgot to call it fails safe.
+#[tokio::test]
+async fn an_unsettled_connection_speaks_for_nobody() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let conn = Connection::new(auth.clone(), &root);
+
+    // The ids are the upgrade's, but nothing passes.
+    assert_eq!(conn.session_id(), root.session.id);
+    assert_eq!(conn.user_id(), root.user.id);
+    assert_eq!(
+        refusal(conn.signed_in().await),
+        Some(AuthError::Unauthorized)
+    );
+    assert_eq!(
+        refusal(conn.require_admin().await),
+        Some(AuthError::Unauthorized)
+    );
+    let me = AuthEvent::UserChanged(root.user.info());
+    assert_eq!(conn.update(&me).await.unwrap(), None);
+    assert_eq!(conn.lagged().await.unwrap(), None);
+
+    conn.accept(&Metadata::new()).await.unwrap();
+    assert_eq!(conn.signed_in().await.unwrap().0.id, root.user.id);
+    assert_eq!(conn.require_admin().await.unwrap().id, root.user.id);
+    assert_eq!(
+        conn.update(&me).await.unwrap(),
+        Some(AuthUpdate::Me(root.user.info()))
+    );
+}
+
+/// Updates taken before `accept` yield nothing until it settles, then what
+/// was sent meanwhile; they end unsettled only with the upgrade's session.
+#[tokio::test]
+async fn updates_wait_for_accept() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let conn = Connection::new(auth.clone(), &root);
+    let mut updates = conn.updates();
+
+    let (pat, _) = pending(&auth, &root, "pat", Role::Regular).await;
+    assert!(tokio::time::timeout(BRIEFLY, updates.next()).await.is_err());
+
+    conn.accept(&Metadata::new()).await.unwrap();
+    let next = tokio::time::timeout(WAIT, updates.next()).await.unwrap();
+    assert_eq!(next, Some(AuthUpdate::UserCreated(pat)));
+
+    let conn = Connection::new(auth.clone(), &root);
+    let mut updates = conn.updates();
+    assert!(tokio::time::timeout(BRIEFLY, updates.next()).await.is_err());
+    auth.sign_out(&root.session.id).await.unwrap();
+    assert_eq!(
+        tokio::time::timeout(WAIT, updates.next()).await.unwrap(),
+        None
+    );
 }

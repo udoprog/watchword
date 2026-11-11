@@ -185,6 +185,45 @@ impl ws::Handler for Handler {
     }
 }
 
+/// An app's handler that forgets to call `accept` from `connect`.
+#[derive(Clone)]
+struct Forgetful {
+    conn: Connection,
+}
+
+impl ws::Handler for Forgetful {
+    type Id = app::Request;
+    type Response = Result<bool, RequestError>;
+
+    async fn handle(
+        &self,
+        id: app::Request,
+        incoming: &mut ws::Incoming<'_>,
+        outgoing: &mut ws::Outgoing<'_>,
+    ) -> Self::Response {
+        match id {
+            app::Request::Auth(request) => self.conn.handle(request, incoming, outgoing).await,
+            _ => Ok(false),
+        }
+    }
+}
+
+async fn upgrade_forgetful(
+    ws: WebSocketUpgrade,
+    State(auth): State<Auth>,
+    signed_in: SignedIn,
+) -> Response {
+    let conn = Connection::new(auth, &signed_in);
+
+    ws.on_upgrade(move |socket| async move {
+        let server = musli_web06::axum08::server(socket, Forgetful { conn });
+
+        if let Ok(mut server) = server.connect().await {
+            _ = server.run().await;
+        }
+    })
+}
+
 /// The app's own API, without watchword's, for a handler combined with
 /// [`Connection`] through `ws::Handler::or`.
 mod alone {
@@ -279,6 +318,7 @@ impl Server {
         let app = Router::new()
             .route("/ws", any(upgrade))
             .route("/ws/or", any(upgrade_or))
+            .route("/ws/forgetful", any(upgrade_forgetful))
             .with_state(auth.clone());
 
         let task = tokio::spawn(async move {
@@ -982,4 +1022,37 @@ async fn a_failing_page_socket_is_refused() {
         .to_owned();
     auth.sign_out(&id).await.unwrap();
     assert_eq!(server.refusal("/ws", &root, &page.credential).await, ended);
+}
+
+/// A handler that never calls `accept` leaves the socket speaking for
+/// nobody, even an impersonated page's beside its admin's cookie: never as
+/// the admin.
+#[tokio::test]
+async fn a_socket_without_accept_is_unauthorized() {
+    let auth = auth();
+    let root = root(&auth).await;
+    let (erin, _) = pending(&auth, &root, "erin", Role::Regular).await;
+    let server = Server::new(&auth).await;
+    let page = auth
+        .impersonate(&root.user, &root.session, erin.id)
+        .await
+        .unwrap();
+
+    let client = server.client_at("/ws/forgetful", &root).await;
+    assert_eq!(
+        client.refused(MeRequest).await,
+        Some(AuthError::Unauthorized)
+    );
+
+    let client = server
+        .page_at("/ws/forgetful", &root, &page.credential)
+        .await;
+    assert_eq!(
+        client.refused(MeRequest).await,
+        Some(AuthError::Unauthorized)
+    );
+    assert_eq!(
+        client.refused(UsersRequest).await,
+        Some(AuthError::Unauthorized)
+    );
 }

@@ -1320,7 +1320,10 @@ event = events.recv() => {
   `Unauthorized` and its updates end. `accept` returns musli-web's
   `ws::Refuse` itself rather than a type of its own, so an app's `connect`
   returns it unchanged. A second call stands only if it settles on the
-  same session.
+  same session. Calling it is required, and forgetting it fails safe:
+  until it settles, the connection speaks for no session, as a refused
+  one, while `updates` yields nothing yet (it is taken before
+  negotiating), and the first request logs an error naming `accept`.
 - `updates()` returns an `Updates`, which owns the `Auth::guard` of the
   upgrade's session and an `Auth::events` receiver, subscribed when it is
   made, so it is taken before negotiating. `next()` yields the next update to
@@ -2015,7 +2018,9 @@ once the release is on crates.io.
       upgrade's cookie session to the page's, or refuses. `musliweb06`
       replaces `musliweb05` (decision 19). `Impersonate` joins the band,
       since it no longer sets a cookie; Stop stays HTTP, as it ends the
-      session its socket speaks for.
+      session its socket speaks for. A `Connection` whose `accept` never
+      ran speaks for no session, so an app that forgets the hook refuses
+      its sockets rather than leaving a page's socket as its admin.
 
     What changes, by crate. watchword-core: `PageSession`,
     `PAGE_SESSION_HEADER`, `AuthResponse::PageSession`, no

@@ -396,6 +396,12 @@ impl ws::Handler for Handler {
     type Id = api::Request;
     type Response = Result<bool, RequestError>;
 
+    // Settles whose socket it is before any request: an impersonated page's
+    // socket speaks for the page's session.
+    async fn connect(&mut self, metadata: &musli_web::api::Metadata) -> Result<(), ws::Refuse> {
+        self.conn.accept(metadata).await
+    }
+
     async fn handle(
         &self,
         id: api::Request,

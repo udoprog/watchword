@@ -1,4 +1,5 @@
 use std::boxed::Box;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use musli_web06::api::{DecodeBody, Metadata};
@@ -61,10 +62,11 @@ use crate::{Auth, PAGE_SESSION_HEADER};
 /// variant's requests to [`handle`](Connection::handle). The client then gets
 /// watchword's endpoints through the app's list type, so one socket handle
 /// sends both, and the exhaustive `match` below does not compile until it
-/// forwards `api::Request::Auth`. Its `connect` calls
+/// forwards `api::Request::Auth`. Its `connect` must call
 /// [`accept`](Connection::accept), which settles whose socket it is before
 /// any request, switching an impersonated page's socket to the page's
-/// session:
+/// session; until then the connection speaks for no session and refuses
+/// every request with [`AuthError::Unauthorized`]:
 ///
 /// ```no_run
 /// # mod api {
@@ -213,6 +215,8 @@ struct Shared {
     accepted: OnceLock<Accepted>,
     /// Set to `true` once `accepted` is, for [`Updates`] to follow.
     settled: watch::Sender<bool>,
+    /// Whether a request on the unsettled connection was logged.
+    warned: AtomicBool,
 }
 
 /// What [`Connection::accept`] settled on.
@@ -241,16 +245,21 @@ impl Connection {
                 upgrade: signed_in.clone(),
                 accepted: OnceLock::new(),
                 settled: watch::Sender::new(false),
+                warned: AtomicBool::new(false),
             }),
         }
     }
 
     /// Settles whose socket this is from the connection metadata the client
-    /// stated, before any request: musli-web's `ws::Handler::connect` hook,
-    /// which `Connection`'s own handler implements with this, so an app
-    /// whose handler is the `Connection`, or is combined with it through
-    /// [`ws::Handler::or`], need not call it. An app with a handler of its
-    /// own calls it from its `connect`.
+    /// stated, before any request: musli-web's `ws::Handler::connect` hook.
+    ///
+    /// Calling it is required: until it has settled, the connection speaks
+    /// for no session, as a refused one, so a forgotten call fails safe
+    /// rather than leaving an impersonated page's socket as its admin (and
+    /// the first request logs it). `Connection`'s own handler implements
+    /// `connect` with it, so an app whose handler is the `Connection`, or is
+    /// combined with it through [`ws::Handler::or`], has it called; an app
+    /// with a handler of its own calls it from its `connect`.
     ///
     /// A browser's upgrade carries only the cookie, so in a page that
     /// impersonates a user the upgrade signed in as the admin. Such a page
@@ -355,16 +364,30 @@ impl Connection {
         self.shared.settled.subscribe()
     }
 
-    /// The session the connection speaks for, `None` once refused.
+    /// The session the connection speaks for, `None` until
+    /// [`accept`](Connection::accept) settled it and once refused.
     fn live_session_id(&self) -> Option<&str> {
         match self.accepted() {
+            Some(Accepted::Upgrade) => Some(&self.shared.upgrade.session.id),
+            Some(Accepted::Page(page)) => Some(&page.session.id),
             Some(Accepted::Refused) => None,
-            _ => Some(self.session_id()),
+            None => {
+                if !self.shared.warned.swap(true, Ordering::Relaxed) {
+                    tracing::error!(
+                        "auth: a socket request arrived before Connection::accept settled the \
+                         connection, so it is refused as unauthorized; call accept from the \
+                         app's ws::Handler::connect, or use the Connection as the handler or \
+                         with ws::Handler::or"
+                    );
+                }
+
+                None
+            }
         }
     }
 
     /// The connection's session through [`Auth::session`], `None` once it
-    /// ended or the connection was refused.
+    /// ended, and before [`accept`](Connection::accept) or once refused.
     async fn session(&self) -> Result<Option<(User, Session)>> {
         match self.live_session_id() {
             Some(id) => self.auth.session(id).await,
@@ -533,14 +556,17 @@ impl Connection {
     /// The id of the user this connection speaks for: the page's once
     /// [`accept`](Connection::accept) switched to its session, otherwise
     /// the upgrade's. For an impersonated session it is the impersonated
-    /// user.
+    /// user. Before `accept` and once refused it is the upgrade's, though
+    /// the connection then speaks for no session and its checks refuse.
     pub fn user_id(&self) -> UserId {
         self.speaks_for().user.id
     }
 
     /// The id of the session this connection speaks for: the page's once
     /// [`accept`](Connection::accept) switched to it, otherwise the
-    /// upgrade's.
+    /// upgrade's. Before `accept` and once refused it is the upgrade's,
+    /// though the connection then speaks for no session and its checks
+    /// refuse.
     pub fn session_id(&self) -> &str {
         &self.speaks_for().session.id
     }
@@ -554,7 +580,9 @@ impl Connection {
 
     /// The connection's session and its user as stored now, or
     /// [`AuthError::Unauthorized`] once the session has ended, as the
-    /// [`SignedIn`] extractor answers over HTTP.
+    /// [`SignedIn`] extractor answers over HTTP, and before
+    /// [`accept`](Connection::accept) settled the connection or once it
+    /// refused.
     ///
     /// For an app's own socket requests that need a signed-in user: like
     /// [`handle`](Connection::handle), it reads the session through

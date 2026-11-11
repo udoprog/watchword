@@ -61,7 +61,8 @@
 //! socket it is from the connection metadata before any request: an
 //! impersonated page states its page credential there, under
 //! [`PAGE_SESSION_HEADER`](crate::PAGE_SESSION_HEADER), and the socket then
-//! speaks for the page's session, or is refused with [`SESSION_ENDED`]. Its
+//! speaks for the page's session, or is refused with [`SESSION_ENDED`]; until
+//! it has run, the connection speaks for no session. Its
 //! `updates` are the socket loop's whole auth arm: an `Updates`
 //! holds the session's guard and the event receiver and yields the updates to
 //! broadcast until the session ends. Its

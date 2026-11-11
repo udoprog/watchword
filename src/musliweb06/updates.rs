@@ -52,6 +52,12 @@ use crate::core::{AuthEvent, SessionGuard};
 /// # }
 /// ```
 ///
+/// [`next`](Updates::next) yields nothing until [`Connection::accept`] has
+/// settled whose socket it is, since the updates are taken before
+/// negotiating; the events sent meanwhile wait in the receiver and are
+/// filtered for the settled session. They do not end merely because
+/// `accept` has not run, only when the upgrade's session ends.
+///
 /// Once [`Connection::accept`] switched the connection to a page's session,
 /// the updates follow both it and the upgrade's session, which vouched for
 /// it, and end when either ends. A refused connection's updates end at once.
@@ -108,6 +114,19 @@ impl Updates {
         loop {
             if self.ended {
                 return None;
+            }
+
+            // Until accept settled whose socket it is, nothing is received,
+            // so what arrives meanwhile is filtered for that session.
+            if self.sessions.conn.accepted().is_none() {
+                tokio::select! {
+                    biased;
+                    _ = self.sessions.ended() => {
+                        self.ended = true;
+                        return None;
+                    }
+                    _ = self.sessions.settled() => continue,
+                }
             }
 
             if self.pending.is_none() {
@@ -214,12 +233,7 @@ impl Sessions {
     /// Resolves once the page's session ended or the connection was
     /// refused; never while it speaks for the upgrade's session.
     async fn page_ended(&self) {
-        let mut settled = self.settled.clone();
-
-        // The connection held here holds the sender.
-        if settled.wait_for(|settled| *settled).await.is_err() {
-            return pending().await;
-        }
+        self.settled().await;
 
         match self.conn.accepted() {
             Some(Accepted::Refused) => {}
@@ -229,6 +243,16 @@ impl Sessions {
                 }
             }
             _ => pending().await,
+        }
+    }
+
+    /// Resolves once [`Connection::accept`] settled.
+    async fn settled(&self) {
+        let mut settled = self.settled.clone();
+
+        // The connection held here holds the sender.
+        if settled.wait_for(|settled| *settled).await.is_err() {
+            pending::<()>().await;
         }
     }
 
