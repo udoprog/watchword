@@ -14,6 +14,7 @@ use watchword_core::{
 };
 
 use super::Error;
+use super::browser;
 use super::transport::{HttpTransport, Transport};
 
 /// Sends `$request` and answers with what `$pattern` binds, or
@@ -234,11 +235,23 @@ impl AuthService {
         call!(self, AuthRequest::Impersonate { id }, AuthResponse::PageSession(page) => page)
     }
 
-    /// Ends the page's impersonated session, and nothing else. Refused with
+    /// Ends the page's impersonated session, and nothing else, and drops
+    /// the page session the page held, also when the server answers that it
+    /// had ended already. Refused with
     /// [`AuthError::Forbidden`](watchword_core::AuthError::Forbidden) when the
     /// session is not impersonated. `POST /api/auth/impersonate/stop`.
     pub async fn stop_impersonating(&self) -> Result<(), Error> {
-        call!(self, AuthRequest::StopImpersonating, AuthResponse::Done => ())
+        let result =
+            async { call!(self, AuthRequest::StopImpersonating, AuthResponse::Done => ()) }.await;
+
+        if result
+            .as_ref()
+            .map_or_else(Error::is_unauthorized, |()| true)
+        {
+            browser::drop_page_session();
+        }
+
+        result
     }
 
     /// The Cloudflare Access settings, or their default when the server has

@@ -7,6 +7,7 @@ use std::borrow::ToOwned;
 use std::boxed::Box;
 use std::cell::RefCell;
 use std::net::{IpAddr, Ipv4Addr};
+use std::rc::Rc;
 use std::string::{String, ToString};
 
 use http::{HeaderMap, HeaderValue, header};
@@ -14,7 +15,7 @@ use http::{HeaderMap, HeaderValue, header};
 use crate::core::{Caller, SessionCookie};
 use crate::types::{
     AuthError, AuthRequest, AuthResponse, LoginRequest, NewUser, PAGE_SESSION_HEADER,
-    PasswordChange, Role, UserChange,
+    PasswordChange, Role, UserChange, UserId,
 };
 use crate::yew023::{AuthService, Error, Transport, TransportFuture};
 use crate::{Auth, MemoryStore, generate_session_key};
@@ -78,7 +79,20 @@ impl Transport for Dispatch {
     }
 }
 
+/// A [`Dispatch`] the test keeps a handle to.
+struct Shared(Rc<Dispatch>);
+
+impl Transport for Shared {
+    fn send(&self, request: AuthRequest) -> TransportFuture<'_> {
+        self.0.send(request)
+    }
+}
+
 async fn setup() -> AuthService {
+    setup_shared().await.0
+}
+
+async fn setup_shared() -> (AuthService, Rc<Dispatch>) {
     let auth = Auth::builder(MemoryStore::new(), generate_session_key())
         .impersonation(true)
         .build();
@@ -93,11 +107,13 @@ async fn setup() -> AuthService {
         auth.test_user(&new, PASSWORD).await.unwrap();
     }
 
-    AuthService::new(Dispatch {
+    let dispatch = Rc::new(Dispatch {
         auth,
         session: RefCell::new(None),
         page: RefCell::new(None),
-    })
+    });
+
+    (AuthService::new(Shared(dispatch.clone())), dispatch)
 }
 
 fn login(login: &str) -> LoginRequest {
@@ -206,6 +222,63 @@ async fn admin_operations_and_impersonation() {
 
     service.delete_user(carol).await.unwrap();
     assert_eq!(service.users().await.unwrap().len(), 2);
+}
+
+/// Signing out of an impersonated page ends only its session, as Stop does,
+/// and the admin stays signed in.
+#[tokio::test]
+async fn signing_out_of_an_impersonated_page() {
+    let service = setup().await;
+    let root = service.login(login("root")).await.unwrap();
+    let bob = bob(&service).await;
+
+    service.impersonate(bob).await.unwrap();
+    assert_eq!(service.me().await.unwrap().id, bob);
+
+    service.logout().await.unwrap();
+    assert_eq!(service.me().await.unwrap().id, root.id);
+
+    // Stop with only the admin's cookie is refused.
+    assert_eq!(
+        service.stop_impersonating().await.unwrap_err(),
+        Error::Auth(AuthError::Forbidden)
+    );
+}
+
+/// A page session that ended answers 401, which the provider shows as the
+/// impersonation having ended, never falling back to the admin's cookie.
+#[tokio::test]
+async fn an_ended_page_session_is_unauthorized() {
+    let (service, dispatch) = setup_shared().await;
+    service.login(login("root")).await.unwrap();
+    let bob = bob(&service).await;
+
+    let page = service.impersonate(bob).await.unwrap();
+    assert!(page.user.impersonated_by.is_some());
+    service.stop_impersonating().await.unwrap();
+
+    // A duplicated tab still holding the credential.
+    *dispatch.page.borrow_mut() = Some(page.credential);
+    assert!(service.me().await.unwrap_err().is_unauthorized());
+    assert!(
+        service
+            .stop_impersonating()
+            .await
+            .unwrap_err()
+            .is_unauthorized()
+    );
+}
+
+async fn bob(service: &AuthService) -> UserId {
+    service
+        .users()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.user.login.as_deref() == Some("bob"))
+        .unwrap()
+        .user
+        .id
 }
 
 /// A transport answering with the wrong response is caught by the service.

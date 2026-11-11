@@ -10,7 +10,8 @@ use phrasebook02::{Args, Catalog, Lang, Phrasebook, Phrases, Source, check};
 use super::account::account_change;
 use super::admin_users::{link_url, matches_filter, page_bounds, relative_time};
 use super::browser::{
-    google_sign_in_url, register_token_from_path, return_url, safe_next, strip_query_param,
+    google_sign_in_url, is_same_origin_url, page_session, register_token_from_path, return_url,
+    safe_next, strip_query_param,
 };
 use super::cloudflare_settings::{failure, header_unverified};
 use super::form::identity_change;
@@ -767,6 +768,33 @@ fn google_sign_in_carries_next() {
     assert_eq!(google("/", "", ""), "/api/auth/google");
     assert_eq!(google("/", "?next=/", ""), "/api/auth/google");
     assert_eq!(google("/", "?error=x", ""), "/api/auth/google");
+}
+
+/// An impersonated page's fetches carry its session only to its own origin.
+#[test]
+fn page_session_only_to_the_origin() {
+    let origin = "https://app.example";
+
+    assert!(is_same_origin_url("https://app.example/api/notes", origin));
+    assert!(is_same_origin_url("https://app.example", origin));
+    assert!(is_same_origin_url("https://app.example?q=1", origin));
+    assert!(is_same_origin_url("https://app.example#top", origin));
+
+    assert!(!is_same_origin_url("https://app.example.evil/api", origin));
+    assert!(!is_same_origin_url("https://app.example:8443/api", origin));
+    assert!(!is_same_origin_url("http://app.example/api", origin));
+    assert!(!is_same_origin_url(
+        "https://cdn.example/app.example/",
+        origin
+    ));
+    // An unknown origin matches nothing.
+    assert!(!is_same_origin_url("/api", ""));
+}
+
+/// Off the browser there is no page session.
+#[test]
+fn no_page_session_off_the_browser() {
+    assert_eq!(page_session(), None);
 }
 
 fn listed(id: u64) -> UserEntry {

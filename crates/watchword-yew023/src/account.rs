@@ -30,6 +30,10 @@ pub struct AccountPanelProps {
 /// (when the app uses logins) and email, changing or setting the password,
 /// switching to Google (when the server offers it), and Sign out.
 ///
+/// In a page an admin opened to impersonate the user it offers no switching
+/// to Google, and Sign out ends only the page's session and closes the page,
+/// as Stop impersonating does in [`UserMenu`](super::UserMenu).
+///
 /// Changes go to `PATCH /api/auth/account` and
 /// `POST /api/auth/account/password`, and the user they answer with replaces
 /// the one in the [`AuthContext`](super::AuthContext). With a socket handed
@@ -44,6 +48,9 @@ pub fn AccountPanel(props: &AccountPanelProps) -> Html {
     let user = auth.user.clone();
     let logins = auth.config.logins;
     let google_method = user.method == Method::Google;
+    // Switching to Google is a navigation, which would carry only the
+    // admin's cookie and bind the admin.
+    let impersonated = user.impersonated_by.is_some();
 
     html! {
         <section class={classes!("auth-account", props.class.clone())}>
@@ -64,7 +71,7 @@ pub fn AccountPanel(props: &AccountPanelProps) -> Html {
             <ProfileForm user={user.clone()} {logins} />
             <PasswordForm user={user.clone()} />
 
-            if auth.config.google {
+            if auth.config.google && !impersonated {
                 <div class="auth-alternatives">
                     if google_method {
                         <a class="auth-google" href={http::GOOGLE_LINK}>{phrases.text("watchword-switch-google-other")}</a>

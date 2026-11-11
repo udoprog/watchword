@@ -70,7 +70,8 @@ fn App() -> Html {
 ```
 
 Inside the provider, [`UserMenu`] gives the signed-in user Account, Users
-(for admins), Sign out, and a way back while an admin impersonates them.
+(for admins), Sign out, and Stop impersonating while an admin impersonates
+them.
 [`AccountPanel`] is the user's own account, [`AdminUsers`] manages users
 for admins, and [`AdminCloudflare`] is the Cloudflare Access settings
 page for admins, which loads and saves the settings watchword keeps.
@@ -229,6 +230,22 @@ as last seen, so the server needs no event mirroring of its own either.
 
 <br>
 
+## Impersonation
+
+An admin impersonates a user in a page of its own, while the admin's
+pages and session stay as they are. That page holds its session in
+`sessionStorage` and sends it in the `watchword-session` header beside
+the admin's cookie: [`http`]'s requests do, and [`AuthProvider`] makes
+every same-origin `fetch` of the page do the same before the app
+renders, so the app's own requests need no change. `XMLHttpRequest` and
+`sendBeacon` are not covered.
+
+In that page Stop impersonating and Sign out end only the page's session
+and close it, and once its session ends the page says so with Close,
+never the sign-in page, which would replace the admin's cookie.
+
+<br>
+
 ## With a musli-web socket
 
 With the `musliweb05` feature (watchword's `musliweb05` and `yew023`
@@ -309,6 +326,7 @@ are:
 | `auth-actions` | a row of buttons |
 | `auth-submit` | a form's submit button |
 | `auth-retry` | the splash's Retry button |
+| `auth-close` | the Close button once an impersonated page's session has ended |
 | `auth-alternatives` | the other sign-in methods |
 | `auth-cloudflare` | the "Sign in with Cloudflare" button |
 | `auth-google` | the "Sign in with Google" or "Sign up with Google" link, or "Switch to Google" on the account panel |

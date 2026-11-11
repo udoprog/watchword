@@ -58,6 +58,9 @@ impl AuthContext {
 
     /// Signs out and shows the sign-in page. The session is forgotten here
     /// even if the server cannot be reached; it then expires on the server.
+    /// In a page an admin opened to impersonate the user, it ends only that
+    /// page's session and closes the page instead, as Stop impersonating
+    /// does.
     pub fn sign_out(&self) {
         self.sign_out.emit(());
     }

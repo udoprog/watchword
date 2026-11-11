@@ -85,6 +85,14 @@ pub struct AuthProviderProps {
 /// leaves the page and comes back to the same `next` (checked again by the
 /// server), or else to the page it left.
 ///
+/// In a page an admin opened to impersonate someone, which holds a page
+/// session in `sessionStorage`, it signs in with that session: before
+/// anything renders, it makes every same-origin `fetch` of the page carry it
+/// and clears `window.opener`. When that session ends it shows
+/// "Impersonation has ended." with Close instead of [`SignIn`], since
+/// signing in there would replace the admin's cookie, and a registration
+/// link there says to open it in a page that is not impersonating.
+///
 /// With the `musliweb05` feature and a socket handed over with
 /// [`AuthContext::set_socket`], it also follows the server's
 /// [`AuthUpdate::Me`](watchword_core::musliweb05::AuthUpdate::Me) (and the
@@ -155,6 +163,9 @@ enum State {
     },
     Register,
     SignedIn(Rc<UserInfo>),
+    /// The impersonated page's session ended. Signing in here would replace
+    /// the admin's cookie, so the page offers only Close.
+    Ended,
 }
 
 /// The messages of [`AuthProvider`].
@@ -279,9 +290,7 @@ impl Component for AuthProvider {
                 self.state = match me {
                     _ if self.register_token.is_some() => State::Register,
                     Some(Ok(user)) => State::SignedIn(Rc::new(user)),
-                    Some(Err(error)) if error.is_unauthorized() => {
-                        State::SignedOut { ended: false }
-                    }
+                    Some(Err(error)) if error.is_unauthorized() => self.signed_out(false),
                     Some(Err(error)) => State::Unreachable(error),
                     None => State::SignedOut { ended: false },
                 };
@@ -308,6 +317,15 @@ impl Component for AuthProvider {
                 return false;
             }
             Msg::SignedOut => {
+                // Signing out of an impersonated page ended only its session
+                // (as Stop impersonating does), so it closes as Close does.
+                if self.impersonated_page || self.is_impersonating() {
+                    browser::drop_page_session();
+                    browser::close_page();
+                    self.state = State::Ended;
+                    return true;
+                }
+
                 browser::replace_url("/");
                 self.state = State::SignedOut { ended: false };
             }
@@ -521,6 +539,17 @@ impl AuthProvider {
                     class={props.class.clone()}
                 />
             },
+            State::Register if self.impersonated_page => html! {
+                <main class={classes!("auth-page", "auth-splash", props.class.clone())}>
+                    if let Some(title) = &props.title {
+                        <p class="auth-title">{title.clone()}</p>
+                    }
+
+                    <div class="auth-message" role="alert">
+                        <p class="auth-error">{self.l10n.phrases().text("watchword-register-impersonating")}</p>
+                    </div>
+                </main>
+            },
             State::Register => match &self.register_token {
                 Some(token) => html! {
                     <Register
@@ -531,6 +560,21 @@ impl AuthProvider {
                     />
                 },
                 None => Html::default(),
+            },
+            State::Ended => html! {
+                <main class={classes!("auth-page", "auth-splash", props.class.clone())}>
+                    if let Some(title) = &props.title {
+                        <p class="auth-title">{title.clone()}</p>
+                    }
+
+                    <div class="auth-message" role="status">
+                        <p class="auth-notice">{self.l10n.phrases().text("watchword-impersonation-ended")}</p>
+                    </div>
+
+                    <div class="auth-actions">
+                        <button type="button" class="auth-close" onclick={Callback::from(|_: MouseEvent| browser::close_page())}>{self.l10n.phrases().text("watchword-close")}</button>
+                    </div>
+                </main>
             },
             State::SignedIn(user) => {
                 let context = AuthContext {
@@ -603,6 +647,23 @@ impl AuthProvider {
         self.state = State::SignedIn(Rc::new(user));
     }
 
+    /// Whether the signed-in user is impersonated.
+    fn is_impersonating(&self) -> bool {
+        matches!(&self.state, State::SignedIn(user) if user.impersonated_by.is_some())
+    }
+
+    /// The state for a page whose session the server does not know, `ended`
+    /// under the user: the sign-in page, or in an impersonated page,
+    /// [`State::Ended`], with the page session dropped.
+    fn signed_out(&self, ended: bool) -> State {
+        if !self.impersonated_page {
+            return State::SignedOut { ended };
+        }
+
+        browser::drop_page_session();
+        State::Ended
+    }
+
     /// Applies what the server said about the session to a signed-in user:
     /// a new user replaces it, and a 401 ends the session. Other failures,
     /// and answers arriving after signing out, change nothing.
@@ -616,7 +677,7 @@ impl AuthProvider {
                 self.signed_in_as(user);
             }
             Err(error) if error.is_unauthorized() => {
-                self.state = State::SignedOut { ended: true };
+                self.state = self.signed_out(true);
             }
             Err(..) => {}
         }

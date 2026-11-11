@@ -113,6 +113,9 @@ watchword-stop-impersonating = Stop impersonating
 watchword-impersonating = Impersonating { $user }.
 watchword-impersonating-as = Impersonating { $user } as { $admin }.
 watchword-stop-forbidden = You can no longer return to your admin account. Sign out instead.
+watchword-impersonation-ended = Impersonation has ended.
+watchword-close = Close
+watchword-register-impersonating = This page is impersonating a user. Open the link in a page that is not impersonating.
 
 ## Account
 

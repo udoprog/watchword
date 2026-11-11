@@ -8,6 +8,7 @@ use yew::platform::spawn_local;
 use yew::prelude::*;
 
 use super::Error;
+use super::browser;
 use super::context::use_auth;
 use super::l10n;
 use super::service::use_auth_service;
@@ -23,8 +24,8 @@ pub struct UserMenuProps {
     /// Called when an admin picks Users, such as to show
     /// [`AdminUsers`](super::AdminUsers). The item is only shown to admins.
     pub on_admin: Callback<()>,
-    /// Called once Stop impersonating has signed the admin back in, such as
-    /// to show [`AdminUsers`](super::AdminUsers) again.
+    /// Called once Stop impersonating has ended the page's session, before
+    /// the page closes.
     #[prop_or_default]
     pub on_stop_impersonating: Callback<()>,
     /// Classes added to the menu.
@@ -37,8 +38,10 @@ pub struct UserMenuProps {
 ///
 /// While an admin impersonates the user ([`UserInfo::impersonated_by`]), a
 /// banner before the menu button says whom they are acting as, with a Stop
-/// impersonating button that signs the admin back in (see
-/// [`AuthService::stop_impersonating`](super::AuthService::stop_impersonating)).
+/// impersonating button that ends the page's session (see
+/// [`AuthService::stop_impersonating`](super::AuthService::stop_impersonating))
+/// and closes the page, or loads `/` when the browser refuses. The admin's
+/// session and other pages are untouched. There, Sign out does the same.
 ///
 /// The menu is a button that opens a list; picking an item closes it. Use it
 /// inside [`AuthProvider`](super::AuthProvider).
@@ -66,11 +69,6 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
 
     let on_account = item(props.on_account.clone());
     let on_admin = item(props.on_admin.clone());
-    let on_sign_out = {
-        let auth = auth.clone();
-        item(Callback::from(move |()| auth.sign_out()))
-    };
-
     let on_stop = {
         let auth = auth.clone();
         let service = service.clone();
@@ -79,7 +77,7 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
         let done = props.on_stop_impersonating.clone();
         let phrases = phrases.clone();
 
-        Callback::from(move |_: MouseEvent| {
+        Callback::from(move |()| {
             if *stopping {
                 return;
             }
@@ -97,8 +95,8 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
             spawn_local(async move {
                 match service.stop_impersonating().await {
                     Ok(()) => {
-                        auth.check_session();
                         done.emit(());
+                        browser::close_page();
                     }
                     Err(error) => {
                         stop_error.set(Some(stop_error_message(&phrases, &error)));
@@ -113,6 +111,16 @@ pub fn UserMenu(props: &UserMenuProps) -> Html {
             });
         })
     };
+
+    // There, signing out would end only the page's session, as Stop does.
+    let on_sign_out = if auth.user.impersonated_by.is_some() {
+        item(on_stop.clone())
+    } else {
+        let auth = auth.clone();
+        item(Callback::from(move |()| auth.sign_out()))
+    };
+
+    let on_stop = on_stop.reform(|_: MouseEvent| ());
 
     let banner = impersonation_banner(&phrases, &auth.user).map(|text| {
         html! {
