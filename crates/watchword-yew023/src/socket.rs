@@ -44,7 +44,7 @@ pub(super) fn insert_page_session(metadata: &mut api::Metadata, page_session: Op
 
 /// What the provider follows of a socket's state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SocketState {
+pub enum SocketState {
     Open,
     /// Closed, connecting or refused for any reason but [`SESSION_ENDED`].
     Closed,
