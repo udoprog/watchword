@@ -18,14 +18,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
-    # Without `std` or `alloc` only the plain types build, and the tests need
-    # `alloc`, so this only checks that the crates build for tests.
-    - run: cargo test --workspace --no-default-features
     - run: cargo test --workspace --all-features --all-targets
     - run: cargo test --workspace --all-features --doc
 
-  # Each feature is checked alone, because a feature that only compiles
-  # alongside another breaks the apps that take it alone.
   clippy:
     runs-on: ubuntu-latest
     steps:
@@ -90,8 +85,6 @@ jobs:
     - uses: dtolnay/rust-toolchain@stable
     - run: cargo doc --workspace --all-features --no-deps
 
-  # How docs.rs builds the docs of each crate, with the feature badges of
-  # `doc(cfg)`.
   docsrs:
     runs-on: ubuntu-latest
     env:
