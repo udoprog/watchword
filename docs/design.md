@@ -33,7 +33,7 @@ musli-web-macros):
   by default) nor `alloc` it has only the plain types (`UserId`, `Role`,
   `Access`, `Method`, `Conflict`, `AuthConfig`, `MIN_PASSWORD_LEN`), and
   `alloc` adds those holding strings. Its `musli02` feature adds musli's
-  derives, its `musliweb05` feature the musli-web API types of 2.7, and its
+  derives, its `musliweb06` feature the musli-web API types of 2.7, and its
   `axum08` feature `IntoResponse` for `AuthError`, and its `sqll015` feature
   sqll 0.15's `BindValue`, `Bind` and `FromColumn` for `UserId`, `Role`,
   `Access` and `Method` (Rust's orphan rule keeps these impls in the crate
@@ -138,10 +138,10 @@ without its default features, so the time zone databases it does not need for
 | `phrasebookcatalog01` | `watchword::phrasebookcatalog01` (watchword-core's): `L10N`, the components' messages as a phrasebook-catalog catalog, without yew or `std`, for native tools such as an l10n checker | phrasebook-catalog 0.1 (no features) |
 | `yew023` | `std` + `phrasebookcatalog01` + watchword-yew023: components, context, hook, HTTP client, and `L10N` re-exported | yew 0.23, gloo-net, web-sys, wasm-bindgen-futures, phrasebook 0.2 (`yew023`) |
 | `test-util` | `server` + for apps' tests: `Auth::test_user` and `Auth::test_session` (2.2), the store conformance suite as `store_suite!` (2.3); with `google` also `AuthBuilder::google_endpoints`, and with `google` and `axum08` `google::fake::FakeGoogle` (2.4) | nothing more |
-| `musliweb05` *(2.7)* | `alloc` + `musli02` + `watchword::musliweb05`: the auth endpoints and broadcast as musli-web 0.5 API types; with `axum08` also `musliweb05::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.5 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
+| `musliweb06` *(2.7)* | `alloc` + `musli02` + `watchword::musliweb06`: the auth endpoints and broadcast as musli-web 0.6 API types; with `axum08` also `musliweb06::Connection`, the server handler; with `yew023` `AuthContext::set_socket`, through which the components follow the broadcasts and send their requests over the socket | musli-web 0.6 (`api`; `ws` with `axum08`; `web03` with `yew023`) |
 
 The modules are `watchword::{types, core, store, cloudflare, google, axum08,
-musliweb05, phrasebookcatalog01, yew023}`, and the most-used names that need no versioned feature are
+musliweb06, phrasebookcatalog01, yew023}`, and the most-used names that need no versioned feature are
 re-exported at the root.
 
 ## 2. API
@@ -173,11 +173,10 @@ impl UserInfo { pub fn name(&self) -> &str; pub fn is_admin(&self) -> bool; }
 /// The admin behind an impersonated session.
 pub struct Impersonator { pub id: UserId, pub name: String }
 
-/// The answer to impersonating: a session as `user` for the one page that
-/// asked (decision 33). `credential` is `{id}.{b64url(HMAC-SHA256(key, "page." id))}`.
-pub struct PageSession { pub credential: String, pub user: UserInfo /* with impersonated_by */ }
-pub const PAGE_SESSION_HEADER: &str = "watchword-session";   // carries the credential on any request
-pub const PAGE_SESSION_PARAM: &str = "watchword_session";    // or in the query of a GET/HEAD
+/// The answer to impersonating: an impersonated session for one page
+/// (decision 33), and its user, with `impersonated_by`.
+pub struct PageSession { pub credential: String, pub user: UserInfo }
+pub const PAGE_SESSION_HEADER: &str = "watchword-session";   // the request header that carries `credential`
 
 /// A user in the admin list.
 pub struct UserEntry { pub user: UserInfo, pub link_expires_at: Option<Timestamp> }
@@ -246,7 +245,8 @@ The primitives:
   key and build and check the cookie, whose value is
   `{id}.{b64url(HMAC-SHA256(key, id))}`; `page_credential` and
   `verify_page_credential` do the same for a `PageSession`'s credential,
-  whose MAC covers `page.{id}`, so neither value is accepted as the other.
+  `{id}.{b64url(HMAC-SHA256(key, "page." id))}`, so neither is accepted as
+  the other.
 - `SESSION_LIFETIME` (30 days, fixed), `IMPERSONATION_LIFETIME` (8 hours, for
   impersonated sessions) and `TOKEN_LIFETIME` (7 days) set the lifetimes;
   `session_expiry`, `token_expiry` and `is_expired` apply them.
@@ -348,15 +348,22 @@ impersonated, `cloudflare_available(&headers)` answers `AuthConfig::cloudflare`,
 and `session_id`, `set_cookie`, `clear_cookie` and `client_address` read and
 write the cookie and the client's address for a framework integration.
 
-`session_id(&headers)` takes the session from the page credential when the
-request carries one (the `watchword-session` header), and from the cookie
-only when it carries none; `session_id_in(&headers, query)` also takes it
-from the `watchword_session` parameter of `query`, which the axum
-extractors pass for a `GET` or `HEAD` only (a WebSocket upgrade, an image). A page credential
-that fails to verify gives `None`: it never falls back to the cookie, so a
-page whose impersonation ended is signed out rather than turned into the
-admin. Only `impersonate` mints page credentials, so only impersonated
-sessions travel this way; the cookie carries the rest.
+`request_session(&headers)` is the live session a request signs in with,
+and its user, which every adapter uses (the extractors, `require_session`,
+`Caller::headers`):
+
+- With a `watchword-session` header, the page credential's session, which
+  must be impersonated and live (as `session` says), and the request's
+  cookie must carry a live session of its admin, so the credential works
+  only beside that admin's cookie. Anything else is `None`; it never falls
+  back to the cookie, so a page whose impersonation ended is signed out,
+  never turned into the admin.
+- Otherwise the cookie's session (`session_id(&headers)`, the cookie
+  alone), which must not be impersonated.
+
+So a page credential is not a bearer token, and each carrier holds one
+kind of session: `impersonate` mints page credentials only for impersonated
+sessions, and nothing puts one in a cookie.
 `cookie_header(session_id)` is the request's `Cookie` header for a session
 (`set_cookie`'s `name=value` pair without its attributes), for a test or a
 client making requests as that session, so none splits a `Set-Cookie` by hand.
@@ -447,7 +454,7 @@ one method:
 let caller = Caller::new()                 // signed out, no headers, no address
     .signed_in(&user, &session)            // already read for this request (the HTTP extractors)
     .session(&session_id)                  // or: read through `Auth::session` when needed (a socket)
-    .headers(&headers)                     // the cookie, when neither is given; Cloudflare Access credentials
+    .headers(&headers)                     // the session (`Auth::request_session`), when neither is given; Cloudflare Access credentials
     .address(auth.client_address(peer, &headers));   // what `Login` is throttled by; it needs one
 let Dispatched { response, cookie, .. } = auth.dispatch(&caller, AuthRequest::Me).await?;
 // cookie: Option<SessionCookie>, `Set(Session)` or `Clear`, for the requests that change it
@@ -462,7 +469,7 @@ response (`AuthResponse: IntoResponse` in watchword-core's `axum08`) and the
 cookie `dispatch` asked for; `Connection::handle` decodes the endpoint's
 body into the `AuthRequest`, dispatches it with the upgrade's session id,
 and writes the response, which encodes as the value it carries (watchword-core's
-`musliweb05`), the endpoint's own response type. Neither the HTTP paths and
+`musliweb06`), the endpoint's own response type. Neither the HTTP paths and
 bodies nor the musli-web endpoints and their types changed: the enum is not a
 wire format and has no serde or musli derives of its own.
 
@@ -680,7 +687,7 @@ new tests arrive in minor releases. The example is a cargo example with
 
 ```rust
 // Extractors; each needs `Auth: FromRef<S>`.
-SignedIn { user: User, session: Session }   // 401 without a live session of an active (or impersonated pending) user; an impersonated one only while its admin is an active admin; the page credential wins over the cookie
+SignedIn { user: User, session: Session }   // 401 without a live session of an active (or impersonated pending) user; an impersonated one only while its admin is an active admin; `Auth::request_session`
 Admin(SignedIn)                             // 403 unless the user is an active admin *now*
 MaybeSignedIn(Option<SignedIn>)
 LiveSession(String)                         // the session id; liveness only, cached for 10 s, for hot asset routes
@@ -714,12 +721,14 @@ noticing a session ended in another process.
 
 Each of these, and `require_session`, loads the session once per request and
 leaves the `SignedIn` in the request's extensions, where the others (and an
-`Extension<SignedIn>`) find it. They read it with `Auth::session_id_in`
-(2.2): a page credential in the header, or in the query of a `GET`/`HEAD`,
-wins over the cookie, and one that fails is a 401, never the cookie's
-session. So an app's own routes behind `SignedIn`/`Admin`, its `/ws`
-upgrade and its image and download routes serve an impersonated page as the
-impersonated user with no change on the server.
+`Extension<SignedIn>`) find it. They read it with `Auth::request_session`
+(2.2): a `watchword-session` header wins over the cookie, and one that
+fails is a 401, never the cookie's session. So an app's own routes behind
+`SignedIn`/`Admin` serve an impersonated page's requests as the impersonated
+user with no change on the server. A WebSocket upgrade cannot carry the
+header, so at `/ws` `SignedIn` is the cookie's (the admin, in an
+impersonated page) until the socket's negotiation says otherwise (2.7).
+`LiveSession` caches what `request_session` found, binding included.
 
 `require_session` lets through watchword's public paths, the sign-in path and
 the app's own (`public`), and any request with a live session. Otherwise a
@@ -780,8 +789,8 @@ the app is served with `into_make_service_with_connect_info::<SocketAddr>()`.
 | `POST`/`DELETE /api/auth/users/{id}/link` | admin | issue (`Link`) / use up the links (204) |
 | `POST /api/auth/users/{id}/sign-out` | admin | 204; sign out everywhere |
 | `POST /api/auth/users/{id}/revoke` | admin | `UserInfo`; revoke access; not self |
-| `POST /api/auth/users/{id}/impersonate` | admin, if enabled | `PageSession`: a session as that user that records the admin, for 8 hours, and its page credential; no cookie; not self, not revoked, not from an impersonated session |
-| `POST /api/auth/impersonate/stop` | signed in, impersonated | 204, ending the impersonated session and nothing else; no cookie; 403 unless the session is impersonated (401 once its admin is no longer an active admin, which ends it; 403 if that happens while the request runs) |
+| `POST /api/auth/users/{id}/impersonate` | admin, if enabled | `PageSession`: a session as that user that records the admin, for `IMPERSONATION_LIFETIME`, and its page credential; no cookie; not self, not revoked, not from an impersonated session |
+| `POST /api/auth/impersonate/stop` | signed in, impersonated | 204, ending the page's impersonated session and nothing else; no cookie; 403 unless the session is impersonated (401 once its admin is no longer an active admin, which ends it; 403 if that happens while the request runs) |
 
 `{id}` is the decimal `UserId`. Registration and reset links point at the
 frontend route `/register/{token}`, which `<AuthProvider>` serves.
@@ -820,17 +829,46 @@ The components make every request with the provider's `AuthService`
   `http` module stays public as the low-level layer: one function per
   route (gloo-net with same-origin cookies, so the library does not depend
   on the app's gloo version), the Google URLs, which are navigations rather
-  than requests, and `send`. Each adds the `watchword-session` header while
-  the page holds a page session (below).
-- The page session (decision 33) is the `PageSession` credential kept in
+  than requests, and `send`. Each adds the `watchword-session` header in an
+  impersonated page (below).
+- An impersonated page (decision 33) holds its `PageSession` credential in
   `sessionStorage` under `watchword-session`: it survives a reload and dies
-  with the tab. `page_session() -> Option<String>` reads it,
-  `page_session_header() -> Option<(&'static str, String)>` gives the header
-  for an app's own fetches, and `page_url(path) -> String` appends
-  `watchword_session` to a path for what the browser loads by itself: the
-  app's `/ws` URL, `<img>`, `<audio>`, download links. Outside an
-  impersonated page they give `None` and the path unchanged, so an app calls
-  them unconditionally.
+  with the tab, and a duplicated tab (or a window the page opens) starts
+  with a copy, so it is the same impersonation. In such a page:
+  - `<AuthProvider>` wraps `window.fetch` before its children render, so
+    every same-origin `fetch`, the app's own and any library's, carries the
+    header unless it set one. An app's own requests therefore need no
+    change, and none can forget the header and act as the admin through
+    the cookie. `XMLHttpRequest` and `sendBeacon` are not covered.
+  - It also adds a Content Security Policy (`<meta http-equiv>`) whose
+    `img-src` and `media-src` allow only `blob:`, `data:` and the
+    provider's `public_media` (none by default: path prefixes such as
+    `/assets/`, or other origins), so an
+    `<img>` or `<audio>` the app did not load through `MediaUrl` fails
+    visibly instead of showing what the admin may see.
+  - `socket_headers()` gives the negotiate headers for the app's musli-web
+    socket: `watchword-session` while the page has a page session, none
+    otherwise (2.7).
+- `MediaUrl` loads what the browser would otherwise fetch by itself, and
+  is used unconditionally. Outside an impersonated page it is the URL
+  itself, at once, so normal pages keep streaming, range requests and the
+  HTTP cache. In one, it fetches the URL with the header and gives an
+  object URL of the body. Object URLs are shared per page by URL and
+  counted, so an image shown twice is fetched once; the last `MediaUrl` of
+  a URL to drop revokes it, and dropping one still loading aborts the
+  fetch. A 401 there ends the impersonation as any other does.
+  - `MediaUrl::load(url, on_change: Callback<()>)` for a struct component,
+    which keeps it in a field: `src() -> Option<AttrValue>` (`None` while
+    loading or failed), `is_loading()`, `error() -> Option<&Error>`.
+  - `use_media_url(url) -> MediaUrl`, the hook over it, which loads again
+    when `url` changes: `<img src={media.src()} />`.
+  - `download(url, filename: Option<&str>)` saves a file, from a click
+    handler: through an `<a download>` outside an impersonated page, and
+    in one by fetching it into an object URL first, named by `filename`,
+    else the response's `Content-Disposition`, revoked once saved.
+  The cost, in an impersonated page only: audio and video download whole
+  before they play, with no streaming or seeking ahead, large files sit in
+  memory, and nothing is cached across loads of the page.
 - `AuthService` (clone, equal by its transport) holds an `Rc<dyn
   Transport>` and has one `async` method per operation, which builds the
   `AuthRequest` and takes the expected `AuthResponse` variant apart; any
@@ -841,6 +879,14 @@ The components make every request with the provider's `AuthService`
   `HttpTransport`. `cloudflare_settings`/`set_cloudflare_settings` and
   `google_settings`/`set_google_settings` (also as `http::` functions) are
   the admin settings calls; Google has no settings component.
+  `impersonate(id)` asks for a `PageSession` and `stop_impersonating()`
+  ends the page's. `impersonate_in_new_page(id, url)` is the one an admin's
+  page uses: when called, in the click handler, it opens an empty same-origin
+  window (so popup blockers allow it), then asks `impersonate` as the
+  admin, writes the credential into that window's `sessionStorage` and
+  navigates it to `url`, any URL of the app's, hash routes included. If
+  the request fails it closes the window and returns the error; if the
+  browser blocked the window it sends nothing.
 - `Error` (formerly `http::Error`, still re-exported there) is
   `#[non_exhaustive]`, since app transports construct it.
 - `use_auth_service()` reads the `AuthService` context, which
@@ -860,15 +906,15 @@ The components make every request with the provider's `AuthService`
     unreachable.
   - It shows `<SignIn>` when signed out, and `<Register>` on `/register/{token}`.
     Otherwise it renders its children with an `AuthContext`.
-  - Opened as `{path}#watchword-impersonate={id}` by a same-origin
-    `window.opener`, it first removes the fragment with
-    `history.replaceState`, asks `Impersonate` over HTTP (the admin's
-    cookie still signs that request) and keeps the answer's credential as
-    the page session. The fragment is ignored without a same-origin opener,
-    so a crafted link does nothing. In a page with a page session, a 401
-    clears it and shows "Impersonation has ended." with Close instead of
-    `<SignIn>`, since signing in there would replace the admin's cookie.
-  - Props: `title` (the app's name), `signed_out_notice`, which overrides
+  - In an impersonated page it signs in with the page session, and sets
+    `window.opener` to null so the page and the admin's stay unrelated.
+    When that session ends (a 401, or the socket refused with
+    `SESSION_ENDED`, 2.7), it drops the page session and shows
+    "Impersonation has ended." with Close instead of `<SignIn>`, since
+    signing in there would replace the admin's cookie; Close closes the
+    page, or loads `/` as the cookie's user when the browser refuses.
+  - Props: `title` (the app's name), `public_media` (above),
+    `signed_out_notice`, which overrides
     the "session has ended" message `watchword-session-ended`,
     `sign_in_path`, the page `RequireSession` redirects to, and `service`,
     an `AuthService` over the app's own transport, which the provider makes
@@ -890,8 +936,9 @@ The components make every request with the provider's `AuthService`
   `is_admin()`, `sign_out()`, `refresh()`, `set_user(UserInfo)` and
   `check_session()`.
   - `check_session()` asks `Me` (`GET /api/auth/me`) whether the session is still
-    live. A 401 there shows `<SignIn>` with the signed-out notice, so a user
-    whose session ended elsewhere finds out instead of facing a dead page.
+    live. A 401 there shows `<SignIn>` with the signed-out notice (in an
+    impersonated page, the ended notice above), so a user whose session
+    ended elsewhere finds out instead of facing a dead page.
     With a socket from `set_socket` the provider calls it itself when the
     socket closes (see 2.7); an app without one calls it when it suspects the
     session ended.
@@ -907,7 +954,7 @@ The components make every request with the provider's `AuthService`
   - `use_users() -> Users` and `AuthContext::subscribe_users(callback) ->
     (Users, Listener)` give the users list shared with `<AdminUsers>`
     (below);
-  - with `musliweb05`, `AuthContext::on_update(callback) -> Listener` and
+  - with `musliweb06`, `AuthContext::on_update(callback) -> Listener` and
     `use_auth_update(f)` pass on each `AuthUpdate` the socket brings, after
     the provider and the shared list applied it.
   `Listener` unsubscribes on drop.
@@ -935,10 +982,9 @@ The components make every request with the provider's `AuthService`
   Account, Users (for admins only) and Sign out. While an admin impersonates
   the user it also shows a banner, "Impersonating {user} as {admin}.", with a
   Stop impersonating button that calls `AuthService::stop_impersonating`
-  (`Result<(), Error>`), which ends the page's session and clears the page
-  session, calls `on_stop_impersonating` (optional) and closes the page, or,
-  when the browser refuses to close it, loads `/` as the cookie's user. The
-  admin's session and other tabs are untouched.
+  (`Result<(), Error>`), which ends the page's session and drops the page
+  session, calls `on_stop_impersonating` (optional) and closes the page as
+  Close does. The admin's session and other pages are untouched.
 - `<AdminUsers>` covers:
   - the user list, filtered and paged by `query: UsersQuery` (`page_size`,
     default `PAGE_SIZE`), with `on_query_change` so an app can keep the query
@@ -946,11 +992,11 @@ The components make every request with the provider's `AuthService`
   - status icons and the link state;
   - add user, edit login/email, role select, new or revoked link (shown once,
     with Copy), sign out everywhere, revoke access, impersonate (when
-    `on_impersonate` is set) and delete. Impersonate opens
-    `/#watchword-impersonate={id}` with `window.open` in the click itself
-    (so no popup blocker stops it), through the public
-    `open_impersonation(id, path)`, then calls `on_impersonate`; the
-    admin's page stays as it is.
+    `on_impersonate` is set) and delete. Impersonate calls
+    `AuthService::impersonate_in_new_page(id, impersonate_path)` (prop,
+    default `/`), shows a refusal in the row as other actions do, and calls
+    `on_impersonate` with the user once the page is open; the admin's page
+    stays as it is.
 
   It shows the provider's shared `Users`, and keeps one of its own outside a
   provider. Its other props are `me: Option<Rc<UserInfo>>` (the admin whose
@@ -1013,23 +1059,24 @@ The components make every request with the provider's `AuthService`
   token. `app_name` overrides the message `watchword-cloudflare-the-app` ("the
   app") in the instructions.
 
-### 2.7 musli-web integration (`musliweb05`)
+### 2.7 musli-web integration (`musliweb06`)
 
-*Status: built are the types (`watchword::musliweb05`), the server's
+*Status: built are the types (`watchword::musliweb06`), the server's
 `Connection` (`new`, `update`, `lagged`, `handle` and its `ws::Handler`
 impl, the accessors `signed_in`, `require_admin`, `user_id` and `session_id`, and
 `updates`, the socket loop's auth arm as an `Updates`), and the components
 following the broadcasts and sending their requests over the socket
 (`AuthContext::set_socket`). `examples/app` is wired this way and is the
 reference for an app. Decisions 13, 16–20 and 23 record why it is shaped this
-way.*
+way. Not built yet: the move from musli-web 0.5 to 0.6 and `accept`, which
+wait on musli-web 0.6's negotiate headers (decision 33).*
 
 An app whose frontend already talks to its server over a musli-web WebSocket
 can carry watchword's account and user-management operations, and its live
 updates, on that same connection. The HTTP routes of 2.5 stay; this is a
 second transport for the operations that can use it, not a replacement.
 
-#### What musli-web 0.5 gives and constrains
+#### What musli-web 0.6 gives and constrains
 
 - `musli_web::define! { ... }` turns each `pub type X;` with an `impl
   Endpoint for X` or `impl Broadcast for X` into a type with a `const ID:
@@ -1058,19 +1105,28 @@ second transport for the operations that can use it, not a replacement.
   differ. `Handle::call(body)` is a future of the decoded response; its error
   says whether the request was never sent (`is_not_connected`). It reconnects
   by itself, with backoff.
+- Assumed of 0.6, the breaking release that adds negotiate headers (musli
+  card b1fea8dd; its API is musli's, and the names here stand for it):
+  the client's service builder takes a closure, called on every connect and
+  reconnect, giving the headers sent with NEGOTIATE; the server runs an
+  async hook after negotiating and before dispatching any request, which
+  gets those headers and accepts, possibly replacing the connection's
+  state, or refuses with a close code and reason; and the client sees a
+  refusal as such, with its code and reason in the state change, and does
+  not reconnect with the same headers. Nothing else of 0.5 changes.
 
-#### Types: `watchword::musliweb05` (feature `musliweb05`)
+#### Types: `watchword::musliweb06` (feature `musliweb06`)
 
 The definitions live in watchword-core, which is wasm-safe and is what an
 app's shared `api` crate already depends on (through `watchword` with
 `musli02`). watchword-core depends on musli-web under the versioned key
-`musli-web05` (`default-features = false, features = ["api"]`) and gives the
-macro that path with `#![musli(crate = musli_web05)]`, so no alias is needed.
-The module is re-exported as `watchword::musliweb05`.
+`musli-web06` (`default-features = false, features = ["api"]`) and gives the
+macro that path with `#![musli(crate = musli_web06)]`, so no alias is needed.
+The module is re-exported as `watchword::musliweb06`.
 
 ```rust
-musli_web05::api::define! {
-    #![musli(crate = musli_web05)]
+musli_web06::api::define! {
+    #![musli(crate = musli_web06)]
     #[musli(id = 32000)] pub type Me;            // MeRequest -> UserInfo, with impersonated_by
     #[musli(id = 32001)] pub type UpdateAccount; // UserChange -> UserInfo; own login/email
     #[musli(id = 32002)] pub type ChangePassword;// PasswordChange -> UserInfo
@@ -1086,8 +1142,11 @@ musli_web05::api::define! {
     #[musli(id = 32012)] pub type SetCloudflare; // CloudflareConfig -> CloudflareConfig; admin
     #[musli(id = 32013)] pub type Google;        // GoogleRequest -> GoogleSettings; admin
     #[musli(id = 32014)] pub type SetGoogle;     // GoogleSettingsUpdate -> GoogleSettings; admin
+    #[musli(id = 32015)] pub type Impersonate;   // ImpersonateRequest { id } -> PageSession; admin
     #[musli(id = 32100)] pub type AuthBroadcast; // event AuthUpdate
 }
+
+pub const SESSION_ENDED: u16 = 4001;   // close code of a refused negotiation, reason "session ended"
 
 pub enum AuthUpdate {
     Me(UserInfo),           // the connection's own user changed (role, login, email, credential)
@@ -1137,10 +1196,10 @@ pins ids of its own can land in it, which `include` reports under `cargo
 check` and `Or` only once a binary is built (see below).
 
 The app's `api` crate includes watchword's list in its own `define!`, as
-`include watchword_core::musliweb05 as Auth;` (or `watchword::musliweb05`),
-taking `watchword-core` (or `watchword`) with `musliweb05`. Its `Request`
-then has an `Auth(musliweb05::Request)` variant and its `Event` an
-`Auth(musliweb05::Event)` one, and a clash with the app's own ids fails the
+`include watchword_core::musliweb06 as Auth;` (or `watchword::musliweb06`),
+taking `watchword-core` (or `watchword`) with `musliweb06`. Its `Request`
+then has an `Auth(musliweb06::Request)` variant and its `Event` an
+`Auth(musliweb06::Event)` one, and a clash with the app's own ids fails the
 build. This is the main way: the client gets watchword's endpoints through
 the app's list type, so one socket handle sends both; the app's exhaustive
 `match` on its `Request` does not compile until it forwards `Request::Auth`;
@@ -1158,20 +1217,20 @@ catches a clash:
 use musli_web::api::Id;
 
 const _: () = {
-    assert!(api::Request::IDS.is_disjoint(&watchword_core::musliweb05::Request::IDS));
-    assert!(api::Event::IDS.is_disjoint(&watchword_core::musliweb05::Event::IDS));
+    assert!(api::Request::IDS.is_disjoint(&watchword_core::musliweb06::Request::IDS));
+    assert!(api::Event::IDS.is_disjoint(&watchword_core::musliweb06::Event::IDS));
 };
 ```
 
-#### Server: `watchword::musliweb05::Connection` (`musliweb05` + `axum08`)
+#### Server: `watchword::musliweb06::Connection` (`musliweb06` + `axum08`)
 
 musli-web's server side (`ws::Handler`, `Incoming`, `Outgoing`) needs its
 `ws` feature, which builds on axum 0.8, so the handler exists when both
-`musliweb05` and `axum08` are on (`musli-web05?/ws` is enabled by `axum08`).
+`musliweb06` and `axum08` are on (`musli-web06?/ws` is enabled by `axum08`).
 
 ```rust
 // At upgrade, from the `SignedIn` the app's /ws route already extracts:
-let conn = watchword::musliweb05::Connection::new(auth.clone(), &signed_in);
+let conn = watchword::musliweb06::Connection::new(auth.clone(), &signed_in);
 
 // In the app's Handler::handle, in the arm of the included list:
 api::Request::Auth(request) => conn.handle(request, incoming, outgoing).await,   // -> Result<bool, RequestError>
@@ -1185,6 +1244,9 @@ let server = musli_web::axum08::server(socket, AppHandler { .. }.or(conn.clone()
 // the event receiver, filtered through `update` and `lagged` below.
 let mut updates = conn.updates();
 let Some(Ok(mut server)) = updates.unless_ended(connect).await else { return };   // stops a stalled negotiation once the session ends
+
+// In musli-web's negotiate hook, before any request is dispatched:
+conn.accept(&headers).await   // -> Result<(), Refusal>; Refusal is SESSION_ENDED, or a store failure
 
 // In the app's connection loop, next to server.run():
 update = updates.next() => {
@@ -1209,6 +1271,17 @@ event = events.recv() => {
 - `Connection` holds the `Auth` and the `SignedIn` of the upgrade (behind an
   `Arc`, for the guard `updates` starts). It is `Clone` and cheap, so it sits
   inside the app's own handler.
+- `accept` settles whose socket it is. The upgrade carries only the
+  cookie, so in an impersonated page its `SignedIn` is the admin. Without
+  a `watchword-session` negotiate header it keeps the upgrade's session,
+  which must not be impersonated. With one, it checks the credential as
+  `Auth::request_session` does, beside the upgrade's cookie session, which
+  must be its admin's, and switches the connection and its clones to the
+  page's session before any request; `updates` follows both sessions from
+  then on, so either ending ends the socket. A credential that fails
+  refuses with `SESSION_ENDED`: the socket closes, and is never left as
+  the admin. A store failure refuses too, with a generic close, and is
+  logged.
 - `updates()` returns an `Updates`, which owns the `Auth::guard` of the
   upgrade's session and an `Auth::events` receiver, subscribed when it is
   made, so it is taken before negotiating. `next()` yields the next update to
@@ -1265,7 +1338,7 @@ so `UpdateUser` on oneself is refused for a regular user over both
 transports; `UpdateAccount` refuses a role change with `RoleNotChangeable` as
 its route does. A body that does not decode also gives `Ok(false)`, and
 musli-web answers the request with the decode error. A refusal or an
-internal failure is returned as the `Err`: a `musliweb05::RequestError`, the
+internal failure is returned as the `Err`: a `musliweb06::RequestError`, the
 app handler's error type, which implements `ws::ResponseError` rather than
 `Display`, so it decides what the client sees. A refusal is sent as its
 typed `AuthError`, with the `AuthError`'s text as the message, and an
@@ -1276,7 +1349,7 @@ its cause, and not a refusal. The app's own requests convert into it with `?` (f
 failures itself, and does not log again what `handle` returns, which is
 already logged.
 
-#### Frontend: the components' socket transport (`musliweb05` + `yew023`)
+#### Frontend: the components' socket transport (`musliweb06` + `yew023`)
 
 The `/ws` upgrade needs a session, so an app opens its socket inside
 `<AuthProvider>`, after sign-in. It hands the handle to watchword once:
@@ -1302,8 +1375,8 @@ then passed to the app's `on_update` listeners. `Error`
 has a variant for a socket request error; a refusal over the socket is
 `Error::Auth`, as over HTTP.
 
-As built: watchword-yew023 has a `musliweb05` feature, which watchword's
-`musliweb05` turns on with `yew023`. `set_socket` with the handle already set
+As built: watchword-yew023 has a `musliweb06` feature, which watchword's
+`musliweb06` turns on with `yew023`. `set_socket` with the handle already set
 does nothing, and the socket is forgotten whenever the provider leaves the
 signed-in state, so the next sign-in hands over its own.
 
@@ -1346,14 +1419,13 @@ internal error, fails with `Error::Socket`. The public `http` functions
 stay HTTP-only. `RevokeAccess` answers with the user over both
 transports; `<AdminUsers>` drops it, as before.
 
-Impersonating changes no cookie, so no open socket ever speaks for a
-session other than its page's: the admin's page keeps its socket, and the
-impersonated page opens its own. An app builds its web03 `Service` with
-`Connect::location(&page_url("/ws"))`, so in an impersonated page the
-upgrade carries the page credential in its query, where the app's `/ws`
-route's `SignedIn` finds it; musli-web reconnects to the same URL, which
-stays valid as long as the session. The provider has the page session
-before it renders its children, which is where an app builds its socket.
+No cookie changes hands when impersonating, so no socket speaks for a
+session other than its page's: the admin's page keeps its own, and the
+impersonated page opens its own. The app builds its web03 `Service` with
+musli-web's header closure set to `socket_headers` (2.6), which the
+provider can answer before it renders the children that build it. A
+refusal with `SESSION_ENDED` ends the impersonation in the page as a 401
+does; in a page without a page session the provider checks the session.
 
 The example's wiring, as a reference: a shared `api` crate with the app's
 own `define!` list (implicit ids), which includes watchword's list as
@@ -1367,7 +1439,7 @@ dropping the server, which closes the socket, once `next` gives `None`. The fron
 `set_socket`, which then checks the session whenever the socket closes;
 musli-web reconnects by itself while the session lives.
 
-watchword-yew023 takes musli-web under `musli-web05` with `web03`; it calls
+watchword-yew023 takes musli-web under `musli-web06` with `web03`; it calls
 no musli-web macros, so it needs no alias.
 
 #### What stays HTTP, and why
@@ -1380,8 +1452,7 @@ no musli-web macros, so it needs no alias.
 | Cloudflare Access | the credentials are the Access JWT and headers on an HTTP request, checked when signing in (and by `config` for `AuthConfig::cloudflare`) |
 | `GET`/`POST /api/auth/register/{token}` | the user is signed out; registering sets the cookie |
 | `/api/auth/google*` | browser navigations: redirects to Google and its callback, which sets the cookie |
-| `POST /api/auth/users/{id}/impersonate` | the new page asks it before it has a page session or a socket |
-| `POST /api/auth/impersonate/stop` | the page closes after it, so a socket endpoint would buy nothing |
+| `POST /api/auth/impersonate/stop` | it ends the session the socket speaks for, so the socket closes while it answers |
 
 All other account and admin operations are in the band. The HTTP routes for
 them remain, for apps without musli-web and as the fallback while a socket is
@@ -1549,7 +1620,7 @@ once the release is on crates.io.
 17. **Ids: a pinned band, in an included list.** musli-web numbers each
     `define!` list from 1, so watchword pins all of its ids explicitly in
     32000–32255, and an app includes watchword's list in its own (musli-web
-    0.5's `include`), passing the `Auth` variant's requests to
+    0.6's `include`), passing the `Auth` variant's requests to
     `Connection::handle`; an app whose API crate should not depend on
     watchword's types combines its handler with `Connection` through
     `ws::Handler::or` instead. Either way musli-web checks at compile time that
@@ -1566,14 +1637,16 @@ once the release is on crates.io.
     other rules themselves, so the socket path cannot drift from the HTTP
     path and an app cannot skip a check by routing a request differently. The
     cost is one store read per request, the same as over HTTP.
-19. **musli-web is a versioned dependency.** musli-web 0.5 is not 1.0 and
+19. **musli-web is a versioned dependency.** musli-web 0.6 is not 1.0 and
     appears in the API (`Handle`, `Incoming`, the generated types), so the
-    feature, dependency key and module are `musliweb05`/`musli-web05`/
-    `musliweb05` (1.2). `define!` is given the versioned path with
-    `#![musli(crate = musli_web05)]`; until 0.3 an `extern crate musli_web05
+    feature, dependency key and module are `musliweb06`/`musli-web06`/
+    `musliweb06` (1.2). `define!` is given the versioned path with
+    `#![musli(crate = musli_web06)]`; until 0.3 an `extern crate musli_web05
     as musli_web;` alias stood in for it, which was crate-wide and would have
-    kept a later `musliweb06` out of the same crate. Now one can sit beside
-    it.
+    kept a later version out of the same crate. `musliweb06` replaced
+    `musliweb05` rather than sitting beside it, since a 0.5 socket cannot
+    carry a page session and would speak for the admin in an impersonated
+    page (decision 33).
 20. **A lagged event stream resyncs the page with one update.** `Auth::events`
     is a bounded broadcast channel, so a slow socket loop can miss events and
     nothing replays them. Rather than replay or a per-socket queue,
@@ -1814,65 +1887,99 @@ once the release is on crates.io.
     issued for. `offers_google` became `async`, a breaking change accepted
     before the release, because whether Google is on now depends on the
     store.
-33. **Impersonation is scoped to the page that asked for it.** The cookie
-    is one per browser, so swapping it made every tab of the admin the
-    user and signed the admin out until Stop. Now the admin's page opens
-    a new page at `#watchword-impersonate={id}`; that page, with a
-    same-origin opener, asks `Impersonate` itself (signed in by the
-    admin's cookie) and keeps the answer's `PageSession` credential in
-    `sessionStorage`, which survives a reload and dies with the tab. It
-    sends the credential in the `watchword-session` header, and in the
-    `watchword_session` query of what the browser loads by itself (the
-    WebSocket upgrade, which cannot carry headers, images, audio,
-    downloads). A page credential wins over the cookie, and one that fails
-    is a 401, never the admin. Stop ends that session alone and closes the
-    page. No cookie changes hands, so the stale-socket mark of decision 30
-    and `CookieChange::Replace` are gone.
+33. **Impersonation is scoped to one page.** The cookie is one per
+    browser, so swapping it made every tab of the admin the user and signed
+    the admin out until Stop. Now the admin's page opens a new page holding
+    an impersonated session of its own, in `sessionStorage`, sent in the
+    `watchword-session` header and in musli-web's negotiate headers, and
+    only beside the admin's cookie; the admin's page and session stay as
+    they are. The cookie-swapping flow is removed, not kept behind an
+    option: two flows would keep the stale-socket mark of decision 30 and
+    `CookieChange::Replace`, both now gone, and double the tests.
 
-    - *No handoff in the URL.* The fragment holds only the user id, the
-      new page asks for the session over a same-origin `fetch`, and a page
-      opened without a same-origin opener ignores it, so there is nothing
-      to leak, expire or redeem once, and no store change. A one-time
-      handoff (from the token store, whose `create_token` uses up the
-      user's live link and whose `redeem_token` sets a credential, or kept
-      in memory like Google's flows, which breaks behind several
-      processes) was rejected as more code for the same result. The
-      window is opened in the click, before any request, so popup
-      blockers allow it.
-    - *Only impersonated sessions travel outside the cookie.* The page
-      credential's MAC covers `page.{id}`, and only `impersonate` mints
-      one, so an admin's own session can never be read by script: it stays
-      in the `HttpOnly`, `SameSite=Strict` cookie. A custom header is not
-      sent cross-origin without a CORS preflight watchword never answers,
-      and `sessionStorage` is per origin, so CSRF exposure does not grow.
-      XSS does: script on the impersonated page can read its credential.
-      That is bounded by what the credential is: a session as the user,
-      ended by Stop, by the admin losing admin rights, and after
-      `IMPERSONATION_LIFETIME` (8 hours), since a closed page cannot end
-      its session (a reload and a close look the same to it).
-    - *The query parameter is a long-lived credential in a URL*, which can
-      reach the app's access logs. It is accepted on `GET`/`HEAD` only and
-      only as a page credential. A one-time ticket per upgrade would need
-      musli-web to build a new URL on each reconnect, which 0.5 cannot,
-      and `<img>`/`<audio>` cannot carry tickets at all.
-    - *The cookie-swapping flow is removed*, not kept behind an option: two
-      flows would keep the stale-socket handling and double the tests for a
-      flow nobody wants. A 0.4 impersonated cookie session left at upgrade
-      still works until stopped or expired; stopping it ends it, and that
-      browser signs in again.
+    - *The admin's page hands the session over.*
+      `impersonate_in_new_page` opens an empty window in the click, asks
+      `Impersonate` itself, writes the credential into the window's
+      `sessionStorage` (same-origin window access) and navigates it. Errors
+      show where the admin acted, nothing goes in a URL, so there is no
+      handoff to leak, expire or redeem once and nothing to craft a link
+      to, and the landing URL is any of the app's, hash routes and
+      fragments included. Rejected: a fragment the new page exchanges
+      itself (it takes the app's fragment, needs a same-origin-opener check
+      against crafted links, and shows refusals in the wrong page);
+      `postMessage` (a handshake that needs the admin's page alive and
+      listening until the new one loads); a one-time handoff token in the
+      URL (store or memory, more code for the same result). A window opened
+      with an opener starts with a copy of its opener's `sessionStorage`,
+      harmless here since the admin's page holds no page session and the
+      key is written over; a duplicated tab copies it too, so a duplicate
+      is the same impersonation, and Stop in one ends both. A link the page
+      opens in a new tab (`noopener`) starts without it, as the admin, with
+      the admin's menu showing it. Assumed, to be checked in a browser
+      test: a write to the empty window's `sessionStorage` survives its
+      navigation to the same origin.
+    - *The credential works only beside its admin's cookie.*
+      `request_session` and `accept` require the request's cookie to carry
+      a live session of the impersonating admin. Script that reads the
+      credential (XSS) cannot use it outside that browser, since the
+      cookie is `HttpOnly`, and signing out in the admin's page, or the
+      admin's session ending any way, ends every impersonated page in that
+      browser at its next request, and its socket at once. Its MAC covers
+      `page.{id}`, so a cookie value is never a page credential nor the
+      reverse, and `Session::impersonator` already tells the two kinds of
+      session apart, so storage needs no new field: the header takes only
+      impersonated sessions and the cookie never does. A custom header,
+      not `Authorization`, which a proxy's basic auth or an app's own API
+      may already use, and the credential is not a bearer token.
+    - *Ending: Stop, the admin's cookie, and a fixed bound.* Stop ends the
+      page's session and closes the page. A closed page leaves its session
+      until `IMPERSONATION_LIFETIME` (8 hours, a working day), usable only
+      by a page in the admin's browser that still holds it (a reopened
+      tab). Rejected: `pagehide` with a keepalive Stop and ending when the
+      socket has been gone a while, since a reload looks the same as a
+      close and an HTTP-only app has no socket; an idle (sliding) expiry
+      and a list of the admin's live impersonations in their page, since
+      both need new `Store` methods in every app's store, while the binding
+      already makes a forgotten page harmless and Sign out ends them all.
+    - *A page credential wins, and never falls back.* With the header, the
+      cookie only vouches for the admin; a failure is a 401 (over the
+      socket, a refusal), and the page says "Impersonation has ended."
+      with Close, never `<SignIn>`, which would replace the admin's cookie.
+    - *Forgetting the header fails safe.* A request with only the cookie
+      looks the same from the admin's page and the impersonated one, so
+      the server cannot refuse it (neither Fetch Metadata nor `Origin`
+      names the page). So the impersonated page adds the header to every
+      same-origin `fetch` itself, and its Content Security Policy blocks
+      the images and audio the app did not load through `MediaUrl`, which
+      fetches them with the header into object URLs (the user's choice
+      over a credential in a URL). Requiring a header on every unsafe
+      cookie request was rejected: it breaks every app's every `POST`
+      outside impersonation too. Downloads not made through `download`,
+      forms and navigations still go as the cookie's user.
+    - *The socket states the session in its negotiation.* A browser cannot
+      set headers on an upgrade, and no credential goes in a URL, so
+      musli-web 0.6 carries negotiate headers, rebuilt on each reconnect,
+      and a server hook (`accept`) switches the `Connection` from the
+      upgrade's cookie session to the page's, or refuses. `musliweb06`
+      replaces `musliweb05` (decision 19). `Impersonate` joins the band,
+      since it no longer sets a cookie; Stop stays HTTP, as it ends the
+      session its socket speaks for.
 
     What changes, by crate. watchword-core: `PageSession`,
-    `PAGE_SESSION_HEADER`, `PAGE_SESSION_PARAM`, `AuthResponse::PageSession`,
-    no `CookieChange::Replace`. watchword: `page_credential`,
+    `PAGE_SESSION_HEADER`, `AuthResponse::PageSession`, no
+    `CookieChange::Replace`; `musliweb06` (was `musliweb05`) with
+    `Impersonate` and `SESSION_ENDED`. watchword: `page_credential`,
     `verify_page_credential`, `IMPERSONATION_LIFETIME`,
-    `Auth::session_id_in`, `impersonate` answering a `PageSession`,
-    `stop_impersonating` answering nothing; musliweb05 needs no change, its
-    `Connection` takes the `SignedIn` the upgrade extracted. watchword-yew023:
-    `page_session`, `page_session_header`, `page_url`, `open_impersonation`,
-    `AuthService::impersonate -> PageSession`, `stop_impersonating -> ()`.
-    An app changes its frontend only: its own fetches add
-    `page_session_header()`, its socket is built on `page_url("/ws")`, and
-    its `<img>`/`<audio>`/download URLs go through `page_url`. Its
-    endpoints behind `SignedIn`/`Admin` and its socket guard are unchanged.
-    An app that reconnected its socket in `on_impersonate` or
-    `on_stop_impersonating` drops that.
+    `Auth::request_session`, `impersonate` answering a `PageSession`,
+    `stop_impersonating` answering nothing, `Connection::accept`.
+    watchword-yew023: `AuthService::impersonate -> PageSession`,
+    `impersonate_in_new_page`, `stop_impersonating -> ()`,
+    `socket_headers`, `MediaUrl`, `use_media_url`, `download`, and the
+    props `public_media` (`<AuthProvider>`) and `impersonate_path`
+    (`<AdminUsers>`). An app: moves to musli-web 0.6 and `musliweb06`,
+    passes `socket_headers` to its socket and calls `conn.accept` in the
+    negotiate hook; loads its `<img>`, `<audio>` and downloads of
+    signed-in routes through `MediaUrl`/`download`, and lists its public
+    media in `public_media`; drops any socket reconnect from
+    `on_impersonate`/`on_stop_impersonating`. Its fetches and its routes
+    behind `SignedIn`/`Admin` are unchanged.
