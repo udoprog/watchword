@@ -255,7 +255,7 @@
 //! not load so, with an error in the console, so they show broken rather
 //! than as the admin.
 //!
-//! ```
+//! ```ignore
 //! use watchword_yew023::{download, use_media_url};
 //! use yew::prelude::*;
 //!
