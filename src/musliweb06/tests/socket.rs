@@ -735,6 +735,7 @@ async fn google_settings_are_for_admins() {
         enabled: true,
         client_id: "client".to_owned(),
         client_secret: Some("secret".to_owned()),
+        public_url: None,
     };
 
     let forbidden = Some(AuthError::Forbidden);
@@ -746,7 +747,7 @@ async fn google_settings_are_for_admins() {
         use crate::types::GoogleSettings;
 
         let stored: GoogleSettings = admin.send(GoogleRequest).await.unwrap();
-        assert_eq!(stored, GoogleSettings::default());
+        assert!(!stored.enabled && stored.public_url_fixed);
 
         let saved: GoogleSettings = admin.send(update).await.unwrap();
         assert!(saved.enabled && saved.has_secret && !saved.fixed);

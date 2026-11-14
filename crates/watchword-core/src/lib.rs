@@ -622,6 +622,14 @@ pub struct GoogleSettings {
     /// The app fixed the client when it started, so these settings are
     /// read-only.
     pub fixed: bool,
+    /// The URL the app is served at, which Google redirects back under;
+    /// `None` until one is set, and Google sign-in is off without it.
+    #[cfg_attr(feature = "musli02", musli(default))]
+    pub public_url: Option<String>,
+    /// The app fixed the public URL when it started, so only the client
+    /// may be changed.
+    #[cfg_attr(feature = "musli02", musli(default))]
+    pub public_url_fixed: bool,
 }
 
 #[cfg(feature = "alloc")]
@@ -638,6 +646,10 @@ pub struct GoogleSettingsUpdate {
     pub client_id: String,
     /// A new client secret; `None` or an empty one keeps the stored secret.
     pub client_secret: Option<String>,
+    /// The URL the app is served at; `None` keeps the stored one. Ignored
+    /// when the app fixed it.
+    #[cfg_attr(feature = "musli02", musli(default))]
+    pub public_url: Option<String>,
 }
 
 #[cfg(feature = "alloc")]
@@ -650,6 +662,7 @@ impl fmt::Debug for GoogleSettingsUpdate {
                 "client_secret",
                 &self.client_secret.as_ref().map(|_| "<redacted>"),
             )
+            .field("public_url", &self.public_url)
             .finish()
     }
 }

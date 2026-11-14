@@ -558,12 +558,15 @@ mod musliweb06 {
             enabled: true,
             client_id: "id".into(),
             client_secret: Some("secret".into()),
+            public_url: Some("https://app.example".into()),
         });
         round_trip(Ok::<_, AuthError>(GoogleSettings {
             enabled: true,
             client_id: "id".into(),
             has_secret: true,
             fixed: false,
+            public_url: Some("https://app.example".into()),
+            public_url_fixed: false,
         }));
 
         round_trip(Ok::<_, AuthError>(user()));

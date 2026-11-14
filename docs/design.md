@@ -653,7 +653,12 @@ new tests arrive in minor releases. The example is a cargo example with
   id and secret with `Auth::set_google(actor, session, GoogleSettingsUpdate
   { enabled, client_id, client_secret })`, kept as JSON under the store's
   `google` setting and read once, when first needed; the redirect URL still
-  comes from the app's public URL. A missing or empty `client_secret` keeps
+  comes from the app's public URL. `AuthBuilder::google_at_runtime()` lets
+  the admin set that too (`GoogleSettingsUpdate::public_url`, stored beside
+  the client), so an app sets Google up wholly from its settings page; a
+  URL given to `google_public_url` is fixed and wins, and `GoogleSettings`
+  reports the one in effect as `public_url` with `public_url_fixed`.
+  Enabled without a usable public URL, Google stays off with a warning. A missing or empty `client_secret` keeps
   the stored one, and nothing clears it: disabling Google stops its use.
   `GoogleSettings { enabled, client_id, has_secret, fixed }` is what is read
   back, never the secret, and `AuditEvent::GoogleChanged` carries it before
@@ -1927,8 +1932,9 @@ once the release is on crates.io.
     refuses it: an app's command-line or environment settings override the
     UI, and an app that passed a client before keeps exactly that behaviour.
     Runtime settings are opted into with `AuthBuilder::google_public_url`,
-    since the redirect URL is the app's to know; only the id and secret are
-    stored. The secret goes to the store and to Google and nowhere else: not
+    where the redirect URL is the app's to know and only the id and secret
+    are stored, or with `AuthBuilder::google_at_runtime`, where the public
+    URL is stored with them for an app set up from its web UI alone. The secret goes to the store and to Google and nowhere else: not
     to the browser, which sees `has_secret`, not to the audit event, which
     says `secret_changed`, and not to the logs. Replacing the client drops
     its pending flows rather than keeping them for the old one, which is

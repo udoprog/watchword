@@ -289,6 +289,8 @@ pub struct AuthBuilder {
     #[cfg(feature = "google")]
     google_public_url: Option<crate::google::Url>,
     #[cfg(feature = "google")]
+    google_at_runtime: bool,
+    #[cfg(feature = "google")]
     google_endpoints: crate::google::Endpoints,
 }
 
@@ -425,9 +427,12 @@ impl AuthBuilder {
                         self.google_endpoints,
                     )),
                     (None, Some(url)) => Some(crate::google::runtime::Google::runtime(
-                        url,
+                        Some(url),
                         self.google_endpoints,
                     )),
+                    (None, None) if self.google_at_runtime => Some(
+                        crate::google::runtime::Google::runtime(None, self.google_endpoints),
+                    ),
                     (None, None) => None,
                 },
                 #[cfg(feature = "axum08")]
@@ -522,6 +527,8 @@ impl Auth {
             google: None,
             #[cfg(feature = "google")]
             google_public_url: None,
+            #[cfg(feature = "google")]
+            google_at_runtime: false,
             #[cfg(feature = "google")]
             google_endpoints: crate::google::Endpoints::default(),
         }

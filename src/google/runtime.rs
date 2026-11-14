@@ -29,15 +29,22 @@ struct Stored {
     enabled: bool,
     client_id: String,
     client_secret: String,
+    /// The public URL an admin set, used unless the app fixed one.
+    public_url: Option<String>,
 }
 
 impl Stored {
-    fn settings(&self) -> GoogleSettings {
+    fn settings(&self, fixed: Option<&Url>) -> GoogleSettings {
         GoogleSettings {
             enabled: self.enabled,
             client_id: self.client_id.clone(),
             has_secret: !self.client_secret.is_empty(),
             fixed: false,
+            public_url: match fixed {
+                Some(url) => Some(url.as_str().to_owned()),
+                None => self.public_url.clone(),
+            },
+            public_url_fixed: fixed.is_some(),
         }
     }
 }
@@ -57,7 +64,7 @@ impl Google {
         Self::Fixed(Arc::new(Provider::new(config, endpoints)))
     }
 
-    pub(crate) fn runtime(public_url: Url, endpoints: Endpoints) -> Self {
+    pub(crate) fn runtime(public_url: Option<Url>, endpoints: Endpoints) -> Self {
         Self::Runtime(Box::new(Runtime {
             public_url,
             endpoints,
@@ -88,17 +95,21 @@ impl Google {
         match self {
             Self::Fixed(provider) => {
                 let config = provider.config();
+                let mut public_url = config.redirect_url.clone();
+                public_url.set_path("/");
 
                 Ok(GoogleSettings {
                     enabled: true,
                     client_id: config.client_id.clone(),
                     has_secret: !config.client_secret.is_empty(),
                     fixed: true,
+                    public_url: Some(public_url.as_str().to_owned()),
+                    public_url_fixed: true,
                 })
             }
             Self::Runtime(runtime) => {
                 runtime.load(store).await?;
-                Ok(runtime.state().stored.settings())
+                Ok(runtime.settings(&runtime.state().stored))
             }
         }
     }
@@ -106,8 +117,9 @@ impl Google {
 
 /// A Google client kept in the store.
 pub(crate) struct Runtime {
-    /// The app's public URL, which Google redirects back under.
-    public_url: Url,
+    /// The app's public URL, which Google redirects back under, when the
+    /// app fixed it; otherwise the stored one is used.
+    public_url: Option<Url>,
     endpoints: Endpoints,
     /// Set once the client was read from the store.
     loaded: OnceCell<()>,
@@ -125,6 +137,10 @@ struct State {
 }
 
 impl Runtime {
+    fn settings(&self, stored: &Stored) -> GoogleSettings {
+        stored.settings(self.public_url.as_ref())
+    }
+
     fn state(&self) -> std::sync::RwLockReadGuard<'_, State> {
         self.state.read().unwrap_or_else(PoisonError::into_inner)
     }
@@ -174,10 +190,18 @@ impl Runtime {
             _ => before.client_secret.clone(),
         };
 
+        let public_url = match update.public_url.as_deref().map(str::trim) {
+            _ if self.public_url.is_some() => before.public_url.clone(),
+            Some("") => None,
+            Some(url) => Some(url.to_owned()),
+            None => before.public_url.clone(),
+        };
+
         let stored = Stored {
             enabled: update.enabled,
             client_id: update.client_id.trim().to_owned(),
             client_secret,
+            public_url,
         };
 
         let json = serde_json::to_string(&stored)
@@ -185,31 +209,50 @@ impl Runtime {
         store.set_setting(SETTINGS_KEY, &json).await?;
 
         let secret_changed = stored.client_secret != before.client_secret;
-        let after = stored.settings();
+        let after = self.settings(&stored);
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
         self.apply(&mut state, stored, false);
-        Ok((before.settings(), after, secret_changed))
+        Ok((self.settings(&before), after, secret_changed))
     }
 
     /// Runs with `stored`, replacing the client only when it changed, and
     /// logging what took effect.
     fn apply(&self, state: &mut State, stored: Stored, first: bool) {
-        let config = if stored.enabled {
-            match GoogleConfig::new(
-                stored.client_id.clone(),
-                stored.client_secret.clone(),
-                &self.public_url,
-            ) {
-                Ok(config) => Some(config),
-                Err(error) => {
-                    tracing::warn!(
-                        "Google sign-in is enabled, but no one can sign in through it: {error}"
-                    );
-                    None
+        let public_url = match (&self.public_url, &stored.public_url) {
+            (Some(url), _) => Some(Ok(url.clone())),
+            (None, Some(url)) => Some(Url::parse(url)),
+            (None, None) => None,
+        };
+
+        let config = match (stored.enabled, public_url) {
+            (false, _) => None,
+            (true, Some(Ok(public_url))) => {
+                match GoogleConfig::new(
+                    stored.client_id.clone(),
+                    stored.client_secret.clone(),
+                    &public_url,
+                ) {
+                    Ok(config) => Some(config),
+                    Err(error) => {
+                        tracing::warn!(
+                            "Google sign-in is enabled, but no one can sign in through it: {error}"
+                        );
+                        None
+                    }
                 }
             }
-        } else {
-            None
+            (true, Some(Err(error))) => {
+                tracing::warn!(
+                    "Google sign-in is enabled, but its public URL is not a URL, so no one can sign in through it: {error}"
+                );
+                None
+            }
+            (true, None) => {
+                tracing::warn!(
+                    "Google sign-in is enabled, but no public URL is set, so no one can sign in through it"
+                );
+                None
+            }
         };
 
         state.stored = stored;

@@ -44,6 +44,19 @@ impl AuthBuilder {
         self
     }
 
+    /// Lets an admin set both the Google OAuth client and the public URL at
+    /// runtime with [`Auth::set_google`], so an app offers Google sign-in
+    /// set up wholly from its settings page. Google sign-in is off until
+    /// both are set. A URL given to
+    /// [`google_public_url`](Self::google_public_url) is fixed and wins
+    /// over a stored one; ignored when [`google`](Self::google) is given a
+    /// client.
+    #[cfg_attr(watchword_docsrs, doc(cfg(feature = "google")))]
+    pub fn google_at_runtime(mut self) -> Self {
+        self.google_at_runtime = true;
+        self
+    }
+
     /// Points the Google client at other endpoints, such as a
     /// [`FakeGoogle`](crate::google::fake::FakeGoogle), so an app can test
     /// signing in with Google offline (features `test-util` and `google`).
@@ -92,7 +105,8 @@ impl GoogleFailure {
 impl Auth {
     /// The Google sign-in settings, or `None` when Google sign-in is neither
     /// given to [`AuthBuilder::google`] nor may be set at runtime (see
-    /// [`AuthBuilder::google_public_url`]). The client secret is never
+    /// [`AuthBuilder::google_public_url`] and
+    /// [`AuthBuilder::google_at_runtime`]). The client secret is never
     /// returned, only whether one is set.
     ///
     /// Errors only when the store fails.
@@ -108,8 +122,10 @@ impl Auth {
     /// Stores the Google sign-in settings, under the store's `google`
     /// setting, and applies them at once. Returns them as
     /// [`google`](Auth::google) does. A missing or empty secret keeps the
-    /// stored one. Settings that are enabled but lack a client id or secret
-    /// leave Google sign-in off, with a warning logged.
+    /// stored one, and so does a missing public URL; an empty one clears
+    /// it, and one the app fixed is not changed. Settings that are enabled
+    /// but lack a client id, a secret or a usable public URL leave Google
+    /// sign-in off, with a warning logged.
     ///
     /// Changing the client ends the Google sign-ins in progress, which have
     /// to start again.

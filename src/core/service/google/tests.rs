@@ -23,6 +23,17 @@ fn update(client_id: &str, client_secret: Option<&str>) -> GoogleSettingsUpdate 
         enabled: true,
         client_id: client_id.to_owned(),
         client_secret: client_secret.map(ToOwned::to_owned),
+        public_url: None,
+    }
+}
+
+/// What a runtime client with the public URL fixed reports before a
+/// client is saved.
+fn unset() -> GoogleSettings {
+    GoogleSettings {
+        public_url: Some(public_url().as_str().to_owned()),
+        public_url_fixed: true,
+        ..GoogleSettings::default()
     }
 }
 
@@ -108,6 +119,8 @@ async fn a_fixed_client_wins() -> TestResult {
             client_id: "fixed".to_owned(),
             has_secret: true,
             fixed: true,
+            public_url: Some(public_url().as_str().to_owned()),
+            public_url_fixed: true,
         })
     );
     assert!(auth.offers_google().await?);
@@ -129,7 +142,7 @@ async fn settings_change_at_runtime() -> TestResult {
     let root = user(&store, "root", Role::Admin).await?;
     let session = auth.create_session(root.id).await?;
 
-    assert_eq!(auth.google().await?, Some(GoogleSettings::default()));
+    assert_eq!(auth.google().await?, Some(unset()));
     assert!(!auth.offers_google().await?);
     assert_eq!(
         refused(auth.google_sign_in(None).await),
@@ -146,6 +159,7 @@ async fn settings_change_at_runtime() -> TestResult {
             client_id: "first".to_owned(),
             has_secret: true,
             fixed: false,
+            ..unset()
         }
     );
     assert_eq!(auth.google().await?, Some(saved));
@@ -228,7 +242,7 @@ async fn malformed_settings_are_read_safely() -> TestResult {
     let root = user(&store, "root", Role::Admin).await?;
     let session = auth.create_session(root.id).await?;
 
-    assert_eq!(auth.google().await?, Some(GoogleSettings::default()));
+    assert_eq!(auth.google().await?, Some(unset()));
     assert!(!auth.offers_google().await?);
 
     auth.set_google(&root, &session, update("id", Some("secret")))
@@ -309,7 +323,7 @@ async fn changing_settings_is_audited() -> TestResult {
         events,
         [AuditEvent::GoogleChanged {
             actor: by_root,
-            before: GoogleSettings::default(),
+            before: unset(),
             after: first.clone(),
             secret_changed: true,
         }]
@@ -333,5 +347,58 @@ async fn changing_settings_is_audited() -> TestResult {
             secret_changed: true,
         }]
     );
+    Ok(())
+}
+
+/// With neither a client nor a public URL from the app, an admin sets both,
+/// and Google sign-in is off until the public URL is there.
+#[tokio::test]
+async fn public_url_is_set_at_runtime() -> TestResult {
+    let store = MemoryStore::new();
+    let auth = Auth::builder(store.clone(), generate_session_key())
+        .google_at_runtime()
+        .build();
+    let root = user(&store, "root", Role::Admin).await?;
+    let session = auth.create_session(root.id).await?;
+
+    assert_eq!(auth.google().await?, Some(GoogleSettings::default()));
+
+    let saved = auth
+        .set_google(&root, &session, update("id", Some("secret")))
+        .await?;
+    assert_eq!(saved.public_url, None);
+    assert!(!auth.offers_google().await?);
+
+    let with_url = GoogleSettingsUpdate {
+        public_url: Some(" https://example.com ".to_owned()),
+        ..update("id", None)
+    };
+    let saved = auth.set_google(&root, &session, with_url).await?;
+    assert_eq!(saved.public_url.as_deref(), Some("https://example.com"));
+    assert!(!saved.public_url_fixed);
+    assert!(auth.offers_google().await?);
+    assert_eq!(sign_in(&auth).await?.0, "id");
+
+    // An update without one keeps it; an empty one clears it.
+    let saved = auth.set_google(&root, &session, update("id", None)).await?;
+    assert_eq!(saved.public_url.as_deref(), Some("https://example.com"));
+
+    let cleared = GoogleSettingsUpdate {
+        public_url: Some(String::new()),
+        ..update("id", None)
+    };
+    let saved = auth.set_google(&root, &session, cleared).await?;
+    assert_eq!(saved.public_url, None);
+    assert!(!auth.offers_google().await?);
+
+    // A fixed one is not changed by an update.
+    let fixed = runtime(&store);
+    let other = GoogleSettingsUpdate {
+        public_url: Some("https://other.example".to_owned()),
+        ..update("id", None)
+    };
+    let saved = fixed.set_google(&root, &session, other).await?;
+    assert_eq!(saved.public_url, Some(public_url().as_str().to_owned()));
+    assert!(saved.public_url_fixed);
     Ok(())
 }

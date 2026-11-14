@@ -476,7 +476,10 @@ async fn settings_routes_set_the_client_at_runtime() {
     assert_eq!(off.status, StatusCode::OK, "{}", off.body);
     assert_eq!(
         off.body,
-        json!({ "enabled": false, "client_id": "", "has_secret": false, "fixed": false })
+        json!({
+            "enabled": false, "client_id": "", "has_secret": false, "fixed": false,
+            "public_url": "https://app.example/", "public_url_fixed": true,
+        })
     );
     let config = call(&app, Method::GET, "/api/auth/config", None, None).await;
     assert_eq!(config.body["google"], json!(false));
@@ -492,7 +495,10 @@ async fn settings_routes_set_the_client_at_runtime() {
     assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
     assert_eq!(
         saved.body,
-        json!({ "enabled": true, "client_id": "client", "has_secret": true, "fixed": false })
+        json!({
+            "enabled": true, "client_id": "client", "has_secret": true, "fixed": false,
+            "public_url": "https://app.example/", "public_url_fixed": true,
+        })
     );
     assert!(!saved.body.to_string().contains("\"secret\""));
 
