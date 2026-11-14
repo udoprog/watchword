@@ -2838,7 +2838,7 @@ dependencies = [
 
 [[package]]
 name = "watchword"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "aws-lc-rs",
  "axum",
@@ -2865,7 +2865,7 @@ dependencies = [
 
 [[package]]
 name = "watchword-core"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "jiff",
@@ -2912,7 +2912,7 @@ dependencies = [
 
 [[package]]
 name = "watchword-yew023"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "gloo-net 0.7.0",
  "jiff",
