@@ -31,7 +31,7 @@ sqll015 = ["std", "dep:sqll015"]
 phrasebookcatalog01 = ["dep:phrasebookcatalog01"]
 
 [dependencies]
-jiff = { version = "0.2.37", default-features = false, features = ["serde"] }
+jiff = { version = "1.0.0", default-features = false, features = ["serde"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
 thiserror = { version = "2.0.18", default-features = false }
 

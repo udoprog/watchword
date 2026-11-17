@@ -29,8 +29,8 @@ musliweb06 = ["std", "dep:musli-web06", "watchword-core/musliweb06"]
 [dependencies]
 watchword-core = { path = "../watchword-core", version = "=0.6.0", default-features = false }
 yew = "0.23.0"
-gloo-net = { version = "0.7.0", default-features = false, features = ["http", "json"] }
-jiff = { version = "0.2.37", default-features = false, features = ["js"] }
+gloo-net = { version = "0.8.0", default-features = false, features = ["http", "json"] }
+jiff = { version = "1.0.0", default-features = false, features = ["js"] }
 serde = { version = "1.0.229", default-features = false }
 wasm-bindgen-futures = "0.4.56"
 phrasebook02 = { package = "phrasebook", version = "0.2.0", features = ["yew023"] }

@@ -44,11 +44,11 @@ yew023 = ["std", "phrasebookcatalog01", "dep:watchword-yew023"]
 
 [dependencies]
 watchword-core = { path = "crates/watchword-core", version = "=0.6.0", default-features = false }
-jiff = { version = "0.2.37", default-features = false, features = ["serde"] }
+jiff = { version = "1.0.0", default-features = false, features = ["serde"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
 thiserror = { version = "2.0.18", default-features = false }
 
-base64 = { version = "0.22.1", optional = true }
+base64 = { version = "0.23.1", optional = true }
 bcrypt = { version = "0.19.1", optional = true }
 cookie = { version = "0.18.1", optional = true }
 hmac = { version = "0.13.0", optional = true }
@@ -62,7 +62,7 @@ aws-lc-rs = { version = "1.18.1", optional = true }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"], optional = true }
 serde_json = { version = "1.0.151", optional = true }
 url = { version = "2.5.8", optional = true }
-lru = { version = "0.18.5", optional = true }
+lru = { version = "0.19.0", optional = true }
 
 axum08 = { package = "axum", version = "0.8.9", default-features = false, features = ["tokio"], optional = true }
 
