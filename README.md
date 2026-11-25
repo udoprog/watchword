@@ -124,10 +124,10 @@ updates beside the app's own API (`musliweb06`): a reference for apps taking
 the library, and a way to try the components by hand. It is its own cargo
 workspace, so it adds nothing to the library's builds or lockfile.
 
-Build the frontend with [trunk], then run the server, which serves it:
+Build the frontend with [trug], then run the server, which serves it:
 
 ```sh
-cd examples/app/frontend && trunk build
+cd examples/app/frontend && trug build
 cd examples/app && cargo run -p watchword-example-server -- --bind 127.0.0.1:8080
 ```
 
@@ -141,8 +141,8 @@ is configured on the app's Settings page, which watchword serves, or from
 `CLOUDFLARE_TEAM_DOMAIN` and `CLOUDFLARE_AUDIENCE` until saved there; `CLOUDFLARE_TRUST_EMAIL_HEADER=1` accepts Access's email
 header alone, for local testing only. `--help` lists the options.
 
-trunk builds with the `wasm-bindgen` CLI matching `examples/app/Cargo.lock`,
-downloading it unless it is installed or already in trunk's cache.
+trug builds with the `wasm-bindgen` CLI matching `examples/app/Cargo.lock`,
+downloading it unless it is installed or already in trug's cache.
 
 [`axum08`]: https://docs.rs/watchword/latest/watchword/axum08/index.html
 [`cloudflare`]: https://docs.rs/watchword/latest/watchword/cloudflare/index.html
@@ -162,6 +162,6 @@ downloading it unless it is installed or already in trunk's cache.
 [musli-web]: https://docs.rs/musli-web
 [phrasebook-catalog]: https://docs.rs/phrasebook-catalog
 [phrasebook]: https://docs.rs/phrasebook
-[trunk]: https://trunkrs.dev
+[trug]: https://udoprog.github.io/trug/
 [watchword-core]: https://docs.rs/watchword-core
 [watchword-yew023]: https://docs.rs/watchword-yew023

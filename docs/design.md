@@ -57,7 +57,7 @@ manifests released in lockstep.
 
 The server-only dependencies (bcrypt, aws-lc-rs, tokio, axum, reqwest, sqll) and
 the browser-only ones (yew, gloo-net, web-sys) sit behind disjoint features, so
-trunk's wasm build of a frontend crate is free of server code. Apps commonly
+trug's wasm build of a frontend crate is free of server code. Apps commonly
 compile their frontend crate on the host too, under `cargo clippy
 --workspace`, so a host build with both feature sets enabled at once must also
 compile; CI covers that with `--all-features`.
@@ -867,7 +867,7 @@ The components make every request with the provider's `AuthService`
     same-origin URL under the provider's `private_media` prefixes
     (default `/api/`), with an error in the console naming it. So signed-in
     media the app did not load through `MediaUrl` shows broken, never the
-    admin's view, while its static images, wherever trunk puts them, load
+    admin's view, while its static images, wherever trug puts them, load
     as usual. The request itself may already have gone out with the cookie
     (a `GET` whose answer is dropped). CSS `url()`s are not watched.
   - `socket_metadata(&mut ws::Metadata)` is the app's musli-web socket's
@@ -2010,7 +2010,7 @@ once the release is on crates.io.
       `MediaUrl`, which fetches them with the header into object URLs (the
       user's choice over a credential in a URL). A Content Security Policy
       was rejected for that: it only allows, so it would break every static
-      image, trunk's hashed root assets included, until the app listed
+      image, trug's hashed root assets included, until the app listed
       them, which it cannot do by prefix. Requiring a header on every unsafe
       cookie request was rejected: it breaks every app's every `POST`
       outside impersonation too. Downloads not made through `download`,

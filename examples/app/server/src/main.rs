@@ -1,5 +1,5 @@
 //! The watchword example server: axum with a `MemoryStore` and all three
-//! sign-in methods, serving the trunk-built frontend.
+//! sign-in methods, serving the trug-built frontend.
 //!
 //! Simple auth works out of the box: on an empty store the server logs a
 //! registration link for the bootstrap admin. Google and Cloudflare Access
@@ -41,7 +41,7 @@ Usage: watchword-example-server [OPTIONS]
 
 Options:
   --bind ADDR              Address to listen on [default: 127.0.0.1:8080]
-  --dist DIR               The trunk-built frontend [default: ../frontend/dist]
+  --dist DIR               The trug-built frontend [default: ../frontend/dist]
   --public-url URL         The URL the app is reached at, for the bootstrap
                            link and the Google redirect [default: http://ADDR]
   --bootstrap-admin NAME   The first admin's login, or email if it has an @
@@ -247,7 +247,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if !index.is_file() {
         tracing::warn!(
-            "{} is missing; build the frontend with `trunk build` in examples/app/frontend",
+            "{} is missing; build the frontend with `trug build` in examples/app/frontend",
             index.display()
         );
     }

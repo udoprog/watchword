@@ -3,7 +3,7 @@ name = "watchword-example-frontend"
 version = "0.0.0"
 edition = "2024"
 publish = false
-description = "The watchword example's Yew frontend, built with trunk."
+description = "The watchword example's Yew frontend, built with trug."
 license = "MIT OR Apache-2.0"
 
 [dependencies]
