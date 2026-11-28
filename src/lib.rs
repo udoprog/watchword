@@ -153,8 +153,8 @@
 //! [`phrasebookcatalog01`]: crate::phrasebookcatalog01
 //! [`store_suite!`]: crate::store_suite!
 //! [`store`]: crate::store
-//! [`types`]: https://docs.rs/watchword/latest/watchword/types/index.html
-//! [`yew023`]: https://docs.rs/watchword/latest/watchword/yew023/index.html
+//! [`types`]: crate::types
+//! [`yew023`]: crate::yew023
 //! [musli-web]: musli_web06
 //! [phrasebook-catalog]: https://docs.rs/phrasebook-catalog
 //! [phrasebook]: https://docs.rs/phrasebook

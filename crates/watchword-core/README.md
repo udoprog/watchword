@@ -34,6 +34,6 @@ any feature but `axum08` and `sqll015`. Only `std` is on by default.
 [`AuthError`]: https://docs.rs/watchword-core/latest/watchword_core/enum.AuthError.html
 [`musliweb06`]: https://docs.rs/watchword-core/latest/watchword_core/musliweb06/index.html
 [`phrasebookcatalog01`]: https://docs.rs/watchword-core/latest/watchword_core/phrasebookcatalog01/index.html
-[phrasebook-catalog]: https://docs.rs/phrasebook-catalog
+[phrasebook-catalog]: https://docs.rs/phrasebook-catalog/latest/phrasebook_catalog/index.html
 [phrasebook]: https://docs.rs/phrasebook
 [watchword]: https://docs.rs/watchword

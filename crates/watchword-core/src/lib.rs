@@ -31,7 +31,7 @@
 //! [`AuthError`]: crate::AuthError
 //! [`musliweb06`]: crate::musliweb06
 //! [`phrasebookcatalog01`]: crate::phrasebookcatalog01
-//! [phrasebook-catalog]: https://docs.rs/phrasebook-catalog
+//! [phrasebook-catalog]: ::phrasebookcatalog01
 //! [phrasebook]: https://docs.rs/phrasebook
 //! [watchword]: https://docs.rs/watchword
 
