@@ -443,13 +443,16 @@ order:
 [`CloudflareSettings`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.CloudflareSettings.html
 [`ConfirmRequest`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.ConfirmRequest.html
 [`DangerAction`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/enum.DangerAction.html
-[`http`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/http/index.html
+[`http`]: https://docs.rs/watchword-yew023/0.6.1/watchword_yew023/http/index.html
 [`HttpTransport`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.HttpTransport.html
+[`MediaUrl`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.MediaUrl.html
+[`download`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.download.html
 [`L10N`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/static.L10N.html
 [`Transport`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/trait.Transport.html
 [`use_auth_service`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth_service.html
 [`use_auth`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_auth.html
 [`use_is_admin`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_is_admin.html
+[`use_media_url`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_media_url.html
 [`use_users`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.use_users.html
 [`socket_metadata`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/fn.socket_metadata.html
 [`UserMenu`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.UserMenu.html

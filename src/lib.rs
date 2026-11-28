@@ -86,17 +86,17 @@
 //! ## Storage
 //!
 //! watchword keeps users, sessions, registration links and settings through
-//! the [`Store`] trait, which each app implements over its own database, with
-//! its own tables and migrations: the shape of user data differs between
-//! apps, and only the app knows how to fill its own columns. watchword ships
-//! no tables or migrations, only `MemoryStore`, which keeps everything in
-//! memory, for tests and trying things out.
+//! the [`Store` trait](crate::store::Store), which each app implements over
+//! its own database, with its own tables and migrations: the shape of user
+//! data differs between apps, and only the app knows how to fill its own
+//! columns. watchword ships no tables or migrations, only `MemoryStore`,
+//! which keeps everything in memory, for tests and trying things out.
 //!
 //! Start from [`examples/sqll-store`], a complete `Store` over SQLite with
 //! sqll 0.15 (taking the `sqll015` feature), and change its tables to the
-//! app's. The [`Store`] docs say what each method must do atomically, and the
-//! store conformance suite, [`store_suite!`] (feature `test-util`), checks
-//! the result from the app's tests:
+//! app's. The [`Store` docs](crate::store::Store) say what each method must
+//! do atomically, and the store conformance suite, [`store_suite!`] (feature
+//! `test-util`), checks the result from the app's tests:
 //!
 //! ```sh
 //! cargo test --example sqll-store --features test-util,sqll015
@@ -141,19 +141,18 @@
 //! trug builds with the `wasm-bindgen` CLI matching `examples/app/Cargo.lock`,
 //! downloading it unless it is installed or already in trug's cache.
 //!
-//! [`axum08`]: https://docs.rs/watchword/latest/watchword/axum08/index.html
-//! [`cloudflare`]: https://docs.rs/watchword/latest/watchword/cloudflare/index.html
-//! [`core`]: https://docs.rs/watchword/latest/watchword/core/index.html
+//! [`axum08`]: crate::axum08
+//! [`cloudflare`]: crate::cloudflare
+//! [`core`]: crate::core
 //! [`docs/design.md`]: https://github.com/udoprog/watchword/blob/main/docs/design.md
 //! [`examples/app`]: https://github.com/udoprog/watchword/tree/main/examples/app
 //! [`examples/sqll-store`]: https://github.com/udoprog/watchword/tree/main/examples/sqll-store
-//! [`google::fake`]: https://docs.rs/watchword/latest/watchword/google/fake/index.html
-//! [`google`]: https://docs.rs/watchword/latest/watchword/google/index.html
-//! [`musliweb06`]: https://docs.rs/watchword/latest/watchword/musliweb06/index.html
+//! [`google::fake`]: crate::google::fake
+//! [`google`]: crate::google
+//! [`musliweb06`]: crate::musliweb06
 //! [`phrasebookcatalog01`]: https://docs.rs/watchword/latest/watchword/phrasebookcatalog01/index.html
-//! [`store_suite!`]: https://docs.rs/watchword/latest/watchword/macro.store_suite.html
-//! [`store`]: https://docs.rs/watchword/latest/watchword/store/index.html
-//! [`Store`]: https://docs.rs/watchword/latest/watchword/store/trait.Store.html
+//! [`store_suite!`]: crate::store_suite!
+//! [`store`]: crate::store
 //! [`types`]: https://docs.rs/watchword/latest/watchword/types/index.html
 //! [`yew023`]: https://docs.rs/watchword/latest/watchword/yew023/index.html
 //! [musli-web]: https://docs.rs/musli-web
