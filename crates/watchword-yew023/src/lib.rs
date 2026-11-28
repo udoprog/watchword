@@ -426,8 +426,8 @@
 //! }
 //! ```
 //!
-//! [`AccountPanel`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AccountPanel.html
-//! [`AdminCloudflare`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.AdminCloudflare.html
+//! [`AccountPanel`]: crate::AccountPanel
+//! [`AdminCloudflare`]: crate::AdminCloudflare
 //! [`AdminUsers`]: crate::AdminUsers
 //! [`AuthContext`]: crate::AuthContext
 //! [`AuthContext::on_update`]: crate::AuthContext::on_update
@@ -437,7 +437,7 @@
 //! [`AuthProvider`]: crate::AuthProvider
 //! [`AuthService`]: crate::AuthService
 //! [`AuthService::impersonate_in_new_page`]: crate::AuthService::impersonate_in_new_page
-//! [`CloudflareSettings`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.CloudflareSettings.html
+//! [`CloudflareSettings`]: crate::CloudflareSettings
 //! [`ConfirmRequest`]: crate::ConfirmRequest
 //! [`DangerAction`]: crate::DangerAction
 //! [`http`]: crate::http
@@ -452,7 +452,7 @@
 //! [`use_media_url`]: crate::use_media_url
 //! [`use_users`]: crate::use_users
 //! [`socket_metadata`]: crate::socket_metadata
-//! [`UserMenu`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.UserMenu.html
+//! [`UserMenu`]: crate::UserMenu
 //! [ftl]: https://github.com/udoprog/watchword/blob/main/crates/watchword-core/locales/en-US.ftl
 //! [`Users`]: crate::Users
 //! [musli-web]: https://docs.rs/musli-web

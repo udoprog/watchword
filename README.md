@@ -144,21 +144,21 @@ header alone, for local testing only. `--help` lists the options.
 trug builds with the `wasm-bindgen` CLI matching `examples/app/Cargo.lock`,
 downloading it unless it is installed or already in trug's cache.
 
-[`axum08`]: https://docs.rs/watchword/0.6.1/watchword/axum08/index.html
-[`cloudflare`]: https://docs.rs/watchword/0.6.1/watchword/cloudflare/index.html
-[`core`]: https://docs.rs/watchword/0.6.1/watchword/core/index.html
+[`axum08`]: https://docs.rs/watchword/latest/watchword/axum08/index.html
+[`cloudflare`]: https://docs.rs/watchword/latest/watchword/cloudflare/index.html
+[`core`]: https://docs.rs/watchword/latest/watchword/core/index.html
 [`docs/design.md`]: https://github.com/udoprog/watchword/blob/main/docs/design.md
 [`examples/app`]: https://github.com/udoprog/watchword/tree/main/examples/app
 [`examples/sqll-store`]: https://github.com/udoprog/watchword/tree/main/examples/sqll-store
-[`google::fake`]: https://docs.rs/watchword/0.6.1/watchword/google/fake/index.html
-[`google`]: https://docs.rs/watchword/0.6.1/watchword/google/index.html
-[`musliweb06`]: https://docs.rs/watchword/0.6.1/watchword/musliweb06/index.html
+[`google::fake`]: https://docs.rs/watchword/latest/watchword/google/fake/index.html
+[`google`]: https://docs.rs/watchword/latest/watchword/google/index.html
+[`musliweb06`]: https://docs.rs/watchword/latest/watchword/musliweb06/index.html
 [`phrasebookcatalog01`]: https://docs.rs/watchword/latest/watchword/phrasebookcatalog01/index.html
-[`store_suite!`]: https://docs.rs/watchword/0.6.1/watchword/macro.store_suite.html
-[`store`]: https://docs.rs/watchword/0.6.1/watchword/store/index.html
+[`store_suite!`]: https://docs.rs/watchword/latest/watchword/macro.store_suite.html
+[`store`]: https://docs.rs/watchword/latest/watchword/store/index.html
 [`types`]: https://docs.rs/watchword/latest/watchword/types/index.html
 [`yew023`]: https://docs.rs/watchword/latest/watchword/yew023/index.html
-[crate::store::Store]: https://docs.rs/watchword/0.6.1/watchword/store/trait.Store.html
+[crate::store::Store]: https://docs.rs/watchword/latest/watchword/store/trait.Store.html
 [musli-web]: https://docs.rs/musli-web
 [phrasebook-catalog]: https://docs.rs/phrasebook-catalog
 [phrasebook]: https://docs.rs/phrasebook
