@@ -159,9 +159,9 @@ downloading it unless it is installed or already in trug's cache.
 [`types`]: https://docs.rs/watchword/latest/watchword/types/index.html
 [`yew023`]: https://docs.rs/watchword/latest/watchword/yew023/index.html
 [crate::store::Store]: https://docs.rs/watchword/latest/watchword/store/trait.Store.html
-[musli-web]: https://docs.rs/musli-web
+[musli-web]: https://docs.rs/musli-web/latest/musli_web/index.html
 [phrasebook-catalog]: https://docs.rs/phrasebook-catalog
 [phrasebook]: https://docs.rs/phrasebook
 [trug]: https://udoprog.github.io/trug/
-[watchword-core]: https://docs.rs/watchword-core
-[watchword-yew023]: https://docs.rs/watchword-yew023
+[watchword-core]: https://docs.rs/watchword-core/latest/watchword_core/index.html
+[watchword-yew023]: https://docs.rs/watchword-yew023/latest/watchword_yew023/index.html

@@ -444,7 +444,7 @@
 //! [`HttpTransport`]: crate::HttpTransport
 //! [`MediaUrl`]: crate::MediaUrl
 //! [`download`]: crate::download
-//! [`L10N`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/static.L10N.html
+//! [`L10N`]: crate::L10N
 //! [`Transport`]: crate::Transport
 //! [`use_auth_service`]: crate::use_auth_service
 //! [`use_auth`]: crate::use_auth
@@ -455,8 +455,8 @@
 //! [`UserMenu`]: crate::UserMenu
 //! [ftl]: https://github.com/udoprog/watchword/blob/main/crates/watchword-core/locales/en-US.ftl
 //! [`Users`]: crate::Users
-//! [musli-web]: https://docs.rs/musli-web
-//! [phrasebook]: https://docs.rs/phrasebook
+//! [musli-web]: musli_web06
+//! [phrasebook]: phrasebook02
 //! [watchword]: https://docs.rs/watchword
 //! [Yew]: https://yew.rs
 

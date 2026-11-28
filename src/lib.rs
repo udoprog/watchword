@@ -150,17 +150,17 @@
 //! [`google::fake`]: crate::google::fake
 //! [`google`]: crate::google
 //! [`musliweb06`]: crate::musliweb06
-//! [`phrasebookcatalog01`]: https://docs.rs/watchword/latest/watchword/phrasebookcatalog01/index.html
+//! [`phrasebookcatalog01`]: crate::phrasebookcatalog01
 //! [`store_suite!`]: crate::store_suite!
 //! [`store`]: crate::store
 //! [`types`]: https://docs.rs/watchword/latest/watchword/types/index.html
 //! [`yew023`]: https://docs.rs/watchword/latest/watchword/yew023/index.html
-//! [musli-web]: https://docs.rs/musli-web
+//! [musli-web]: musli_web06
 //! [phrasebook-catalog]: https://docs.rs/phrasebook-catalog
 //! [phrasebook]: https://docs.rs/phrasebook
 //! [trug]: https://udoprog.github.io/trug/
-//! [watchword-core]: https://docs.rs/watchword-core
-//! [watchword-yew023]: https://docs.rs/watchword-yew023
+//! [watchword-core]: watchword_core
+//! [watchword-yew023]: watchword_yew023
 
 #![no_std]
 #![cfg_attr(watchword_docsrs, feature(doc_cfg))]

@@ -458,7 +458,7 @@ order:
 [`UserMenu`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.UserMenu.html
 [ftl]: https://github.com/udoprog/watchword/blob/main/crates/watchword-core/locales/en-US.ftl
 [`Users`]: https://docs.rs/watchword-yew023/latest/watchword_yew023/struct.Users.html
-[musli-web]: https://docs.rs/musli-web
-[phrasebook]: https://docs.rs/phrasebook
+[musli-web]: https://docs.rs/musli-web/latest/musli_web/index.html
+[phrasebook]: https://docs.rs/phrasebook/latest/phrasebook/index.html
 [watchword]: https://docs.rs/watchword
 [Yew]: https://yew.rs
