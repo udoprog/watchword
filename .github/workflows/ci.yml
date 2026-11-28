@@ -16,7 +16,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - uses: dtolnay/rust-toolchain@stable
     - run: cargo test --workspace --all-features --all-targets
     - run: cargo test --workspace --all-features --doc
@@ -24,7 +24,7 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
@@ -59,7 +59,7 @@ jobs:
   wasm:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - uses: dtolnay/rust-toolchain@stable
       with:
         targets: wasm32-unknown-unknown
@@ -81,7 +81,7 @@ jobs:
     env:
       RUSTDOCFLAGS: -D warnings
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - uses: dtolnay/rust-toolchain@stable
     - run: cargo doc --workspace --all-features --no-deps
 
@@ -90,7 +90,7 @@ jobs:
     env:
       RUSTDOCFLAGS: --cfg watchword_docsrs -D warnings
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - uses: dtolnay/rust-toolchain@nightly
     - run: cargo doc -p watchword --all-features --no-deps
     - run: cargo doc -p watchword-core --all-features --no-deps
@@ -99,7 +99,7 @@ jobs:
   rustfmt:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt
